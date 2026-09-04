@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v1.1 Dashboard Pro
+## Current build: v1.2 Smart Scanner
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -133,3 +133,15 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Rip-session leaderboard
 - Vault Data Health score
 - Backup freshness tracking
+
+
+## v1.2 completed
+- Batch scanner queue
+- Live card matching workflow
+- Duplicate detection
+- Set-gap / missing-card flags
+- Binder suggestions
+- Configurable grading-review threshold
+- Queue cost/binder/quantity review
+- Smart merge into existing collection entries
+- Optional scanner -> active Rip Session flow

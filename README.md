@@ -1,4 +1,4 @@
-# 2GEN Vault — Dashboard Pro v1.1 (GitHub Pages)
+# 2GEN Vault — Smart Scanner v1.2 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -353,3 +353,50 @@ Compare opening-session:
 - ROI
 - pack count
 - card count
+
+
+## New in v1.2 — Smart Scanner + Collector Automation
+
+### Rapid batch intake
+Smart Scanner now supports a queue so you can work through a stack of cards before committing them to the Vault.
+
+Workflow:
+
+1. Capture a card photo if useful.
+2. Search live card data by name/card number.
+3. Choose the correct card.
+4. Queue it.
+5. Review quantity, cost and suggested binder.
+6. Add the full batch to the Vault.
+
+### Duplicate detection
+Before a queued card is added, 2GEN Vault checks your current collection and flags:
+- whether you already own the card
+- how many copies are already tracked
+
+When a queued card matches an existing raw card in the same binder/condition, batch commit can merge the quantity instead of creating unnecessary duplicate rows.
+
+### Set-gap detection
+If live set-total metadata is available, the scanner flags a card as:
+- missing from set
+- already owned / duplicate
+- new to the Vault
+
+### Binder suggestion
+The scanner suggests the binder that already contains the most cards from the same set, then the same TCG, with your preferred binder used as a tie-breaker.
+
+You can change the binder before committing.
+
+### Grading review flag
+The scanner can flag a card for **manual grading review** using:
+- current market-value threshold
+- rarity text
+
+It does NOT claim to inspect centering, corners, edges, surface, authenticity, or physical condition from the phone image.
+
+### Rip Session integration
+If a Rip Session is active, committing a scan batch can optionally add the same cards to that opening session as pulls.
+
+### Privacy / accuracy
+Captured images remain local to the browser in this build.
+The app does not upload or falsely auto-identify them.

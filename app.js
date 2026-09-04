@@ -42,6 +42,8 @@ const seed = {
   openingLog: [],
   ripSessions: [],
   portfolioSnapshots: [],
+  scanQueue: [],
+  scannerSettings: {gradingValueThreshold:25, preferredBinder:'Main Binder'},
   inventoryResults: [],
   nearbyStores: [],
   huntRoute: [],
@@ -80,6 +82,9 @@ let stockGame = 'Pokemon';
 let stockQuery = '';
 let selectedWatchId = null;
 let cameraPreview = '';
+let scannerSearchResults = [];
+let scannerBusy = false;
+let scannerLastQuery = '';
 let toastTimer;
 
 function $(id){ return document.getElementById(id); }
@@ -98,6 +103,19 @@ function loadState(){
 }
 function saveState(){
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+
+function ensureScannerSchema(){
+  if(!Array.isArray(state.scanQueue)) state.scanQueue=[];
+  state.scannerSettings={
+    gradingValueThreshold:25,
+    preferredBinder:'Main Binder',
+    ...(state.scannerSettings||{})
+  };
+  if(!binderNames().includes(state.scannerSettings.preferredBinder)){
+    state.scannerSettings.preferredBinder=binderNames()[0]||'Main Binder';
+  }
 }
 
 function ensureCollectionSchema(){
@@ -497,7 +515,7 @@ function renderHome(){
         <button class="quick-card" onclick="switchTab('stock')"><span class="big-icon">◎</span><b>Find inventory</b><span>Nearby stores, live connector, watchlists and stock reports.</span></button>
         <button class="quick-card" onclick="switchTab('discover')"><span class="big-icon">⌕</span><b>Search cards</b><span>Live Pokémon lookup plus the multi-TCG catalog foundation.</span></button>
         <button class="quick-card" onclick="openTool('products')"><span class="big-icon">◈</span><b>Smart products</b><span>Sealed product pages, targets, sightings, ownership and opening history.</span></button>
-        <button class="quick-card" onclick="openTool('scanner')"><span class="big-icon">◉</span><b>Scan a card</b><span>Camera capture now; smart matching is ready for the backend phase.</span></button>
+        <button class="quick-card" onclick="openTool('scanner')"><span class="big-icon">◉</span><b>Smart Scanner</b><span>Batch intake, duplicates, set gaps, binder suggestions and grading review flags.</span></button>
         <button class="quick-card" onclick="openTool('sets')"><span class="big-icon">▦</span><b>Master sets</b><span>Live set checklists, owned progress and missing-card tracking.</span></button>
         <button class="quick-card" onclick="openTool('rips')"><span class="big-icon">✦</span><b>Rip sessions</b><span>Track openings, pulls, value, hits, ROI and set progress.</span></button>
         <button class="quick-card" onclick="openTool('analytics')"><span class="big-icon">⌁</span><b>Dashboard Pro</b><span>Growth, spending, allocation, positions, sets and rip performance.</span></button>
@@ -1589,7 +1607,7 @@ function renderTools(){
       ${toolButton('rips','✦','Rip Sessions','Openings & pull analytics')}
       ${toolButton('sets','▦','Sets','Master-set explorer')}
       ${toolButton('products','◈','Products','Smart sealed pages')}
-      ${toolButton('scanner','◉','Scanner','Capture cards')}
+      ${toolButton('scanner','◉','Smart Scanner','Batch collection intake')}
       ${toolButton('wishlist','♡','Wishlist','Cards you want')}
       ${toolButton('stockreport','◎','Stock report','Log store inventory')}
       ${toolButton('budget','$','Budget','Spending & purchases')}
@@ -2091,11 +2109,246 @@ function logOpeningFromProduct(id){
   saveState();renderTools();toast('Opening logged');
 }
 
+
+function scannerOwnedQty(card){
+  return totalOwnedForCard(card.id);
+}
+function suggestBinderForCard(card){
+  ensureCollectionSchema();
+  const candidates=new Map();
+  for(const b of state.binders||[]) candidates.set(b.name,{binder:b,score:0});
+  for(const i of state.collection||[]){
+    const entry=candidates.get(i.location);
+    if(!entry) continue;
+    if(i.card?.set===card.set) entry.score += 8*(Number(i.qty)||1);
+    if(i.card?.game===card.game) entry.score += 2*(Number(i.qty)||1);
+  }
+  const preferred=state.scannerSettings?.preferredBinder;
+  if(candidates.has(preferred)) candidates.get(preferred).score += 3;
+  return [...candidates.values()].sort((a,b)=>b.score-a.score)[0]?.binder?.name || binderNames()[0] || 'Main Binder';
+}
+function scannerSetSignal(card){
+  const owned=scannerOwnedQty(card);
+  if(owned>0) return {type:'duplicate',label:`DUPLICATE • ${owned} owned`};
+  const total=Number(card.setPrintedTotal||card.setTotal||0);
+  if(!total) return {type:'new',label:'NEW TO VAULT'};
+  const sameSet=state.collection.filter(i=>(card.setId&&i.card?.setId===card.setId)||(!card.setId&&i.card?.set===card.set));
+  const unique=new Set(sameSet.map(i=>i.card?.id||i.card?.number));
+  return {type:'missing',label:`MISSING FROM SET • ${unique.size}/${total}`};
+}
+function gradingCandidate(card){
+  const threshold=Number(state.scannerSettings?.gradingValueThreshold)||25;
+  const value=Number(card.market)||0;
+  const rarity=String(card.rarity||'').toLowerCase();
+  const rarityFlag=/(illustration|secret|hyper|special|ultra|alternate|rare|promo)/.test(rarity);
+  const candidate=value>=threshold || (value>=threshold*.6 && rarityFlag);
+  return {
+    candidate,
+    reason:candidate ? `${money(value)} market${rarityFlag?' • notable rarity':''}` : `Below ${money(threshold)} review threshold`
+  };
+}
+function queueCard(card){
+  ensureScannerSchema();
+  const ex=state.scanQueue.find(x=>x.card?.id===card.id);
+  if(ex) ex.qty=(Number(ex.qty)||0)+1;
+  else{
+    const binder=suggestBinderForCard(card);
+    const signal=scannerSetSignal(card);
+    const grade=gradingCandidate(card);
+    state.scanQueue.push({
+      uid:uid(),card,qty:1,cost:Number(card.market)||0,binder,
+      condition:'Near Mint',format:'Raw',
+      signal:signal.type,gradingCandidate:grade.candidate,createdAt:new Date().toISOString()
+    });
+  }
+  saveState();renderTools();toast('Card added to scan queue');
+}
+function removeQueuedCard(id){
+  state.scanQueue=state.scanQueue.filter(x=>x.uid!==id);saveState();renderTools();
+}
+function updateQueuedCard(id,key,val){
+  const q=state.scanQueue.find(x=>x.uid===id);if(!q)return;
+  if(['binder','condition','format'].includes(key)) q[key]=val;
+  else q[key]=Math.max(key==='qty'?1:0,Number(val)||0);
+  saveState();renderTools();
+}
+function clearScanQueue(){
+  if(!state.scanQueue.length)return;
+  if(!confirm('Clear the entire scan queue?'))return;
+  state.scanQueue=[];saveState();renderTools();
+}
+function reviewScannerSettings(){
+  ensureScannerSchema();
+  const threshold=prompt('Flag grading candidates at what market value?',String(state.scannerSettings.gradingValueThreshold||25));
+  if(threshold!==null) state.scannerSettings.gradingValueThreshold=Math.max(0,Number(threshold)||0);
+  const binder=prompt('Preferred default binder',state.scannerSettings.preferredBinder||'Main Binder');
+  if(binder!==null && binderNames().includes(binder.trim())) state.scannerSettings.preferredBinder=binder.trim();
+  saveState();renderTools();toast('Scanner settings saved');
+}
+async function scannerSearch(event){
+  if(event) event.preventDefault();
+  const q=($('scannerSearchQ')?.value||scannerLastQuery||'').trim();
+  if(!q){toast('Enter a card name, set, or card number');return;}
+  scannerLastQuery=q;scannerBusy=true;renderTools();
+  try{
+    const clean=q.replace(/"/g,'').trim();
+    const numberLike=/^[a-z0-9-]{1,12}$/i.test(clean) && /\d/.test(clean);
+    const query = numberLike
+      ? `(name:"${clean}" OR number:"${clean}")`
+      : `name:"${clean}"`;
+    let url=`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(query)}&pageSize=30&orderBy=-set.releaseDate`;
+    let r=await fetch(url);
+    if(!r.ok && numberLike){
+      url=`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(`number:"${clean}"`)}&pageSize=30&orderBy=-set.releaseDate`;
+      r=await fetch(url);
+    }
+    if(!r.ok) throw new Error(`Card API returned ${r.status}`);
+    const d=await r.json();
+    scannerSearchResults=(d.data||[]).map(c=>{
+      const ps=Object.values(c.tcgplayer?.prices||{});
+      const market=ps.find(p=>typeof p.market==='number')?.market;
+      const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
+      return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
+    });
+    toast(`${scannerSearchResults.length} possible matches`);
+  }catch(e){
+    scannerSearchResults=[];
+    toast(e.message||'Scanner search failed');
+  }finally{
+    scannerBusy=false;renderTools();
+  }
+}
+function scannerResultMarkup(card){
+  const signal=scannerSetSignal(card);
+  const grade=gradingCandidate(card);
+  return `<article class="scanner-match">
+    ${cardArt(card)}
+    <div class="grow">
+      <div class="eyebrow">${esc(card.set)} • ${esc(card.number||'—')}</div>
+      <strong>${esc(card.name)}</strong>
+      <span>${esc(card.rarity||'')} • ${money(Number(card.market))}</span>
+      <div class="scanner-flags">
+        <span class="${signal.type}">${esc(signal.label)}</span>
+        ${grade.candidate?`<span class="grade-flag">◇ REVIEW FOR GRADING</span>`:''}
+      </div>
+    </div>
+    <div class="right">
+      <button class="btn primary" onclick='queueCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>＋ Queue</button>
+      <button class="link-btn" onclick='openCardDetail(${JSON.stringify(card).replace(/'/g,"&#39;")});switchTab("discover")'>Details</button>
+    </div>
+  </article>`;
+}
+function renderScanQueue(){
+  ensureScannerSchema();
+  if(!state.scanQueue.length) return `<div class="empty">Your batch queue is empty. Search and queue cards as you work through a stack.</div>`;
+  return state.scanQueue.map(q=>{
+    const signal=scannerSetSignal(q.card);
+    const grade=gradingCandidate(q.card);
+    return `<div class="scan-queue-row">
+      ${cardArt(q.card)}
+      <div class="grow">
+        <strong>${esc(q.card.name)}</strong>
+        <span>${esc(q.card.set)} • ${esc(q.card.number||'')} • ${money(Number(q.card.market))}</span>
+        <div class="scanner-flags"><span class="${signal.type}">${esc(signal.label)}</span>${grade.candidate?`<span class="grade-flag">◇ GRADING REVIEW</span>`:''}</div>
+        <div class="scan-edit-grid">
+          <label class="field"><span>Qty</span><input type="number" min="1" value="${q.qty}" onchange="updateQueuedCard('${q.uid}','qty',this.value)"></label>
+          <label class="field"><span>Cost ea.</span><input type="number" min="0" step=".01" value="${q.cost}" onchange="updateQueuedCard('${q.uid}','cost',this.value)"></label>
+          <label class="field"><span>Binder</span><select onchange="updateQueuedCard('${q.uid}','binder',this.value)">${binderNames().map(b=>`<option ${b===q.binder?'selected':''}>${esc(b)}</option>`).join('')}</select></label>
+        </div>
+      </div>
+      <div class="right"><strong>${q.qty}×</strong><button class="remove" onclick="removeQueuedCard('${q.uid}')">Remove</button></div>
+    </div>`;
+  }).join('');
+}
+function commitScanQueue(){
+  ensureScannerSchema();
+  if(!state.scanQueue.length){toast('Queue some cards first');return;}
+  const addToRip=activeRipSessionId && ripSessionById(activeRipSessionId) && confirm('Also add these scanned cards to the active Rip Session?');
+  let added=0, merged=0;
+  for(const q of state.scanQueue){
+    const existing=state.collection.find(i=>
+      i.card?.id===q.card.id &&
+      (i.format||'Raw')==='Raw' &&
+      i.location===q.binder &&
+      i.condition===q.condition
+    );
+    if(existing){
+      existing.qty=(Number(existing.qty)||0)+(Number(q.qty)||0);
+      if(!existing.cost && q.cost) existing.cost=q.cost;
+      merged += Number(q.qty)||0;
+    }else{
+      state.collection.unshift({
+        uid:uid(),card:q.card,qty:Number(q.qty)||1,condition:q.condition||'Near Mint',
+        cost:Number(q.cost)||0,location:q.binder||'Main Binder',format:'Raw',
+        grader:'',grade:'',cert:'',language:'English',variant:'Standard'
+      });
+      added += Number(q.qty)||1;
+    }
+    if(addToRip){
+      const session=ripSessionById(activeRipSessionId);
+      const pull=session.pulls.find(p=>p.card?.id===q.card.id);
+      if(pull) pull.qty=(Number(pull.qty)||0)+(Number(q.qty)||0);
+      else session.pulls.unshift({uid:uid(),card:q.card,qty:Number(q.qty)||1,addedAt:new Date().toISOString()});
+    }
+  }
+  state.scanQueue=[];
+  saveState();renderTools();
+  toast(`Vault updated • ${added} new • ${merged} merged`);
+}
+function clearScannerPhoto(){
+  cameraPreview='';renderTools();
+}
+
 function renderScannerTool(){
-  return `<div class="panel"><div class="section-head"><div><h2>Camera scanner</h2><p>Capture a clean card photo. Automatic identification will plug into the future vision service.</p></div></div>
-    <div class="scanbox">${cameraPreview?`<img src="${cameraPreview}" alt="Card preview">`:`<span style="font-size:44px">◉</span><span>Place one card inside the frame</span>`}</div>
-    <button class="btn primary wide" onclick="$('hiddenCamera').click()">Take / choose photo</button>
-    <div class="notice" style="margin-top:10px"><span>✓</span><span>This Pages build keeps the selected image on the device. It is not uploaded by 2GEN Vault.</span></div>
+  ensureScannerSchema();
+  const activeRip=activeRipSessionId?ripSessionById(activeRipSessionId):null;
+  return `<div class="panel scanner-pro-panel">
+    <div class="section-head"><div><div class="eyebrow">2GEN SMART SCANNER</div><h2>Rapid collection intake</h2><p>Capture, identify, detect duplicates, spot set gaps, suggest a binder and batch-add cards.</p></div><button class="btn" onclick="reviewScannerSettings()">⚙ Scanner rules</button></div>
+
+    <div class="scanner-stats">
+      <div><span>Queued</span><strong>${state.scanQueue.reduce((n,q)=>n+(Number(q.qty)||0),0)}</strong></div>
+      <div><span>Duplicate types</span><strong>${state.scanQueue.filter(q=>scannerOwnedQty(q.card)>0).length}</strong></div>
+      <div><span>Missing-set hits</span><strong>${state.scanQueue.filter(q=>scannerSetSignal(q.card).type==='missing').length}</strong></div>
+      <div><span>Grading review</span><strong>${state.scanQueue.filter(q=>gradingCandidate(q.card).candidate).length}</strong></div>
+    </div>
+
+    ${activeRip?`<div class="notice good"><span>✦</span><span>Active Rip Session: <b>${esc(activeRip.name)}</b>. When you commit the queue, you can also add these cards to that session.</span></div>`:''}
+
+    <div class="scanner-workspace">
+      <div>
+        <div class="scanbox">${cameraPreview?`<img src="${cameraPreview}" alt="Card preview">`:`<span style="font-size:44px">◉</span><span>Capture one card, then identify it below</span>`}</div>
+        <div class="action-row">
+          <button class="btn primary" onclick="$('hiddenCamera').click()">◉ Take / choose photo</button>
+          ${cameraPreview?`<button class="btn" onclick="clearScannerPhoto()">Clear photo</button>`:''}
+        </div>
+      </div>
+
+      <div>
+        <form class="searchbar" onsubmit="scannerSearch(event)">
+          <span>⌕</span>
+          <input id="scannerSearchQ" value="${esc(scannerLastQuery)}" placeholder="Card name or number">
+          <button class="btn primary" ${scannerBusy?'disabled':''}>${scannerBusy?'Searching…':'Identify'}</button>
+        </form>
+        <div class="notice" style="margin-top:9px"><span>ℹ</span><span>The photo stays on your phone. This version does <b>not</b> falsely claim automatic image recognition: you choose the correct live card match.</span></div>
+      </div>
+    </div>
+
+    ${scannerSearchResults.length?`<div class="subpanel" style="margin-top:11px"><div class="section-head"><div><h2>Possible matches</h2><p>Queue the correct result.</p></div><button class="link-btn" onclick="scannerSearchResults=[];renderTools()">Clear</button></div><div class="scanner-match-list">${scannerSearchResults.map(scannerResultMarkup).join('')}</div></div>`:''}
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>Batch review</h2><p>Review automation suggestions before anything is written to your Vault.</p></div><div class="action-row"><button class="btn red" onclick="clearScanQueue()">Clear</button><button class="btn primary" onclick="commitScanQueue()">✓ Add queue to Vault</button></div></div>
+    ${renderScanQueue()}
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>What Smart Scanner automates</h2><p>Useful collector assistance without pretending the app knows physical card condition.</p></div></div>
+    <div class="automation-grid">
+      <div><b>Duplicate detection</b><span>Flags cards already in your Vault and shows how many you own.</span></div>
+      <div><b>Set-gap detection</b><span>Flags cards that appear missing from a set when set-total metadata is available.</span></div>
+      <div><b>Binder suggestion</b><span>Suggests the binder containing the most cards from the same set/game.</span></div>
+      <div><b>Grading review flag</b><span>Uses your value threshold and rarity text only. It does not judge centering, surface, edges, or condition from the photo.</span></div>
+    </div>
   </div>`;
 }
 $('hiddenCamera').addEventListener('change',e=>{
@@ -2109,6 +2362,7 @@ $('hiddenCamera').addEventListener('change',e=>{
     }else{
       cameraPreview=String(r.result||'');
       renderTools();
+      toast('Photo captured — identify the card by search');
     }
   };
   r.readAsDataURL(f);
@@ -2224,7 +2478,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,saveSnapshotNow,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,saveSnapshotNow,scannerSearch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -2243,6 +2497,7 @@ if('serviceWorker' in navigator){
   window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(reg=>reg.update()).catch(()=>{}));
 }
 ensureCollectionSchema();
+ensureScannerSchema();
 ensureCatalogSeed();
 ensureDailySnapshot();
 render('home');
