@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v6.0 Nearby Inventory Radar
+## Current build: v7.0 Inventory Pulse
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -321,15 +321,17 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - No-retailer-secret GitHub Pages architecture
 
 
-## v6.0 completed
-- ZIP/radius-first Stock tab
-- SCAN MY AREA workflow
-- automatic multi-TCG discovery queries
+## v7.0 completed
+- ZIP/radius-first Nearby Inventory Radar
+- broad multi-TCG area discovery
 - verified inventory grouped by store
 - store inventory drill-down
-- product count / lowest price / low-stock summary per store
-- directions from store detail
-- nearby unsupported retailers separated as CHECK RETAILER
-- exact product search moved to secondary workflow
-- area scan history
-- accuracy hotfix for retailer handoff cards
+- Hunt Score
+- saved-watch matches at store level
+- target-price-hit awareness
+- favorite stores
+- Inventory Pulse change detection
+- last 12 area scan snapshots
+- smart refresh when Stock opens
+- exact product search preserved
+- retailer-check accuracy protections

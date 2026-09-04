@@ -86,6 +86,15 @@ const seed = {
   scannerSettings: {gradingValueThreshold:25, preferredBinder:'Main Binder'},
   inventoryResults: [],
   inventorySearchHistory: [],
+  areaInventoryResults: [],
+  areaScanHistory: [],
+  inventoryPulseEvents: [],
+  favoriteInventoryStores: [],
+  areaScanSettings: {
+    games:['Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece'],
+    autoRefresh:true,
+    autoRefreshHours:4
+  },
   inventoryProviderStatus: null,
   nearbyStores: [],
   huntRoute: [],
@@ -123,6 +132,10 @@ let ripScannerPreview = '';
 let selectedRetailers = new Set(['Walmart','Target','Best Buy','GameStop','Local Card Shop']);
 let stockGame = 'Pokemon';
 let stockQuery = '';
+let areaScanBusy = false;
+let areaSelectedStoreKey = null;
+let stockSpecificSearchOpen = false;
+let areaAutoScanAttempted = false;
 let selectedWatchId = null;
 let cameraPreview = '';
 let scannerSearchResults = [];
@@ -1004,7 +1017,12 @@ function productObservationRows(product){
   };
   (state.stockReports||[]).forEach(r=>add(r,'Your sighting'));
   (state.communityReports||[]).forEach(r=>add(r,'Community'));
-  (state.inventoryResults||[]).forEach(r=>add(r,r.sourceAttribution||r.provider||'Official inventory source'));
+  (state.inventoryResults||[])
+    .filter(r=>r.sourceType!=='retailer_verified'&&r.status!=='retailer_check')
+    .forEach(r=>add(r,r.sourceAttribution||r.provider||'Official inventory source'));
+  (state.areaInventoryResults||[])
+    .filter(r=>r.sourceType!=='retailer_verified'&&r.status!=='retailer_check')
+    .forEach(r=>add(r,r.sourceAttribution||r.provider||'Official inventory source'));
   return rows.sort((a,b)=>new Date(b.ts)-new Date(a.ts));
 }
 function productObservationConfidence(o){
@@ -1372,6 +1390,17 @@ function editWatch(id){
 function ensureRealInventorySchema(){
   if(!Array.isArray(state.inventoryResults))state.inventoryResults=[];
   if(!Array.isArray(state.inventorySearchHistory))state.inventorySearchHistory=[];
+  if(!Array.isArray(state.areaInventoryResults))state.areaInventoryResults=[];
+  if(!Array.isArray(state.areaScanHistory))state.areaScanHistory=[];
+  if(!Array.isArray(state.inventoryPulseEvents))state.inventoryPulseEvents=[];
+  if(!Array.isArray(state.favoriteInventoryStores))state.favoriteInventoryStores=[];
+  state.areaScanSettings={
+    games:['Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece'],
+    autoRefresh:true,
+    autoRefreshHours:4,
+    ...(state.areaScanSettings||{})
+  };
+  if(!Array.isArray(state.areaScanSettings.games))state.areaScanSettings.games=['Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece'];
   if(!('inventoryProviderStatus' in state))state.inventoryProviderStatus=null;
 }
 function inventoryBackendBase(){
@@ -1399,7 +1428,7 @@ function normalizeInventoryResult(x={}){
     city:x.city||'',
     state:x.state||'',
     postalCode:x.postalCode||'',
-    distanceMiles:Number.isFinite(Number(x.distanceMiles))?Number(x.distanceMiles):null,
+    distanceMiles:(x.distanceMiles===null||x.distanceMiles===undefined||x.distanceMiles==='')?null:(Number.isFinite(Number(x.distanceMiles))?Number(x.distanceMiles):null),
     product:x.product||x.name||stockQuery||'Product',
     productId:x.productId||'',
     retailerSku:x.retailerSku||x.sku||'',
@@ -1423,9 +1452,10 @@ function normalizeInventoryResult(x={}){
   };
 }
 function inventoryResultConfidence(x){
+  if(x.sourceType==='retailer_verified'||x.status==='retailer_check')return null;
   if(Number.isFinite(x.rawConfidence))return Math.max(1,Math.min(99,Math.round(x.rawConfidence)));
   const age=reportAgeMinutes(x.checkedAt||x.updatedAt);
-  let score=x.sourceType==='official_api'?92:x.sourceType==='retailer_verified'?80:68;
+  let score=x.sourceType==='official_api'?92:68;
   if(age<=5)score+=5;
   else if(age<=30)score+=2;
   else if(age>180)score-=18;
@@ -1620,149 +1650,406 @@ function openInventorySetup(){
   setTimeout(()=>toast('Inventory connection status is in Settings'),100);
 }
 
-function renderStock(){
-  const cfg = window.TWOGEN_CONFIG || {};
-  const hasBackend = !!(cfg.inventoryApiBase||'').trim();
-  const radius = Number(state.settings.radius)||25;
-  const locationText = state.settings.locationLabel || state.settings.zip || (state.settings.lat ? 'GPS location saved' : 'Location not set');
 
-  $('stock').innerHTML = `
-    <div class="page-title">
-      <div><h1>Real Inventory Finder</h1><p>Search supported retailer inventory automatically by product, ZIP and radius — manual sightings are optional.</p></div>
-      <span class="badge ${hasBackend?'primary':''}">${hasBackend?'● REAL INVENTORY READY':'○ SETUP REQUIRED'}</span>
-    </div>
+const AREA_SCAN_QUERIES={
+  Pokemon:['pokemon trading cards'],
+  Lorcana:['lorcana trading cards'],
+  Magic:['magic the gathering cards'],
+  'Yu-Gi-Oh!':['yu gi oh cards'],
+  'One Piece':['one piece trading cards']
+};
+function areaScanGames(){
+  ensureRealInventorySchema();
+  return state.areaScanSettings.games||[];
+}
+function toggleAreaGame(game){
+  const set=new Set(areaScanGames());
+  set.has(game)?set.delete(game):set.add(game);
+  state.areaScanSettings.games=[...set];
+  saveState();renderStock();
+}
+function setAreaAutoRefresh(enabled){
+  state.areaScanSettings.autoRefresh=!!enabled;saveState();renderStock();
+}
+function setAreaAutoRefreshHours(v){
+  state.areaScanSettings.autoRefreshHours=Math.max(1,Math.min(24,Number(v)||4));saveState();renderStock();
+}
+function areaStoreKey(x){
+  return `${normalizeName(x.provider||x.retailer)}|${x.storeId||normalizeName(x.store)}|${x.postalCode||''}`;
+}
+function officialAreaResults(){
+  return (state.areaInventoryResults||[]).map(normalizeInventoryResult)
+    .filter(x=>x.sourceType==='official_api'&&x.status!=='retailer_check');
+}
+function areaStoreGroups(){
+  const groups=new Map();
+  for(const x of officialAreaResults()){
+    const key=areaStoreKey(x);
+    if(!groups.has(key)){
+      groups.set(key,{
+        key,provider:x.provider,retailer:x.retailer,store:x.store,storeId:x.storeId,
+        address:x.address,city:x.city,state:x.state,postalCode:x.postalCode,
+        distanceMiles:x.distanceMiles,checkedAt:x.checkedAt,products:[]
+      });
+    }
+    const g=groups.get(key);
+    g.products.push(x);
+    if(typeof x.distanceMiles==='number'&&(typeof g.distanceMiles!=='number'||x.distanceMiles<g.distanceMiles))g.distanceMiles=x.distanceMiles;
+    if(new Date(x.checkedAt)>new Date(g.checkedAt))g.checkedAt=x.checkedAt;
+  }
+  return [...groups.values()].map(g=>{
+    const unique=new Map();
+    for(const p of g.products){
+      const k=normalizeName(`${p.retailerSku||''}|${p.product}`);
+      if(!unique.has(k))unique.set(k,p);
+    }
+    g.products=[...unique.values()].sort((a,b)=>(a.price||999999)-(b.price||999999));
+    g.games=[...new Set(g.products.map(p=>p.game).filter(Boolean))];
+    g.bestPrice=g.products.map(p=>p.price).filter(v=>v>0).sort((a,b)=>a-b)[0]||null;
+    g.lowStock=g.products.filter(p=>p.lowStock||p.status==='low_stock').length;
+    g.inStock=g.products.filter(p=>p.status==='in_stock'||p.status==='low_stock').length;
+    g.watchMatches=storeWatchMatches(g);
+    g.huntScore=storeHuntScore(g);
+    g.favorite=state.favoriteInventoryStores.includes(g.key);
+    return g;
+  }).sort((a,b)=>Number(b.favorite)-Number(a.favorite)||b.huntScore-a.huntScore||(a.distanceMiles??9999)-(b.distanceMiles??9999));
+}
+function storeWatchMatches(g){
+  const matches=[];
+  for(const p of g.products){
+    for(const w of state.stockWatches||[]){
+      if(!w.enabled)continue;
+      if(watchMatchesText({product:p.product},w.product) || watchMatchesText({product:w.product},p.product)){
+        matches.push({product:p.product,watch:w,price:p.price});
+      }
+    }
+  }
+  return matches;
+}
+function storeHuntScore(g){
+  let score=25;
+  score+=Math.min(20,g.products.length*3);
+  const d=Number(g.distanceMiles);
+  if(Number.isFinite(d)){
+    if(d<=10)score+=20; else if(d<=25)score+=13; else if(d<=50)score+=7;
+  }
+  const matches=storeWatchMatches(g);
+  score+=Math.min(24,matches.length*12);
+  const targetHits=matches.filter(m=>m.watch.maxPrice&&m.price&&m.price<=Number(m.watch.maxPrice)).length;
+  score+=Math.min(20,targetHits*10);
+  if(g.lowStock)score+=3;
+  return Math.max(0,Math.min(100,Math.round(score)));
+}
+function toggleFavoriteInventoryStore(key){
+  const set=new Set(state.favoriteInventoryStores||[]);
+  set.has(key)?set.delete(key):set.add(key);
+  state.favoriteInventoryStores=[...set];
+  saveState();renderStock();
+}
+function selectAreaStore(key){
+  areaSelectedStoreKey=key;renderStock();
+  setTimeout(()=>document.getElementById('areaStoreDetail')?.scrollIntoView({behavior:'smooth',block:'start'}),50);
+}
+function selectedAreaStore(){
+  return areaStoreGroups().find(x=>x.key===areaSelectedStoreKey)||null;
+}
+function areaSnapshotRows(results){
+  return (results||[]).filter(x=>x.sourceType==='official_api').slice(0,180).map(x=>({
+    key:normalizeName(`${x.provider}|${x.storeId||x.store}|${x.retailerSku||x.product}`),
+    provider:x.provider,store:x.store,storeId:x.storeId||'',postalCode:x.postalCode||'',
+    product:x.product,retailerSku:x.retailerSku||'',game:x.game||'',price:Number(x.price)||0,
+    status:x.status,lowStock:!!x.lowStock,distanceMiles:x.distanceMiles,checkedAt:x.checkedAt
+  }));
+}
+function inventoryPulseDiff(previous,current){
+  const prev=new Map((previous||[]).map(x=>[x.key,x]));
+  const cur=new Map((current||[]).map(x=>[x.key,x]));
+  const events=[];
+  const now=new Date().toISOString();
 
-    <div class="panel">
-      <div class="section-head"><div><h2>Your search area</h2><p>Use GPS or enter a ZIP. Precise location is never required when a ZIP is provided.</p></div></div>
-      <div class="form-grid">
-        <label class="field"><span>ZIP / postal code</span><input id="stockZip" inputmode="numeric" value="${esc(state.settings.zip||'')}" placeholder="28752"></label>
-        <label class="field"><span>Radius</span><select id="stockRadius">${[5,10,15,25,50,75,100].map(v=>`<option value="${v}" ${v===radius?'selected':''}>${v} miles</option>`).join('')}</select></label>
-      </div>
-      <div class="action-row" style="margin-top:9px">
-        <button class="btn primary" onclick="saveStockArea()">Save area</button>
-        <button class="btn" onclick="useMyLocation()">⌖ Use my location</button>
-      </div>
-      <div class="notice" style="margin-top:10px"><span>◎</span><span><b>Current area:</b> ${esc(locationText)} • ${radius} mi. Nearby store discovery uses OpenStreetMap data; retailer inventory requires a connected inventory source.</span></div>
-    </div>
+  for(const [key,x] of cur){
+    const p=prev.get(key);
+    if(!p){
+      events.push({uid:uid(),type:'new',priority:'high',title:`Newly detected: ${x.product}`,detail:`${x.store}${x.price?` • ${money(x.price)}`:''}`,store:x.store,product:x.product,ts:now});
+      continue;
+    }
+    if(x.price&&p.price&&Math.abs(x.price-p.price)>=0.01){
+      const down=x.price<p.price;
+      events.push({uid:uid(),type:down?'price_down':'price_up',priority:down?'high':'medium',title:`Price ${down?'drop':'change'}: ${x.product}`,detail:`${x.store} • ${money(p.price)} → ${money(x.price)}`,store:x.store,product:x.product,ts:now});
+    }
+    if(!p.lowStock&&x.lowStock){
+      events.push({uid:uid(),type:'low_stock',priority:'high',title:`Low stock: ${x.product}`,detail:`${x.store} flagged low stock`,store:x.store,product:x.product,ts:now});
+    }
+  }
+  for(const [key,p] of prev){
+    if(!cur.has(key)){
+      events.push({uid:uid(),type:'not_seen',priority:'low',title:`Not returned in latest scan: ${p.product}`,detail:`${p.store} • availability may have changed`,store:p.store,product:p.product,ts:now});
+    }
+  }
+  return events.slice(0,80);
+}
+function latestAreaScan(){
+  return (state.areaScanHistory||[])[0]||null;
+}
+function lastAreaScanAgeMinutes(){
+  const last=latestAreaScan();
+  return last?reportAgeMinutes(last.checkedAt):Infinity;
+}
+async function maybeAutoScanArea(){
+  if(areaAutoScanAttempted||areaScanBusy)return;
+  areaAutoScanAttempted=true;
+  if(!state.areaScanSettings.autoRefresh)return;
+  if(!state.settings.zip||!inventoryBackendConnected())return;
+  const threshold=Math.max(1,Number(state.areaScanSettings.autoRefreshHours)||4)*60;
+  if(lastAreaScanAgeMinutes()<threshold)return;
+  await runAreaInventoryScan(true);
+}
+async function runAreaInventoryScan(silent=false){
+  ensureRealInventorySchema();
+  const zip=($('stockZip')?.value||state.settings.zip||'').trim();
+  const radius=Number($('stockRadius')?.value||state.settings.radius)||25;
+  if(!zip){if(!silent)toast('Enter a ZIP code first');return;}
+  if(!inventoryBackendConnected()){if(!silent)toast('Inventory backend is not connected');return;}
+  const scanGames=areaScanGames();
+  if(!scanGames.length){if(!silent)toast('Select at least one TCG');return;}
 
-    <div class="panel">
-      <div class="section-head"><div><h2>Search real inventory</h2><p>Enter the product once. 2GEN Vault sends the query, identifiers and search area to connected retailer sources.</p></div></div>
-      <div class="form-grid">
-        <label class="field full"><span>Product / set / SKU keywords</span><input id="stockQuery" value="${esc(stockQuery)}" placeholder="Prismatic Evolutions ETB, Lorcana booster box..."></label>
-        <label class="field"><span>TCG</span><select id="stockGame">${games.map(g=>`<option ${g===stockGame?'selected':''}>${g}</option>`).join('')}</select></label>
-        <label class="field"><span>Max price (optional)</span><input id="stockMaxPrice" type="number" min="0" step=".01" placeholder="49.99"></label>
-      </div>
-      <div style="margin:11px 0 7px" class="eyebrow">RETAILERS</div>
-      <div class="retailer-grid">${retailers.map(r=>`<button class="retailer-chip ${selectedRetailers.has(r)?'on':''}" onclick='toggleRetailer(${JSON.stringify(r)})'>${esc(r)}</button>`).join('')}</div>
-      <div class="action-row" style="margin-top:11px">
-        <button class="btn primary live-search-btn" onclick="runInventorySearch()">◎ SEARCH REAL INVENTORY</button>
-        <button class="btn" onclick="findNearbyStores()">⌖ Nearby stores</button>
-        <button class="btn green" onclick="saveStockWatch()">＋ Save watch</button>
-      </div>
-    </div>
+  state.settings.zip=zip;
+  state.settings.radius=radius;
+  state.settings.locationLabel=zip;
+  const previous=latestAreaScan()?.snapshot||[];
 
-    ${hasBackend
-      ? `<div class="notice good"><span>●</span><span><b>Real Inventory Engine configured.</b> Search results are labeled by source and checked time. Sources that cannot legally provide in-app inventory are shown as retailer checks instead of fake stock.</span></div>`
-      : `<div class="notice warn"><span>!</span><span><b>One-time Real Inventory setup is still required.</b> Your public GitHub Pages app cannot safely contain retailer API secrets. The v5 ZIP includes the secure free-worker backend. After its public URL is placed in config.js, searches run automatically without you entering store inventory.</span></div>`
+  areaScanBusy=true;
+  if(!silent)renderStock();
+
+  const all=[];
+  const errors=[];
+  const queries=[];
+  for(const game of scanGames){
+    for(const q of AREA_SCAN_QUERIES[game]||[])queries.push({game,q});
+  }
+
+  try{
+    for(let i=0;i<queries.length;i++){
+      const item=queries[i];
+      const params=new URLSearchParams({
+        q:item.q,game:item.game,zip,radius:String(radius),
+        retailers:[...selectedRetailers].join(',')
+      });
+      try{
+        const controller=new AbortController();
+        const timer=setTimeout(()=>controller.abort(),18000);
+        const r=await fetch(`${inventoryBackendBase()}/inventory?${params.toString()}`,{headers:{Accept:'application/json'},signal:controller.signal});
+        clearTimeout(timer);
+        if(!r.ok)throw new Error(`HTTP ${r.status}`);
+        const d=await r.json();
+        for(const raw of d.results||[]){
+          const x=normalizeInventoryResult(raw);
+          if(x.sourceType==='official_api'){
+            x.game=item.game;
+            all.push(x);
+          }
+        }
+        if(Array.isArray(d.providers)){
+          state.inventoryProviderStatus={connected:true,providers:d.providers,checkedAt:new Date().toISOString(),message:'Inventory service connected',version:d.version||''};
+        }
+      }catch(e){errors.push(`${item.game}: ${e.name==='AbortError'?'timeout':e.message||'failed'}`)}
+      if(i<queries.length-1)await new Promise(r=>setTimeout(r,180));
     }
 
-    <div class="panel inventory-provider-panel" style="margin-top:10px">
-      <div class="section-head"><div><div class="eyebrow">LIVE SOURCE STATUS</div><h2>Retailer connector network</h2><p>2GEN Vault clearly separates official API data from retailer-site checks.</p></div><button class="btn" onclick="checkInventoryBackendHealth(true).then(()=>renderStock())">Test connection</button></div>
+    state.areaInventoryResults=mergeInventoryResults(all);
+    const snapshot=areaSnapshotRows(state.areaInventoryResults);
+    const pulse=inventoryPulseDiff(previous,snapshot);
+    state.inventoryPulseEvents=[...pulse,...(state.inventoryPulseEvents||[])].slice(0,120);
+
+    state.areaScanHistory.unshift({
+      uid:uid(),zip,radius,games:[...scanGames],retailers:[...selectedRetailers],
+      stores:areaStoreGroups().length,results:state.areaInventoryResults.length,
+      errors,snapshot,checkedAt:new Date().toISOString()
+    });
+    state.areaScanHistory=state.areaScanHistory.slice(0,12);
+    areaSelectedStoreKey=areaStoreGroups()[0]?.key||null;
+    saveState();
+    if(!silent)toast(state.areaInventoryResults.length?`Verified inventory found at ${areaStoreGroups().length} store${areaStoreGroups().length===1?'':'s'}`:'No verified live inventory returned');
+  }finally{
+    areaScanBusy=false;
+    renderStock();
+  }
+}
+function clearAreaInventory(){
+  state.areaInventoryResults=[];areaSelectedStoreKey=null;saveState();renderStock();
+}
+function clearInventoryPulse(){
+  state.inventoryPulseEvents=[];saveState();renderStock();
+}
+function toggleSpecificProductSearch(){
+  stockSpecificSearchOpen=!stockSpecificSearchOpen;renderStock();
+}
+function renderInventoryPulse(){
+  const rows=(state.inventoryPulseEvents||[]).slice(0,12);
+  if(!rows.length)return `<div class="empty">After two verified area scans, Inventory Pulse will show newly detected products, price changes, low-stock flags, and items no longer returned by the provider.</div>`;
+  return rows.map(e=>`<div class="pulse-row ${esc(e.priority||'low')}">
+    <div class="pulse-icon">${e.type==='price_down'?'↓':e.type==='price_up'?'↗':e.type==='low_stock'?'!':e.type==='new'?'＋':'○'}</div>
+    <div class="grow"><strong>${esc(e.title)}</strong><span>${esc(e.detail)} • ${humanAge(e.ts)}</span></div>
+  </div>`).join('');
+}
+function renderAreaStoreCard(g){
+  return `<div class="area-store-card ${areaSelectedStoreKey===g.key?'active':''}">
+    <button class="area-store-main" onclick='selectAreaStore(${JSON.stringify(g.key)})'>
+      <div class="store-radar-icon">◉</div>
+      <div class="grow"><div class="eyebrow">${esc(g.retailer)} • VERIFIED INVENTORY</div><strong>${esc(g.store)}</strong><span>${esc(g.address||'Provider supplied store')} ${typeof g.distanceMiles==='number'?`• ${g.distanceMiles.toFixed(1)} mi`:''}</span></div>
+      <div class="hunt-score"><b>${g.huntScore}</b><span>HUNT SCORE</span></div>
+    </button>
+    <div class="area-store-kpis">
+      <span><b>${g.products.length}</b> products</span>
+      ${g.watchMatches.length?`<span class="match"><b>${g.watchMatches.length}</b> watch match${g.watchMatches.length===1?'':'es'}</span>`:''}
+      ${g.lowStock?`<span class="low"><b>${g.lowStock}</b> low stock</span>`:''}
+      <span><b>${g.bestPrice?money(g.bestPrice):'—'}</b> lowest</span>
+    </div>
+    <div class="area-store-foot">
+      <span>${humanAge(g.checkedAt)}</span>
+      <button class="mini-icon-btn ${g.favorite?'on':''}" onclick='toggleFavoriteInventoryStore(${JSON.stringify(g.key)})'>${g.favorite?'★':'☆'}</button>
+      <button class="link-btn" onclick='selectAreaStore(${JSON.stringify(g.key)})'>View inventory →</button>
+    </div>
+  </div>`;
+}
+function renderAreaProductCard(x){
+  const confidence=inventoryResultConfidence(x);
+  const matching=(state.stockWatches||[]).find(w=>w.enabled&&(watchMatchesText({product:x.product},w.product)||watchMatchesText({product:w.product},x.product)));
+  const targetHit=matching?.maxPrice&&x.price&&x.price<=Number(matching.maxPrice);
+  return `<div class="area-product-card">
+    ${x.image?`<img src="${esc(x.image)}" alt="">`:`<div class="area-product-placeholder">◈</div>`}
+    <div class="grow">
+      <div class="eyebrow">${esc(x.game||'TCG')} • ${esc(x.retailer)}${x.retailerSku?` • SKU ${esc(String(x.retailerSku))}`:''}</div>
+      <strong>${esc(x.product)}</strong>
+      <span>${x.status==='low_stock'?'Low stock':'In stock'}${x.pickupEligible?' • Pickup eligible':''}</span>
+      <div class="area-product-meta">
+        <b>${x.price?money(x.price):'Price not supplied'}</b>
+        ${matching?`<span class="watch-match">${targetHit?'TARGET HIT':'WATCH MATCH'}</span>`:''}
+        ${confidence!==null?`<span>${confidence}% source confidence</span>`:''}
+        <span>${humanAge(x.checkedAt)}</span>
+      </div>
+      <div class="action-row">
+        ${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Retailer ↗</a>`:''}
+        ${x.addToCartUrl?`<a class="btn green" href="${esc(x.addToCartUrl)}" target="_blank" rel="noreferrer">Cart ↗</a>`:''}
+        <button class="btn" onclick='openInventoryProduct(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Product</button>
+        <button class="btn" onclick='saveInventoryResultAsReport(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Snapshot</button>
+      </div>
+    </div>
+  </div>`;
+}
+function renderAreaStoreDetail(){
+  const g=selectedAreaStore();
+  if(!g)return `<div class="empty">Tap a verified store above to see every product found there.</div>`;
+  return `<div class="area-store-detail">
+    <div class="section-head"><div><div class="eyebrow">${esc(g.retailer)} • STORE INVENTORY</div><h2>${esc(g.store)}</h2><p>${esc(g.address||'')} ${typeof g.distanceMiles==='number'?`• ${g.distanceMiles.toFixed(1)} miles`:''}</p></div><div class="hunt-score large"><b>${g.huntScore}</b><span>HUNT SCORE</span></div></div>
+    ${g.watchMatches.length?`<div class="notice good"><span>★</span><span><b>${g.watchMatches.length} saved watch match${g.watchMatches.length===1?'':'es'} at this store.</b> Hunt Score uses your watches, target prices, distance and number of verified products. It is not a stock probability.</span></div>`:''}
+    <div class="action-row">
+      ${g.address?`<a class="btn primary" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(g.address)}" target="_blank" rel="noreferrer">Directions ↗</a>`:''}
+      <button class="btn" onclick='toggleFavoriteInventoryStore(${JSON.stringify(g.key)})'>${g.favorite?'★ Favorite':'☆ Favorite'}</button>
+    </div>
+    <div class="area-product-grid">${g.products.map(renderAreaProductCard).join('')}</div>
+  </div>`;
+}
+function renderNearbyStoreChecks(){
+  const rows=(state.nearbyStores||[]).slice(0,16);
+  if(!rows.length)return `<div class="empty">Tap “Find nearby stores” to discover physical TCG retailers around your ZIP. These are not marked in stock unless a connected provider verifies inventory.</div>`;
+  return rows.map(s=>`<div class="nearby-check-row">
+    <div class="grow"><strong>${esc(s.name||'Retailer')}</strong><span>${esc(s.address||s.shop||'Nearby store')} • ${Number(s.distance||0).toFixed(1)} mi</span></div>
+    <span class="stock-pill check">CHECK RETAILER</span>
+    <a class="btn" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.lat+','+s.lon)}" target="_blank" rel="noreferrer">Map ↗</a>
+  </div>`).join('');
+}
+
+function renderStock(){
+  ensureRealInventorySchema();
+  const hasBackend=inventoryBackendConnected();
+  const radius=Number(state.settings.radius)||25;
+  const groups=areaStoreGroups();
+  const last=latestAreaScan();
+  const scanGames=['Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece'];
+
+  $('stock').innerHTML=`
+    <div class="page-title">
+      <div><h1>Inventory Radar</h1><p>Scan your ZIP and radius first. 2GEN Vault finds verified TCG inventory from connected live sources, then lets you drill into each store.</p></div>
+      <span class="badge ${hasBackend?'primary':''}">${hasBackend?'● INVENTORY CONNECTED':'○ SETUP REQUIRED'}</span>
+    </div>
+
+    <div class="panel area-radar-hero">
+      <div class="section-head"><div><div class="eyebrow">2GEN NEARBY INVENTORY RADAR</div><h2>Scan everything around me</h2><p>No product name required. Choose your area and TCGs, then scan connected live sources.</p></div><span class="badge primary">${areaScanBusy?'SCANNING…':'AREA FIRST'}</span></div>
+      <div class="form-grid">
+        <label class="field"><span>ZIP code</span><input id="stockZip" inputmode="numeric" value="${esc(state.settings.zip||'')}" placeholder="28752"></label>
+        <label class="field"><span>Radius</span><select id="stockRadius">${[5,10,15,25,50,75,100].map(v=>`<option value="${v}" ${v===radius?'selected':''}>${v} miles</option>`).join('')}</select></label>
+      </div>
+      <div class="area-game-selector">${scanGames.map(g=>`<button class="${areaScanGames().includes(g)?'on':''}" onclick='toggleAreaGame(${JSON.stringify(g)})'>${esc(g)}</button>`).join('')}</div>
+      <div class="action-row radar-actions">
+        <button class="btn primary area-scan-btn" ${areaScanBusy?'disabled':''} onclick="runAreaInventoryScan(false)">${areaScanBusy?'Scanning connected sources…':'◉ SCAN MY AREA'}</button>
+        <button class="btn" onclick="saveStockArea()">Save area</button>
+        <button class="btn" onclick="useMyLocation()">⌖ Use location</button>
+        <button class="btn" onclick="findNearbyStores()">Nearby stores</button>
+      </div>
+      <div class="auto-refresh-strip">
+        <label><input type="checkbox" ${state.areaScanSettings.autoRefresh?'checked':''} onchange="setAreaAutoRefresh(this.checked)"> Smart refresh when Stock opens</label>
+        <select onchange="setAreaAutoRefreshHours(this.value)">${[1,2,4,6,12,24].map(h=>`<option value="${h}" ${Number(state.areaScanSettings.autoRefreshHours)===h?'selected':''}>after ${h}h</option>`).join('')}</select>
+        <span>${last?`Last scan ${humanAge(last.checkedAt)}`:'No scan yet'}</span>
+      </div>
+      <div class="notice ${hasBackend?'good':'warn'}" style="margin-top:10px"><span>${hasBackend?'●':'!'}</span><span>${hasBackend?'<b>Automatic area scanning is ready.</b> Verified store cards come only from connected authorized inventory sources.':'Connect the Real Inventory backend first.'}</span></div>
+    </div>
+
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Verified stores</span><strong>${groups.length}</strong><small>${radius} mile radius</small></div>
+      <div class="stat-card"><span>Verified products</span><strong>${officialAreaResults().length}</strong><small>Current area scan</small></div>
+      <div class="stat-card"><span>Watch matches</span><strong>${groups.reduce((n,g)=>n+g.watchMatches.length,0)}</strong><small>Your saved hunts</small></div>
+      <div class="stat-card"><span>Pulse changes</span><strong>${(state.inventoryPulseEvents||[]).length}</strong><small>Recent scan differences</small></div>
+    </div>
+
+    <div class="panel pulse-panel">
+      <div class="section-head"><div><div class="eyebrow">INVENTORY PULSE</div><h2>What changed near you?</h2><p>Compares verified provider results between area scans. “Not returned” does not automatically mean sold out.</p></div>${state.inventoryPulseEvents.length?`<button class="link-btn" onclick="clearInventoryPulse()">Clear</button>`:''}</div>
+      ${renderInventoryPulse()}
+    </div>
+
+    <div class="panel">
+      <div class="section-head"><div><div class="eyebrow">VERIFIED STORES</div><h2>Best stores to check first</h2><p>Sorted by favorites, your Hunt Score, saved watch matches and distance.</p></div>${state.areaInventoryResults.length?`<button class="link-btn" onclick="clearAreaInventory()">Clear scan</button>`:''}</div>
+      <div class="area-store-grid">${groups.length?groups.map(renderAreaStoreCard).join(''):`<div class="empty">${areaScanBusy?'Scanning live inventory…':'Tap SCAN MY AREA. Verified inventory will appear here once a connected provider returns results.'}</div>`}</div>
+    </div>
+
+    <div class="panel" id="areaStoreDetail">${renderAreaStoreDetail()}</div>
+
+    <div class="panel">
+      <div class="section-head"><div><div class="eyebrow">OTHER NEARBY STORES</div><h2>Retailers to check</h2><p>Physical stores discovered around your area. They are not called in stock without a verified connector.</p></div><button class="btn" onclick="findNearbyStores()">Refresh stores</button></div>
+      ${renderNearbyStoreChecks()}
+    </div>
+
+    <div class="panel specific-search-panel">
+      <div class="section-head"><div><div class="eyebrow">EXACT PRODUCT HUNT</div><h2>Looking for one exact product?</h2><p>Keep the original product-first inventory search available when you need it.</p></div><button class="btn" onclick="toggleSpecificProductSearch()">${stockSpecificSearchOpen?'Hide':'Open search'}</button></div>
+      ${stockSpecificSearchOpen?`
+        <div class="form-grid">
+          <label class="field full"><span>Product / UPC / SKU</span><input id="stockQuery" value="${esc(stockQuery)}" placeholder="Prismatic Evolutions ETB"></label>
+          <label class="field"><span>TCG</span><select id="stockGame">${games.map(g=>`<option ${g===stockGame?'selected':''}>${g}</option>`).join('')}</select></label>
+          <label class="field"><span>Max price</span><input id="stockMaxPrice" type="number" min="0" step=".01" placeholder="49.99"></label>
+        </div>
+        <div style="margin:11px 0 7px" class="eyebrow">RETAILERS</div>
+        <div class="retailer-grid">${retailers.map(r=>`<button class="retailer-chip ${selectedRetailers.has(r)?'on':''}" onclick='toggleRetailer(${JSON.stringify(r)})'>${esc(r)}</button>`).join('')}</div>
+        <div class="action-row" style="margin-top:11px"><button class="btn primary live-search-btn" onclick="runInventorySearch()">◎ Search exact product</button><button class="btn green" onclick="saveStockWatch()">＋ Save watch</button></div>
+        <div style="margin-top:10px">${renderInventoryResults()}</div>`:''}
+    </div>
+
+    <div class="panel inventory-provider-panel">
+      <div class="section-head"><div><div class="eyebrow">SOURCE STATUS</div><h2>Retailer connector network</h2><p>Official API results and retailer-site checks remain clearly separated.</p></div><button class="btn" onclick="checkInventoryBackendHealth(true).then(()=>renderStock())">Test connection</button></div>
       ${retailerCapabilityMarkup()}
     </div>
 
-
-
     <div class="panel radar-panel">
-      <div class="section-head"><div><div class="eyebrow">2GEN RESTOCK RADAR</div><h2>Watch intelligence</h2><p>Ranks your saved hunts using only real reports and connected inventory results already available to the app.</p></div><span class="badge primary">BETA</span></div>
-      <div>${renderRestockRadar()}</div>
+      <div class="section-head"><div><div class="eyebrow">RESTOCK RADAR</div><h2>Saved product intelligence</h2><p>Your targeted product watches still rank alongside area-first scanning.</p></div></div>
+      ${renderRestockRadar()}
     </div>
 
     <div class="panel">
-      <div class="section-head"><div><h2>Watch detail</h2><p>Observed retailer prices and recent sightings for one product watch.</p></div></div>
-      ${renderSelectedWatch()}
-    </div>
-
-    <div class="panel hot-panel">
-      <div class="section-head"><div><div class="eyebrow">HOT DROPS</div><h2>What collectors are seeing</h2><p>Heat is calculated from recency and repeated sightings — it is not a retailer stock guarantee.</p></div></div>
-      ${renderHotDrops()}
-    </div>
-
-    <div class="panel network-panel">
-      <div class="section-head">
-        <div><div class="eyebrow">2GEN LIVE STOCK NETWORK</div><h2>Hunt Mode</h2><p>Turn nearby stores into a collector run. Check stops off as you go and report what you actually find.</p></div>
-        <span class="badge ${state.huntRoute.length?'primary':''}">${state.huntRoute.length?state.huntRoute.filter(x=>!x.visited).length+' LEFT':'READY'}</span>
-      </div>
-      <div class="action-row">
-        <button class="btn primary" onclick="buildHuntRoute()">⌖ Build hunt</button>
-        <button class="btn" onclick="clearHuntRoute()">Clear route</button>
-      </div>
-      <div id="huntRoute" style="margin-top:10px">${renderHuntRoute()}</div>
-    </div>
-
-
-    <div class="panel community-panel">
-      <div class="section-head">
-        <div><div class="eyebrow">2GEN COMMUNITY NETWORK</div><h2>Collector reports</h2><p>See recent reports from other collectors after the free cloud project is connected.</p></div>
-        <span class="badge ${signedIn()?'primary':''}">${signedIn()?'SIGNED IN':cloudReady()?'GUEST':'LOCAL ONLY'}</span>
-      </div>
-      <div class="action-row">
-        <button class="btn primary" onclick="refreshCommunityReports()">↻ Refresh reports</button>
-        <button class="btn" onclick="openTool('account')">${signedIn()?'My account':'Sign in'}</button>
-      </div>
-      <div id="communityReports" style="margin-top:10px">${renderCommunityReports()}</div>
-    </div>
-
-    <div class="panel">
-      <div class="section-head"><div><h2>Community-style freshness</h2><p>Your reports already use freshness/confidence scoring. When cloud accounts are added, the same system can combine multiple collector confirmations.</p></div></div>
-      <div class="confidence-legend">
-        <span><i class="confidence-dot c-high"></i> 85–99 very fresh</span>
-        <span><i class="confidence-dot c-mid"></i> 50–84 recent</span>
-        <span><i class="confidence-dot c-low"></i> under 50 stale</span>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="section-head"><div><h2>Real inventory results</h2><p id="inventoryResultCaption">${state.inventoryResults.length ? `${state.inventoryResults.length} current/saved results` : 'Search a product above.'}</p></div><button class="link-btn" onclick="clearInventoryResults()">Clear</button></div>
-      <div id="inventoryResults">${renderInventoryResults()}</div>
-    </div>
-
-    <div class="panel">
-      <div class="section-head"><div><h2>Nearby stores</h2><p>Real nearby place discovery from OpenStreetMap based on your saved search area.</p></div><button class="link-btn" onclick="findNearbyStores()">Refresh</button></div>
-      <div id="nearbyStores">${renderNearbyStores()}</div>
-    </div>
-
-    <div class="panel">
-      <div class="section-head"><div><h2>Retailer-verified fallback checks</h2><p>For retailers without a connected official feed, jump to the retailer's own search/availability experience rather than showing invented stock.</p></div></div>
-      <div class="retailer-grid">${[...selectedRetailers].map(r=>`<button class="retailer-chip on" onclick='openRetailerSearch(${JSON.stringify(r)}, document.getElementById("stockQuery")?.value || "")'>↗ ${esc(r)}</button>`).join('') || '<span class="tiny">Select at least one retailer above.</span>'}</div>
-    </div>
-
-    <div class="panel">
-      <div class="section-head"><div><h2>Stock watches</h2><p>Products you want 2GEN Vault to track when the live connector is active.</p></div></div>
+      <div class="section-head"><div><h2>Stock watches</h2><p>Specific products you want prioritized.</p></div></div>
       ${renderStockWatches()}
-    </div>
-
-    <div class="panel">
-      <div class="section-head"><div><h2>Your stock reports</h2><p>Log what you actually saw in stores. These are local to your phone in the Pages build.</p></div><button class="btn" onclick="openTool('stockreport')">＋ Add report</button></div>
-      ${state.stockReports.length ? [...state.stockReports].sort((a,b)=>new Date(b.ts)-new Date(a.ts)).slice(0,10).map(r=>{
-        const cs=confidenceScore(r);
-        return `<div class="stock-report-card">
-          <div class="stock-report-head">
-            <div class="thumb square"><b>${r.status==='In stock'?'✓':r.status==='Low stock'?'!':'×'}</b></div>
-            <div class="grow"><strong>${esc(r.product)}</strong><span>${esc(r.store)} • ${esc(r.status)} • ${humanAge(r.ts)}</span></div>
-            <div class="right"><strong>${money(Number(r.price))}</strong><span class="confidence-badge ${cs>=85?'high':cs>=50?'mid':'low'}">${cs}% ${confidenceLabel(cs)}</span></div>
-          </div>
-          <div class="report-actions">
-            <button class="btn green" onclick="confirmStockReport('${r.uid}','still')">✓ Still there</button>
-            <button class="btn red" onclick="confirmStockReport('${r.uid}','gone')">× Sold out</button>
-            <button class="btn" onclick="buyFromReport('${r.uid}')">$ Bought it</button>
-            <button class="remove" onclick="removeStockReport('${r.uid}')">Delete</button>
-          </div>
-        </div>`
-      }).join('') : `<div class="empty">No stock reports yet.</div>`}
     </div>`;
-}
 
+  setTimeout(()=>maybeAutoScanArea(),0);
+}
 function toggleRetailer(name){
   selectedRetailers.has(name) ? selectedRetailers.delete(name) : selectedRetailers.add(name);
   renderStock();
@@ -1842,52 +2129,33 @@ async function runInventorySearch(){
 }
 function renderInventoryResults(){
   ensureRealInventorySchema();
-  if(!state.inventoryResults.length)return `<div class="empty">No automatic inventory results yet. Search above. If a retailer has no supported API connector, use its retailer-verified fallback button instead.</div>`;
+  if(!state.inventoryResults.length)return `<div class="empty">No exact-product results yet.</div>`;
   return state.inventoryResults.map(raw=>{
     const x=normalizeInventoryResult(raw);
+    const retailerCheck=x.sourceType==='retailer_verified'||x.status==='retailer_check';
     const confidence=inventoryResultConfidence(x);
-    const label=inventoryStatusLabel(x);
-    const cls=inventoryStatusClass(x);
+    if(retailerCheck){
+      return `<div class="inventory-card real-inventory-card retailer-check-card">
+        <div class="topline"><div class="grow"><div class="eyebrow">${esc(x.retailer)} • RETAILER CHECK</div><h3>${esc(x.product)}</h3><p>Open ${esc(x.retailer)} to verify availability on the retailer's own site.</p></div><span class="stock-pill check">CHECK RETAILER</span></div>
+        <div class="retailer-check-note"><span>↗</span><div><strong>Not an in-stock result</strong><p>No stock, distance, quantity, price or confidence is being claimed.</p></div></div>
+        <div class="action-row">${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Open ${esc(x.retailer)} ↗</a>`:''}<button class="btn" onclick='openInventoryProduct(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Product</button></div>
+      </div>`;
+    }
     const qty=x.quantity===null?'Not provided':x.quantity;
-    const verified=x.sourceType==='official_api';
     return `<div class="inventory-card real-inventory-card">
-      <div class="topline">
-        ${x.image?`<img class="inventory-product-img" src="${esc(x.image)}" alt="">`:''}
-        <div class="grow">
-          <div class="eyebrow">${esc(x.retailer)} • ${verified?'OFFICIAL API':'RETAILER CHECK'}</div>
-          <h3>${esc(x.product)}</h3>
-          <p>${esc(x.store||'')} ${x.address?`• ${esc(x.address)}`:''}</p>
-        </div>
-        <span class="stock-pill ${cls}">${label}</span>
-      </div>
-      <div class="meta-grid">
-        <div class="meta"><span>Price</span><strong>${x.price?money(x.price):'—'}</strong></div>
-        <div class="meta"><span>Quantity</span><strong>${esc(String(qty))}</strong></div>
-        <div class="meta"><span>Distance</span><strong>${typeof x.distanceMiles==='number'?x.distanceMiles.toFixed(1)+' mi':'—'}</strong></div>
-        <div class="meta"><span>Checked</span><strong>${humanAge(x.checkedAt)}</strong></div>
-      </div>
-      <div class="inventory-trust-row">
-        <span class="confidence-badge ${confidence>=85?'high':confidence>=60?'mid':'low'}">${confidence}% source confidence</span>
-        ${x.lowStock?`<span class="stock-pill low">LOW STOCK FLAG</span>`:''}
-        ${x.retailerSku?`<span>SKU ${esc(String(x.retailerSku))}</span>`:''}
-      </div>
-      <div class="action-row">
-        ${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Open retailer ↗</a>`:''}
-        ${x.addToCartUrl?`<a class="btn green" href="${esc(x.addToCartUrl)}" target="_blank" rel="noreferrer">Cart ↗</a>`:''}
-        <button class="btn" onclick='saveInventoryResultAsReport(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Save snapshot</button>
-        <button class="btn green" onclick='buyInventoryResult(${JSON.stringify(x).replace(/'/g,"&#39;")})'>$ Bought it</button>
-        <button class="btn" onclick='openInventoryProduct(${JSON.stringify(x).replace(/'/g,"&#39;")})'>◈ Product</button>
-      </div>
-      <div class="inventory-source-line">
-        <span>Source: ${esc(x.sourceAttribution)}</span>
-        ${x.sourceAttributionUrl?`<a href="${esc(x.sourceAttributionUrl)}" target="_blank" rel="noreferrer">Provider info ↗</a>`:''}
-      </div>
-      ${x.provider==='Best Buy'?`<a class="bestbuy-attribution" href="https://developer.bestbuy.com" target="_blank" rel="noreferrer"><img src="https://developer.bestbuy.com/images/bestbuy-logo.png" alt="Best Buy Developer API"><span>Best Buy data via Developer API</span></a>`:''}
+      <div class="topline">${x.image?`<img class="inventory-product-img" src="${esc(x.image)}" alt="">`:''}<div class="grow"><div class="eyebrow">${esc(x.retailer)} • OFFICIAL API</div><h3>${esc(x.product)}</h3><p>${esc(x.store||'')} ${x.address?`• ${esc(x.address)}`:''}</p></div><span class="stock-pill ${inventoryStatusClass(x)}">${inventoryStatusLabel(x)}</span></div>
+      <div class="meta-grid"><div class="meta"><span>Price</span><strong>${x.price?money(x.price):'—'}</strong></div><div class="meta"><span>Quantity</span><strong>${esc(String(qty))}</strong></div><div class="meta"><span>Distance</span><strong>${typeof x.distanceMiles==='number'?x.distanceMiles.toFixed(1)+' mi':'—'}</strong></div><div class="meta"><span>Checked</span><strong>${humanAge(x.checkedAt)}</strong></div></div>
+      <div class="inventory-trust-row">${confidence!==null?`<span class="confidence-badge ${confidence>=85?'high':confidence>=60?'mid':'low'}">${confidence}% source confidence</span>`:''}${x.lowStock?`<span class="stock-pill low">LOW STOCK FLAG</span>`:''}</div>
+      <div class="action-row">${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Retailer ↗</a>`:''}${x.addToCartUrl?`<a class="btn green" href="${esc(x.addToCartUrl)}" target="_blank" rel="noreferrer">Cart ↗</a>`:''}<button class="btn" onclick='saveInventoryResultAsReport(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Snapshot</button><button class="btn green" onclick='buyInventoryResult(${JSON.stringify(x).replace(/'/g,"&#39;")})'>$ Bought it</button><button class="btn" onclick='openInventoryProduct(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Product</button></div>
     </div>`;
   }).join('');
 }
 function saveInventoryResultAsReport(raw){
   const x=normalizeInventoryResult(raw);
+  if(x.sourceType==='retailer_verified'||x.status==='retailer_check'){
+    toast('Retailer checks are links, not verified inventory snapshots');
+    return;
+  }
   const p=x.productId?catalogProductById(x.productId):findCatalogMatches(x.product)[0]||null;
   const report={
     uid:uid(),productId:p?.uid||x.productId||'',store:x.store||x.retailer||'',retailer:x.retailer||'',
@@ -2065,6 +2333,11 @@ function buyFromReport(id){
   logPurchaseAndSealed(r.product,r.store,Number(r.price)||0);
 }
 function buyInventoryResult(x){
+  x=normalizeInventoryResult(x);
+  if(x.sourceType==='retailer_verified'||x.status==='retailer_check'){
+    toast('Open the retailer first, then log a purchase after you actually buy it');
+    return;
+  }
   logPurchaseAndSealed(x.product||'TCG product',x.store||x.retailer||'Retailer',Number(x.price)||0);
 }
 function logPurchaseAndSealed(product,merchant,defaultPrice){
@@ -5721,7 +5994,7 @@ function exportCollectionCSV(){
 }
 
 Object.assign(window,{
-  switchTab,openVault,openTool,toggleRetailer,saveStockArea,useMyLocation,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
+  switchTab,openVault,openTool,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,

@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault v6 \u2014 Nearby Inventory Radar: enter ZIP/radius, automatically scan connected live TCG inventory, group by store, then drill into store products.",
+  "description": "2GEN Vault v7 \u2014 Nearby Inventory Radar + Inventory Pulse with area-first live scans, store drill-down, watch-aware Hunt Scores, favorites and scan-change intelligence.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
