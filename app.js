@@ -43,6 +43,8 @@ const seed = {
   ripSessions: [],
   portfolioSnapshots: [],
   scanQueue: [],
+  cardPriceHistory: {},
+  priceRefreshLog: [],
   scannerSettings: {gradingValueThreshold:25, preferredBinder:'Main Binder'},
   inventoryResults: [],
   nearbyStores: [],
@@ -90,6 +92,8 @@ let scannerOcrText = '';
 let scannerOcrConfidence = null;
 let scannerAutoCandidates = [];
 let scannerLastMarketLookupAt = null;
+let marketRefreshBusy = false;
+let marketSelectedCardId = null;
 let toastTimer;
 
 function $(id){ return document.getElementById(id); }
@@ -278,6 +282,159 @@ function totals(){
   const market = cardMarket + sealedValue;
   const cost = cardCost + sealedCost;
   return {cards,cardMarket,cardCost,sealedValue,sealedCost,market,cost,gain:market-cost,pct:cost?((market-cost)/cost*100):0};
+}
+
+
+function ensurePriceHistorySchema(){
+  if(!state.cardPriceHistory || typeof state.cardPriceHistory!=='object') state.cardPriceHistory={};
+  if(!Array.isArray(state.priceRefreshLog)) state.priceRefreshLog=[];
+}
+function captureCardPrice(card, source='Live card data'){
+  ensurePriceHistorySchema();
+  if(!card?.id) return;
+  const market=Number(card.market);
+  const low=Number(card.low);
+  if(!Number.isFinite(market) && !Number.isFinite(low)) return;
+
+  const rows=state.cardPriceHistory[card.id] ||= [];
+  const now=new Date();
+  const day=now.toISOString().slice(0,10);
+  const point={
+    ts:now.toISOString(),
+    day,
+    market:Number.isFinite(market)?market:null,
+    low:Number.isFinite(low)?low:null,
+    source
+  };
+
+  const existing=rows.find(r=>r.day===day);
+  if(existing) Object.assign(existing, point);
+  else rows.push(point);
+
+  state.cardPriceHistory[card.id]=rows
+    .sort((a,b)=>new Date(a.ts)-new Date(b.ts))
+    .slice(-365);
+}
+function priceHistoryFor(cardId){
+  ensurePriceHistorySchema();
+  return (state.cardPriceHistory[cardId]||[]).slice().sort((a,b)=>new Date(a.ts)-new Date(b.ts));
+}
+function previousMarketFor(cardId){
+  const h=priceHistoryFor(cardId).filter(x=>Number.isFinite(Number(x.market)));
+  if(h.length<2) return null;
+  return Number(h[h.length-2].market);
+}
+function marketDeltaFor(card){
+  const current=Number(card?.market);
+  const prev=previousMarketFor(card?.id);
+  if(!Number.isFinite(current) || !Number.isFinite(prev) || prev===0) return {amount:null,pct:null,previous:prev};
+  const amount=current-prev;
+  return {amount,pct:amount/prev*100,previous:prev};
+}
+function uniqueCollectionCards(){
+  const m=new Map();
+  for(const i of state.collection||[]){
+    if(i.card?.id && !m.has(i.card.id)) m.set(i.card.id,i.card);
+  }
+  return [...m.values()];
+}
+function livePokemonCardFromApi(c){
+  const ps=Object.values(c.tcgplayer?.prices||{});
+  const market=ps.find(p=>typeof p.market==='number')?.market;
+  const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
+  return {
+    id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,
+    set:c.set?.name||'Unknown set',setId:c.set?.id||'',
+    setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,
+    setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',
+    number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',
+    supertype:c.supertype||'',subtypes:c.subtypes||[],
+    image:c.images?.small||c.images?.large||'',
+    market,low:lows.length?Math.min(...lows):undefined,
+    url:c.tcgplayer?.url||''
+  };
+}
+async function fetchLiveCardById(cardId){
+  const r=await fetch(`https://api.pokemontcg.io/v2/cards/${encodeURIComponent(cardId)}`);
+  if(!r.ok) throw new Error(`Card lookup ${r.status}`);
+  const d=await r.json();
+  if(!d?.data) throw new Error('Card data missing');
+  return livePokemonCardFromApi(d.data);
+}
+function applyLivePriceToVault(card){
+  for(const i of state.collection||[]){
+    if(i.card?.id===card.id){
+      i.card={...i.card,...card};
+    }
+  }
+  for(const w of state.wishlist||[]){
+    if(w.card?.id===card.id) w.card={...w.card,...card};
+  }
+  for(const a of state.priceAlerts||[]){
+    if(a.card?.id===card.id) a.card={...a.card,...card};
+  }
+  for(const s of state.ripSessions||[]){
+    for(const p of s.pulls||[]){
+      if(p.card?.id===card.id) p.card={...p.card,...card};
+    }
+  }
+  for(const q of state.scanQueue||[]){
+    if(q.card?.id===card.id) q.card={...q.card,...card};
+  }
+}
+async function refreshVaultPrices(){
+  if(marketRefreshBusy) return;
+  const cards=uniqueCollectionCards().filter(c=>c.game==='Pokemon' && c.provider==='pokemontcg');
+  if(!cards.length){toast('No live Pokémon cards in the Vault yet');return;}
+
+  marketRefreshBusy=true;
+  renderTools();
+  let ok=0, failed=0;
+  const started=new Date().toISOString();
+
+  for(let idx=0; idx<cards.length; idx++){
+    const card=cards[idx];
+    const status=$('marketRefreshStatus');
+    if(status) status.textContent=`Refreshing ${idx+1}/${cards.length} • ${card.name}`;
+    try{
+      const live=await fetchLiveCardById(card.id);
+      captureCardPrice(live,'Vault price refresh');
+      applyLivePriceToVault(live);
+      ok++;
+    }catch{
+      failed++;
+    }
+    // Gentle pacing for the public API.
+    if(idx<cards.length-1) await new Promise(r=>setTimeout(r,120));
+  }
+
+  state.priceRefreshLog.unshift({
+    uid:uid(),started,finished:new Date().toISOString(),requested:cards.length,updated:ok,failed
+  });
+  state.priceRefreshLog=state.priceRefreshLog.slice(0,50);
+  saveState();
+  ensureDailySnapshot();
+  marketRefreshBusy=false;
+  renderTools();
+  toast(`Prices refreshed • ${ok} updated${failed?` • ${failed} failed`:''}`);
+}
+function marketMovers(){
+  const rows=uniqueCollectionCards().map(card=>{
+    const d=marketDeltaFor(card);
+    return {card,...d};
+  }).filter(x=>Number.isFinite(x.pct));
+  return rows.sort((a,b)=>b.pct-a.pct);
+}
+function marketHistorySvg(cardId,width=500,height=140){
+  const h=priceHistoryFor(cardId).filter(x=>Number.isFinite(Number(x.market))).slice(-30);
+  if(!h.length) return `<div class="empty">No price history yet. Refresh Vault Prices to begin tracking.</div>`;
+  return svgSparkline(h.map(x=>Number(x.market)),width,height);
+}
+function priceTargetStatus(alert){
+  const market=Number(alert.card?.market);
+  const target=Number(alert.target);
+  if(!Number.isFinite(market)||!Number.isFinite(target)) return {hit:false,diff:null};
+  return {hit:market<=target,diff:market-target};
 }
 
 function currentSnapshot(){
@@ -524,6 +681,7 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('sets')"><span class="big-icon">▦</span><b>Master sets</b><span>Live set checklists, owned progress and missing-card tracking.</span></button>
         <button class="quick-card" onclick="openTool('rips')"><span class="big-icon">✦</span><b>Rip sessions</b><span>Track openings, pulls, value, hits, ROI and set progress.</span></button>
         <button class="quick-card" onclick="openTool('analytics')"><span class="big-icon">⌁</span><b>Dashboard Pro</b><span>Growth, spending, allocation, positions, sets and rip performance.</span></button>
+        <button class="quick-card" onclick="openTool('market')"><span class="big-icon">↗</span><b>Market Pulse</b><span>Refresh live card pricing, track snapshots and watch price targets.</span></button>
       </div>
     </div>
 
@@ -1366,6 +1524,8 @@ async function doCardSearch(e){
       const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
       return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',supertype:c.supertype||'',subtypes:c.subtypes||[],image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
     });
+    discoverResults.forEach(c=>captureCardPrice(c,'Card search'));
+    saveState();
     renderDiscover(); toast(`${discoverResults.length} cards found`);
   }catch(e){ discoverResults=[]; renderDiscover(); toast(e.message||'Card search failed'); }
 }
@@ -1406,6 +1566,7 @@ function renderCardDetail(card){
   const avg=averageCostForCard(card.id);
   const market=Number(card.market)||0;
   const gain=total ? collectionValueForCard(card.id)-avg*total : 0;
+  const priceDelta=marketDeltaFor(card);
   return `<div class="card-detail">
     <div class="card-detail-hero">
       ${cardArt(card)}
@@ -1417,6 +1578,7 @@ function renderCardDetail(card){
       <div class="stat-card"><span>Owned</span><strong>${total}</strong><small>${rawQty} raw • ${gradedQty} graded</small></div>
       <div class="stat-card"><span>Avg cost</span><strong>${total?money(avg):'—'}</strong><small>Your copies</small></div>
       <div class="stat-card"><span>Unrealized</span><strong class="${gain>=0?'good':'bad'}">${total?money(gain):'—'}</strong><small>Using card market</small></div>
+      <div class="stat-card"><span>Snapshot move</span><strong class="${Number(priceDelta.pct)>=0?'good':'bad'}">${Number.isFinite(priceDelta.pct)?(priceDelta.pct>=0?'+':'')+priceDelta.pct.toFixed(1)+'%':'—'}</strong><small>Vs prior saved price</small></div>
     </div>
     <div class="action-row">
       <button class="btn primary" onclick='addCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>＋ Add raw</button>
@@ -1608,6 +1770,7 @@ function renderTools(){
   $('tools').innerHTML = `
     <div class="page-title"><div><h1>Collector Tools</h1><p>The rest of your collecting workflow, all under one roof.</p></div></div>
     <div class="tool-menu">
+      ${toolButton('market','↗','Market Pulse','Live price tracking')}
       ${toolButton('analytics','⌁','Dashboard Pro','Collection analytics')}
       ${toolButton('rips','✦','Rip Sessions','Openings & pull analytics')}
       ${toolButton('sets','▦','Sets','Master-set explorer')}
@@ -1627,6 +1790,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='market') return renderMarketPulseTool();
   if(toolsTab==='analytics') return renderAnalyticsTool();
   if(toolsTab==='rips') return renderRipSessionsTool();
   if(toolsTab==='sets') return renderSetExplorerTool();
@@ -1644,6 +1808,100 @@ function renderToolBody(){
 
 
 
+
+
+function renderMarketPulseTool(){
+  ensurePriceHistorySchema();
+  const cards=uniqueCollectionCards();
+  const movers=marketMovers();
+  const selected=marketSelectedCardId
+    ? cards.find(c=>c.id===marketSelectedCardId)
+    : cards.find(c=>priceHistoryFor(c.id).length) || cards[0] || null;
+  if(selected && !marketSelectedCardId) marketSelectedCardId=selected.id;
+
+  const gainers=movers.slice(0,5);
+  const losers=movers.slice().sort((a,b)=>a.pct-b.pct).slice(0,5);
+  const targets=(state.priceAlerts||[]).map(a=>({alert:a,status:priceTargetStatus(a)}))
+    .sort((a,b)=>(a.status.hit===b.status.hit?0:a.status.hit?-1:1));
+
+  const lastRefresh=state.priceRefreshLog?.[0]||null;
+  const trackedHistory=Object.values(state.cardPriceHistory||{}).filter(v=>Array.isArray(v)&&v.length).length;
+
+  return `<div class="panel market-hero">
+    <div class="section-head">
+      <div><div class="eyebrow">2GEN MARKET PULSE</div><h2>Price intelligence</h2><p>Refresh current Pokémon market fields, keep local price snapshots and watch movement over time.</p></div>
+      <button class="btn primary" onclick="refreshVaultPrices()" ${marketRefreshBusy?'disabled':''}>${marketRefreshBusy?'Refreshing…':'↻ Refresh Vault Prices'}</button>
+    </div>
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Live cards in Vault</span><strong>${cards.filter(c=>c.provider==='pokemontcg').length}</strong><small>Eligible for provider refresh</small></div>
+      <div class="stat-card"><span>Cards with history</span><strong>${trackedHistory}</strong><small>Local snapshot series</small></div>
+      <div class="stat-card"><span>Price targets</span><strong>${state.priceAlerts.length}</strong><small>${targets.filter(x=>x.status.hit).length} currently hit</small></div>
+      <div class="stat-card"><span>Last refresh</span><strong>${lastRefresh?humanAge(lastRefresh.finished):'—'}</strong><small>${lastRefresh?`${lastRefresh.updated} updated`:'Not run yet'}</small></div>
+    </div>
+    ${marketRefreshBusy?`<div class="notice"><span>↻</span><span id="marketRefreshStatus">Preparing price refresh…</span></div>`:''}
+    <div class="notice warn" style="margin-top:10px"><span>!</span><span>“Market movement” below means change between <b>your saved 2GEN Vault price snapshots</b>. It is not a complete exchange-wide historical chart and is not investment advice.</span></div>
+  </div>
+
+  <div class="analytics-grid">
+    <div class="panel">
+      <div class="section-head"><div><h2>Snapshot gainers</h2><p>Largest percentage increases between your two latest saved market points.</p></div></div>
+      ${gainers.length?gainers.map(m=>marketMoverRow(m)).join(''):`<div class="empty">Refresh prices on at least two different days/price points to calculate movement.</div>`}
+    </div>
+    <div class="panel">
+      <div class="section-head"><div><h2>Snapshot decliners</h2><p>Largest percentage decreases between your two latest saved market points.</p></div></div>
+      ${losers.length?losers.map(m=>marketMoverRow(m)).join(''):`<div class="empty">No snapshot movement yet.</div>`}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>Card price history</h2><p>Choose a tracked card to inspect its local market snapshots.</p></div></div>
+    ${cards.length?`
+      <div class="form-grid">
+        <label class="field full"><span>Tracked card</span><select onchange="selectMarketCard(this.value)">${cards.map(c=>`<option value="${esc(c.id)}" ${selected?.id===c.id?'selected':''}>${esc(c.name)} • ${esc(c.set)} • ${esc(c.number||'')}</option>`).join('')}</select></label>
+      </div>
+      ${selected?renderMarketCardHistory(selected):''}
+    `:`<div class="empty">Add live Pokémon cards to your Vault first.</div>`}
+  </div>
+
+  <div class="analytics-grid">
+    <div class="panel">
+      <div class="section-head"><div><h2>Price targets</h2><p>Cards you want to watch below a target price.</p></div></div>
+      ${targets.length?targets.slice(0,12).map(({alert,status})=>`<div class="compact-row">${cardArt(alert.card)}<div class="grow"><strong>${esc(alert.card.name)}</strong><span>Target ${money(Number(alert.target))} • Current ${money(Number(alert.card.market))}</span></div><div class="right"><span class="stock-pill ${status.hit?'in':'low'}">${status.hit?'TARGET HIT':'WATCHING'}</span>${Number.isFinite(status.diff)?`<small class="${status.hit?'good':'bad'}">${status.diff<=0?'Below by ':'Above by '}${money(Math.abs(status.diff))}</small>`:''}</div></div>`).join(''):`<div class="empty">Create price alerts from Card Search.</div>`}
+    </div>
+    <div class="panel">
+      <div class="section-head"><div><h2>Refresh history</h2><p>Recent Vault refresh jobs.</p></div></div>
+      ${state.priceRefreshLog?.length?state.priceRefreshLog.slice(0,8).map(r=>`<div class="kpi-line"><span>${dateShort(r.finished)} • ${r.requested} requested</span><strong>${r.updated} updated${r.failed?` • ${r.failed} failed`:''}</strong></div>`).join(''):`<div class="empty">No bulk price refreshes yet.</div>`}
+    </div>
+  </div>`;
+}
+function marketMoverRow(m){
+  return `<div class="compact-row">${cardArt(m.card)}<div class="grow"><strong>${esc(m.card.name)}</strong><span>${esc(m.card.set)} • ${money(Number(m.previous))} → ${money(Number(m.card.market))}</span></div><div class="right"><strong class="${m.pct>=0?'good':'bad'}">${m.pct>=0?'+':''}${m.pct.toFixed(1)}%</strong><small>${m.amount>=0?'+':''}${money(m.amount)}</small></div></div>`;
+}
+function selectMarketCard(id){
+  marketSelectedCardId=id;
+  renderTools();
+}
+function renderMarketCardHistory(card){
+  const h=priceHistoryFor(card.id).filter(x=>Number.isFinite(Number(x.market)));
+  const d=marketDeltaFor(card);
+  const first=h[0], last=h[h.length-1];
+  const allChange=first&&last&&Number(first.market)!==0 ? (Number(last.market)-Number(first.market))/Number(first.market)*100 : null;
+  return `<div class="market-card-history">
+    <div class="market-card-head">
+      ${cardArt(card)}
+      <div class="grow"><div class="eyebrow">${esc(card.set)} • ${esc(card.number||'')}</div><h3>${esc(card.name)}</h3><p>${esc(card.rarity||'')}</p></div>
+      <div class="right"><strong>${money(Number(card.market))}</strong><small>${h.length} saved point${h.length===1?'':'s'}</small></div>
+    </div>
+    <div class="chart-card market-chart">${marketHistorySvg(card.id,620,160)}</div>
+    <div class="meta-grid">
+      <div class="meta"><span>Latest market</span><strong>${money(Number(card.market))}</strong></div>
+      <div class="meta"><span>Previous snapshot</span><strong>${d.previous!==null?money(Number(d.previous)):'—'}</strong></div>
+      <div class="meta"><span>Latest change</span><strong class="${Number(d.pct)>=0?'good':'bad'}">${Number.isFinite(d.pct)?(d.pct>=0?'+':'')+d.pct.toFixed(1)+'%':'—'}</strong></div>
+      <div class="meta"><span>Tracked-period change</span><strong class="${Number(allChange)>=0?'good':'bad'}">${Number.isFinite(allChange)?(allChange>=0?'+':'')+allChange.toFixed(1)+'%':'—'}</strong></div>
+    </div>
+    ${h.length?`<div class="price-point-list">${h.slice(-10).reverse().map(p=>`<div class="kpi-line"><span>${esc(p.day)} • ${esc(p.source||'Live data')}</span><strong>${money(Number(p.market))}${Number.isFinite(Number(p.low))?` • low ${money(Number(p.low))}`:''}</strong></div>`).join('')}</div>`:''}
+  </div>`;
+}
 
 function renderAnalyticsTool(){
   ensureDailySnapshot();
@@ -1834,6 +2092,8 @@ async function promptRipCardSearch(sessionId){
       const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
       return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
     });
+    ripCardSearchResults.forEach(c=>captureCardPrice(c,'Rip Session search'));
+    saveState();
     renderTools();toast(`${ripCardSearchResults.length} matches`);
   }catch(e){ripCardSearchResults=[];renderTools();toast(e.message||'Search failed')}
 }
@@ -1946,6 +2206,8 @@ async function openSetByInfo(s){
       const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
       return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||s.name,setId:c.set?.id||s.id,setSeries:c.set?.series||s.series||'',setPrintedTotal:c.set?.printedTotal||s.printedTotal||0,setTotal:c.set?.total||s.total||0,releaseDate:c.set?.releaseDate||s.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
     });
+    activeSetCards.forEach(c=>captureCardPrice(c,'Set Explorer'));
+    saveState();
   }catch(e){toast(e.message||'Could not load set checklist')}
   finally{setExplorerBusy=false;renderTools()}
 }
@@ -2235,6 +2497,8 @@ async function autoIdentifyFromPhoto(){
     }
 
     scannerSearchResults=scannerAutoCandidates;
+    scannerAutoCandidates.forEach(c=>captureCardPrice(c,'Auto Identify Beta'));
+    saveState();
     scannerLastMarketLookupAt=new Date().toISOString();
     toast(`Auto Identify found ${scannerAutoCandidates.length} possible matches`);
   }catch(e){
@@ -2366,6 +2630,8 @@ async function scannerSearch(event){
       const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
       return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
     });
+    scannerSearchResults.forEach(c=>captureCardPrice(c,'Smart Scanner'));
+    saveState();
     toast(`${scannerSearchResults.length} possible matches`);
   }catch(e){
     scannerSearchResults=[];
@@ -2659,7 +2925,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,saveSnapshotNow,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -2678,6 +2944,7 @@ if('serviceWorker' in navigator){
   window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(reg=>reg.update()).catch(()=>{}));
 }
 ensureCollectionSchema();
+ensurePriceHistorySchema();
 ensureScannerSchema();
 ensureCatalogSeed();
 ensureDailySnapshot();

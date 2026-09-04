@@ -1,4 +1,4 @@
-# 2GEN Vault — Auto Identify Beta v1.3 (GitHub Pages)
+# 2GEN Vault — Market Pulse v1.4 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -456,3 +456,56 @@ For better Auto Identify results:
 - keep the card flat
 - use bright even light
 - keep the name and collector number readable
+
+
+## New in v1.4 — Market Pulse
+
+### Refresh Vault Prices
+Market Pulse can refresh supported live Pokémon cards already in your Vault.
+
+For each supported card it:
+- fetches current live card data
+- updates the card's market / low fields
+- updates the same card inside the Vault, wishlist, price alerts, rip sessions and scan queue
+- stores a local price snapshot
+- records the refresh job
+
+### Local price history
+2GEN Vault keeps up to 365 daily price points per card.
+
+Price history starts when:
+- you search live card data
+- Smart Scanner returns live matches
+- Auto Identify returns ranked live matches
+- Set Explorer loads live cards
+- Rip Session card search returns live matches
+- you run Refresh Vault Prices
+
+### Market movement
+Snapshot gainers / decliners compare your two latest saved market points.
+
+This is intentionally NOT labeled as a full marketplace daily-gainer feed.
+It only represents price snapshots collected by your own 2GEN Vault app.
+
+### Price targets
+Your existing card price alerts are surfaced inside Market Pulse with:
+- current market field
+- target value
+- target-hit status
+- amount above/below the target
+
+### Card history page
+Choose any tracked card to see:
+- current market
+- previous snapshot
+- latest snapshot %
+- tracked-period %
+- local price trend chart
+- recent saved price points
+
+### Public API pacing
+Bulk Vault refresh intentionally checks supported cards one at a time with light pacing instead of aggressively hammering the public card API.
+
+### Accuracy
+Market values are reference fields from the connected card-data source when available.
+They are not guaranteed sale values and can differ by exact printing, condition, grading, marketplace, fees and buyer demand.

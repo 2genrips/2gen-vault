@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v1.3 Auto Identify Beta
+## Current build: v1.4 Market Pulse
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -155,3 +155,14 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - User confirmation before commit
 - Live market / low display after identification
 - Manual identify fallback retained
+
+
+## v1.4 completed
+- Bulk Vault price refresh
+- Daily card price snapshots
+- Local 30-point card charts
+- Snapshot gainers / decliners
+- Price-target dashboard
+- Refresh-job history
+- Price propagation through collection / wishlist / alerts / rip sessions / scanner queue
+- Card-detail snapshot movement
