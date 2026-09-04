@@ -1,0 +1,12 @@
+{
+  "products": [
+    {
+      "id": "vaultsignal_premium_monthly",
+      "type": "auto_renewable_subscription",
+      "display_name": "VaultSignal Premium",
+      "price_usd": 4.99,
+      "billing_period": "P1M",
+      "entitlement": "premium"
+    }
+  ]
+}

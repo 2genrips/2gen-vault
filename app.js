@@ -74,6 +74,19 @@ const seed = {
   productInventoryEvents: [],
   inventoryLedger: [],
   inventoryAudits: [],
+  premiumEntitlement: {
+    tier:'free',
+    status:'inactive',
+    source:'none',
+    verified:false,
+    productId:'',
+    expiresAt:null,
+    checkedAt:null
+  },
+  premiumUsage: {
+    scannerDay:'',
+    scannerCount:0
+  },
   inventoryCommandSettings: {
     game:'All',
     type:'All',
@@ -185,6 +198,193 @@ let watchtowerLastEvaluatedAt = null;
 let showcasePreviewProfileId = null;
 let vaultIQFocusCard = null;
 let toastTimer;
+
+
+const PREMIUM_PRICE_MONTHLY=4.99;
+const PREMIUM_PRODUCT_ID='vaultsignal_premium_monthly';
+const PREMIUM_FREE_SCANS_PER_DAY=3;
+
+const PREMIUM_FEATURES=[
+  {id:'scanner_unlimited',title:'Unlimited Live Value Scanner',group:'Scan',desc:'Unlimited photo/OCR-assisted identification and live/reference price lookups.'},
+  {id:'inventory_command',title:'Inventory Command Pro',group:'Inventory',desc:'Physical audits, movement ledger, replenishment targets, data-health cleanup and location rollups.'},
+  {id:'inventory_radar',title:'Nearby Inventory Radar',group:'Hunt',desc:'ZIP/radius area scans, verified store drill-down, favorites, Hunt Score and Inventory Pulse.'},
+  {id:'signal_center',title:'Signal Center',group:'Signals',desc:'One prioritized feed for inventory changes, collector alerts, scanner activity and action priorities.'},
+  {id:'vaultiq',title:'VaultIQ',group:'Decide',desc:'Personal collector-fit scoring using budget, targets, owned copies, set progress and hunt data.'},
+  {id:'market_pulse',title:'Market Pulse',group:'Market',desc:'Bulk refresh, local price snapshots, tracked movement and collection market monitoring.'},
+  {id:'analytics',title:'Dashboard Pro',group:'Analytics',desc:'Portfolio snapshots, allocation, inventory health, rip performance and collection analytics.'},
+  {id:'trade_sell',title:'Trade Lab + Sell Lab',group:'Trade & Sell',desc:'Two-sided trade builder, sale planning, fee estimates, duplicate workflows and inventory-linked completion.'},
+  {id:'showcase',title:'Showcase Studio',group:'Share',desc:'Collection Passport, featured cards, privacy controls and exportable collector showcase.'},
+  {id:'cloud_future',title:'Cloud Sync + Multi-device',group:'Cloud',desc:'Premium-ready entitlement for account sync and secure backups when cloud accounts are connected.'}
+];
+
+const PREMIUM_TOOL_IDS=new Set(['watchtower','inventory','vaultiq','market','analytics','sell','trades','showcase']);
+
+function ensurePremiumSchema(){
+  state.premiumEntitlement={
+    tier:'free',status:'inactive',source:'none',verified:false,productId:'',expiresAt:null,checkedAt:null,
+    ...(state.premiumEntitlement||{})
+  };
+  state.premiumUsage={
+    scannerDay:'',scannerCount:0,
+    ...(state.premiumUsage||{})
+  };
+}
+function premiumConfig(){return window.TWOGEN_CONFIG||{}}
+function premiumPreviewEnabled(){return premiumConfig().premiumPreview===true}
+function entitlementIsActive(){
+  ensurePremiumSchema();
+  const e=state.premiumEntitlement;
+  if(e.status!=='active'||e.verified!==true)return false;
+  if(e.expiresAt && new Date(e.expiresAt).getTime()<=Date.now())return false;
+  return true;
+}
+function hasPremium(){
+  return premiumPreviewEnabled()||entitlementIsActive();
+}
+function premiumStatusLabel(){
+  if(premiumPreviewEnabled())return 'Premium Preview';
+  if(entitlementIsActive())return 'Premium Active';
+  return 'Free';
+}
+function premiumTodayKey(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function premiumScannerUsage(){
+  ensurePremiumSchema();
+  const day=premiumTodayKey();
+  if(state.premiumUsage.scannerDay!==day){
+    state.premiumUsage.scannerDay=day;
+    state.premiumUsage.scannerCount=0;
+    saveState();
+  }
+  return Number(state.premiumUsage.scannerCount)||0;
+}
+function canUseScannerLookup(){
+  if(hasPremium())return true;
+  return premiumScannerUsage()<PREMIUM_FREE_SCANS_PER_DAY;
+}
+function consumeScannerLookup(){
+  if(hasPremium())return true;
+  if(!canUseScannerLookup())return false;
+  state.premiumUsage.scannerDay=premiumTodayKey();
+  state.premiumUsage.scannerCount=(Number(state.premiumUsage.scannerCount)||0)+1;
+  saveState();
+  return true;
+}
+function premiumFeatureByTool(tab){
+  const map={
+    watchtower:'signal_center',
+    inventory:'inventory_command',
+    vaultiq:'vaultiq',
+    market:'market_pulse',
+    analytics:'analytics',
+    sell:'trade_sell',
+    trades:'trade_sell',
+    showcase:'showcase'
+  };
+  return map[tab]||'premium';
+}
+function premiumGateMarkup(featureId='premium'){
+  const f=PREMIUM_FEATURES.find(x=>x.id===featureId);
+  return `<div class="panel premium-gate">
+    <div class="premium-lock">◇</div>
+    <div><div class="eyebrow">VAULTSIGNAL PREMIUM</div><h2>${esc(f?.title||'Premium tool')}</h2><p>${esc(f?.desc||'This tool is part of VaultSignal Premium.')}</p>
+      <div class="premium-price-line"><strong>$${PREMIUM_PRICE_MONTHLY.toFixed(2)}</strong><span>/ month</span></div>
+      <div class="action-row"><button class="btn primary" onclick="openTool('premium')">See Premium</button><button class="btn" onclick="premiumRestorePurchases()">Restore purchases</button></div>
+    </div>
+  </div>`;
+}
+function premiumPurchaseAction(){
+  if(premiumPreviewEnabled()){
+    toast('Premium Preview is enabled for development. Store billing is intentionally not live yet.');
+    return;
+  }
+  if(window.VaultSignalBilling?.purchase){
+    window.VaultSignalBilling.purchase(PREMIUM_PRODUCT_ID);
+    return;
+  }
+  alert('Store billing is not connected in this web build yet. The Android/iOS release wrapper will open Google Play Billing or Apple StoreKit here.');
+}
+function premiumRestorePurchases(){
+  if(window.VaultSignalBilling?.restore){
+    window.VaultSignalBilling.restore();
+    return;
+  }
+  toast('Restore purchases will be enabled in the Android/iOS store build');
+}
+function premiumToolBadge(id){
+  return PREMIUM_TOOL_IDS.has(id)?`<span class="premium-mini">PREMIUM</span>`:'';
+}
+function premiumComparisonMarkup(){
+  const rows=[
+    ['Collection & sealed Vault','✓','✓'],
+    ['Basic live card search','✓','✓'],
+    [`Live camera/value scans`,`3/day`,`Unlimited`],
+    ['Exact product retailer search','✓','✓'],
+    ['Nearby Inventory Radar','—','✓'],
+    ['Inventory Command audits + ledger','—','✓'],
+    ['Signal Center','—','✓'],
+    ['VaultIQ','—','✓'],
+    ['Market Pulse','—','✓'],
+    ['Dashboard Pro','—','✓'],
+    ['Trade Lab + Sell Lab','—','✓'],
+    ['Showcase Studio','—','✓'],
+    ['Cloud sync / multi-device when connected','—','✓']
+  ];
+  return `<div class="premium-table">
+    <div class="premium-table-row head"><b>Feature</b><b>Free</b><b>Premium</b></div>
+    ${rows.map(r=>`<div class="premium-table-row"><span>${esc(r[0])}</span><strong>${esc(r[1])}</strong><strong>${esc(r[2])}</strong></div>`).join('')}
+  </div>`;
+}
+function renderPremiumCenter(){
+  ensurePremiumSchema();
+  const status=premiumStatusLabel();
+  const used=premiumScannerUsage();
+  const cfg=premiumConfig();
+  return `<div class="panel premium-hero">
+    <div class="section-head">
+      <div><div class="eyebrow">VAULTSIGNAL PREMIUM</div><h2>Make the $4.99 feel obvious</h2><p>Free stays useful. Premium removes limits and unlocks the tools that save collectors time, surface inventory, organize physical stock and connect decisions across the whole app.</p></div>
+      <span class="badge signal-gold">${esc(status.toUpperCase())}</span>
+    </div>
+    <div class="premium-price"><span>$</span><strong>4.99</strong><small>/ month</small></div>
+    <div class="premium-value-grid">
+      ${PREMIUM_FEATURES.slice(0,6).map(f=>`<div><b>${esc(f.title)}</b><span>${esc(f.desc)}</span></div>`).join('')}
+    </div>
+    <div class="action-row" style="margin-top:12px">
+      <button class="btn primary" onclick="premiumPurchaseAction()">${hasPremium()?'Premium enabled':'Upgrade to Premium'}</button>
+      <button class="btn" onclick="premiumRestorePurchases()">Restore purchases</button>
+    </div>
+    ${premiumPreviewEnabled()?`<div class="notice warn" style="margin-top:10px"><span>!</span><span><b>Development Premium Preview is ON.</b> Every premium tool is unlocked while we build/test. This must be switched off before App Store / Play Store release.</span></div>`:''}
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><div class="eyebrow">FREE VS PREMIUM</div><h2>Useful free app, compelling paid upgrade</h2><p>Premium is focused on automation, intelligence, unlimited scanning and serious inventory operations—not basic access to your own collection.</p></div></div>
+    ${premiumComparisonMarkup()}
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><div class="eyebrow">YOUR USAGE</div><h2>Free scanner allowance</h2><p>Free users get ${PREMIUM_FREE_SCANS_PER_DAY} live scanner/value lookups per day. Premium removes the limit.</p></div></div>
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Used today</span><strong>${hasPremium()?'∞':used}</strong><small>${hasPremium()?'Unlimited Premium scans':`${Math.max(0,PREMIUM_FREE_SCANS_PER_DAY-used)} free scans remaining`}</small></div>
+      <div class="stat-card"><span>Monthly price</span><strong>$4.99</strong><small>${esc(PREMIUM_PRODUCT_ID)}</small></div>
+      <div class="stat-card"><span>Release channel</span><strong>${esc(cfg.releaseChannel||'development')}</strong><small>${premiumPreviewEnabled()?'Premium preview enabled':'Store entitlement required'}</small></div>
+      <div class="stat-card"><span>Billing bridge</span><strong>${window.VaultSignalBilling?'Ready':'Pending'}</strong><small>Native Android/iOS layer</small></div>
+    </div>
+  </div>
+
+  <div class="panel mobile-launch-panel">
+    <div class="section-head"><div><div class="eyebrow">ANDROID + IOS LAUNCH</div><h2>Store-release foundation</h2><p>The web app remains our shared UI/codebase. Store releases wrap it natively and connect platform billing, secure entitlements, camera permissions and push capabilities.</p></div></div>
+    <div class="launch-grid">
+      <div><b>Shared VaultSignal app</b><span>Current PWA / HTML / CSS / JS stays the product core.</span><i class="ready">READY</i></div>
+      <div><b>Android wrapper</b><span>Capacitor shell + Google Play Billing.</span><i class="next">NEXT</i></div>
+      <div><b>iOS wrapper</b><span>Capacitor shell + StoreKit in-app purchase.</span><i class="next">NEXT</i></div>
+      <div><b>Premium entitlement verification</b><span>Native purchase receipt → secure backend entitlement → app unlock.</span><i class="next">NEXT</i></div>
+      <div><b>Store product</b><span>${esc(PREMIUM_PRODUCT_ID)} • $4.99 monthly.</span><i class="planned">PLANNED</i></div>
+      <div><b>Cloud accounts</b><span>Needed for durable cross-device Premium and sync.</span><i class="planned">PLANNED</i></div>
+    </div>
+  </div>`;
+}
 
 function $(id){ return document.getElementById(id); }
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+Math.random().toString(16).slice(2)); }
@@ -907,6 +1107,7 @@ function renderHome(){
     <div class="panel">
       <div class="section-head"><div><h2>Collector command center</h2><p>Fast access to the things collectors actually use.</p></div></div>
       <div class="quick-grid">
+        <button class="quick-card premium-quick" onclick="openTool('premium')"><span class="big-icon">★</span><b>VaultSignal Premium</b><span>$4.99/month • unlimited scanning, Inventory Radar, Signal Center, VaultIQ, analytics and pro inventory tools.</span></button>
         <button class="quick-card signal-quick" onclick="openTool('watchtower')"><span class="big-icon">◉</span><b>Signal Center</b><span>${homeWatchtowerUnread} unread • inventory changes, collector alerts and priorities in one feed.</span></button>
         <button class="quick-card inventory-command-quick" onclick="openTool('inventory')"><span class="big-icon">▤</span><b>Inventory Command</b><span>Cards + sealed • cost basis • locations • replenishment • audits • movement ledger.</span></button>
         <button class="quick-card" onclick="switchTab('stock')"><span class="big-icon">◎</span><b>Find inventory</b><span>Nearby stores, live connector, watchlists and stock reports.</span></button>
@@ -2236,6 +2437,11 @@ async function maybeAutoScanArea(){
   await runAreaInventoryScan(true);
 }
 async function runAreaInventoryScan(silent=false){
+  if(!hasPremium()){
+    if(!silent){toolsTab='premium';renderTools();toast('Nearby Inventory Radar is a Premium feature');}
+    return;
+  }
+
   ensureRealInventorySchema();
   const zip=($('stockZip')?.value||state.settings.zip||'').trim();
   const radius=Number($('stockRadius')?.value||state.settings.radius)||25;
@@ -3243,11 +3449,21 @@ function editSetGoal(id){
 }
 function removeSetGoal(id){state.setGoals=state.setGoals.filter(x=>x.uid!==id);saveState();renderVault();}
 
-function openTool(tab){ toolsTab=tab; switchTab('tools'); }
+function openTool(tab){
+  if(PREMIUM_TOOL_IDS.has(tab)&&!hasPremium()){
+    toolsTab='premium';
+    switchTab('tools');
+    toast('That tool is part of VaultSignal Premium');
+    return;
+  }
+  toolsTab=tab;
+  switchTab('tools');
+}
 function renderTools(){
   $('tools').innerHTML = `
     <div class="page-title"><div><h1>Collector Tools</h1><p>The rest of your collecting workflow, all under one roof.</p></div></div>
     <div class="tool-menu">
+      ${toolButton('premium','★','Premium','$4.99 • premium tools + mobile launch')}
       ${toolButton('watchtower','◉','Signal Center','Inventory, price & collector signals')}
       ${toolButton('inventory','▤','Inventory Command','Cards + sealed + locations + audits')}
       ${toolButton('actions','✓','Action Center','Smart collector priorities')}
@@ -3272,9 +3488,19 @@ function renderTools(){
     </div>
     <div id="toolBody">${renderToolBody()}</div>`;
 }
-function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
-function setToolTab(t){toolsTab=t;renderTools()}
+function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}${premiumToolBadge(id)}</b><span>${sub}</span></button>`}
+function setToolTab(t){
+  if(PREMIUM_TOOL_IDS.has(t)&&!hasPremium()){
+    toolsTab='premium';
+    renderTools();
+    toast('That tool is part of VaultSignal Premium');
+    return;
+  }
+  toolsTab=t;
+  renderTools();
+}
 function renderToolBody(){
+  if(toolsTab==='premium') return renderPremiumCenter();
   if(toolsTab==='inventory') return renderInventoryCommandTool();
   if(toolsTab==='vaultiq') return renderVaultIQTool();
   if(toolsTab==='showcase') return renderShowcaseStudio();
@@ -4923,6 +5149,12 @@ async function pokemonScannerCandidatesFromOcr(text='',numberHint=''){
 }
 
 async function autoIdentifyFromPhoto(autoRun=false){
+  if(!canUseScannerLookup()){
+    toolsTab='premium';renderTools();
+    toast('Free scanner limit reached — Premium unlocks unlimited scans');
+    return;
+  }
+
   if(!cameraPreview){toast('Take or choose a card photo first');return;}
   if(scannerOcrBusy)return;
 
@@ -5001,7 +5233,10 @@ async function autoIdentifyFromPhoto(autoRun=false){
 
     scannerSearchResults.forEach(c=>captureCardPrice(c,'Scanner live-value lookup'));
     scannerLastMarketLookupAt=new Date().toISOString();
-    if(scannerBestMatch)recordScannerRecent(scannerBestMatch);
+    if(scannerBestMatch){
+      if(!hasPremium())consumeScannerLookup();
+      recordScannerRecent(scannerBestMatch);
+    }
     saveState();
 
     if(scannerBestMatch){
@@ -5168,6 +5403,13 @@ function reviewScannerSettings(){
 }
 function setScannerGame(game){scannerGame=game;scannerSearchResults=[];scannerAutoCandidates=[];scannerBestMatch=null;scannerPriceChartingResult=null;scannerPriceChartingStatus='unknown';scannerLastQuery='';renderTools();}
 async function scannerSearch(event){
+  if(!canUseScannerLookup()){
+    event?.preventDefault?.();
+    toolsTab='premium';renderTools();
+    toast('Free scanner limit reached — Premium unlocks unlimited scans');
+    return;
+  }
+
   if(event)event.preventDefault();
   const q=($('scannerSearchQ')?.value||scannerLastQuery||'').trim();
   if(!q){toast('Enter a card name, set, or card number');return;}
@@ -7124,7 +7366,7 @@ function exportCollectionCSV(){
 }
 
 Object.assign(window,{
-  switchTab,openVault,openTool,setInventoryFilter,quickInventoryCount,inventoryAuditAll,exportUnifiedInventoryCsv,openProductFromInventory,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
+  switchTab,openVault,openTool,premiumPurchaseAction,premiumRestorePurchases,setInventoryFilter,quickInventoryCount,inventoryAuditAll,exportUnifiedInventoryCsv,openProductFromInventory,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,

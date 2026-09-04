@@ -1,6 +1,6 @@
 # VaultSignal — Product Roadmap
 
-## Current build: v9.0 VaultSignal Inventory Command
+## Current build: v10.0 VaultSignal Premium + Mobile Launch
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -358,3 +358,17 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - movement / adjustment ledger
 - unified inventory CSV
 - Inventory Command signals fed into Signal Center
+
+
+## v10.0 completed
+- $4.99/month Premium product strategy
+- Free vs Premium feature architecture
+- Premium Center
+- development Premium Preview
+- 3 free live scanner lookups/day design
+- unlimited scanner Premium entitlement
+- premium gating foundation
+- Android / iOS Capacitor launch starter
+- Google Play / StoreKit product contract
+- secure entitlement flow documentation
+- mobile store release checklist

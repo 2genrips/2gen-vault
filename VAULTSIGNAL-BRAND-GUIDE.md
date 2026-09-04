@@ -30,3 +30,9 @@ The mark combines signal/radar + secure vault + trading-card stack. It avoids fr
 
 ## Product pillar: Inventory Command
 VaultSignal's inventory layer is a core product pillar alongside Scan, Signal, Hunt and Market. Cards and sealed inventory should remain connected to every workflow rather than becoming separate databases.
+
+
+## Monetization
+VaultSignal Premium: $4.99/month.
+
+Position Premium around saved time, automation, physical inventory operations and collector intelligence—not withholding basic access to the collector's own data.

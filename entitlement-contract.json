@@ -1,0 +1,21 @@
+{
+  "entitlement": "premium",
+  "accepted_sources": [
+    "apple_app_store",
+    "google_play",
+    "admin_comp"
+  ],
+  "required_fields": [
+    "user_id",
+    "status",
+    "source",
+    "product_id",
+    "verified",
+    "checked_at"
+  ],
+  "active_statuses": [
+    "active",
+    "grace_period"
+  ],
+  "client_note": "The client UI may cache entitlement state, but protected APIs must verify entitlement server-side."
+}

@@ -44,5 +44,10 @@ window.TWOGEN_CONFIG = {
   inventoryApiBase: "https://2gen-vault-inventory.willingpaige.workers.dev",
   supabaseUrl: "",
   supabaseAnonKey: "",
-  appVersion: "9.0.0"
+  premiumMonthlyPrice: 4.99,
+  premiumProductId: "vaultsignal_premium_monthly",
+  premiumPreview: true,
+  releaseChannel: "development",
+  premiumEntitlementApiBase: "",
+  appVersion: "10.0.0"
 };
