@@ -993,3 +993,34 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   color:#83e8c4;
   margin-bottom:5px;
 }
+
+
+/* v7.4 — clearer camera frame + PriceCharting primary pricing */
+.scanner-card-guide{
+  border:3px solid #55e7b3!important;
+  box-shadow:0 0 0 999px rgba(0,0,0,.50),0 0 24px rgba(85,231,179,.24)!important;
+}
+.scanner-card-guide>b{
+  position:absolute;left:50%;top:-36px;transform:translateX(-50%);
+  background:rgba(0,0,0,.82);border:1px solid rgba(85,231,179,.45);
+  color:#86f0c7;border-radius:999px;padding:7px 10px;font-size:9px;white-space:nowrap;
+}
+.pc-price-card{
+  margin:10px 0;padding:11px;border:1px solid rgba(76,139,255,.32);
+  border-radius:14px;background:linear-gradient(145deg,rgba(21,101,255,.08),rgba(8,15,24,.95));
+}
+.pc-price-card.muted{display:flex;gap:10px;align-items:center;justify-content:space-between;border-color:var(--line)}
+.pc-price-card.muted strong,.pc-price-card.muted span{display:block}.pc-price-card.muted strong{font-size:8px}.pc-price-card.muted span{font-size:6.5px;color:var(--muted);margin-top:3px;max-width:430px}
+.pc-price-head{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.pc-price-head strong,.pc-price-head span{display:block}.pc-price-head strong{font-size:9px}.pc-price-head span{font-size:6.5px;color:var(--muted);margin-top:3px}
+.pc-price-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:10px}
+.pc-price-grid>div{padding:9px;border:1px solid var(--line);border-radius:11px;background:#08101a}
+.pc-price-grid>div.primary{border-color:rgba(46,211,154,.3);background:rgba(46,211,154,.035)}
+.pc-price-grid span,.pc-price-grid strong{display:block}.pc-price-grid span{font-size:6px;color:var(--muted)}.pc-price-grid strong{font-size:12px;margin-top:4px}
+.pc-price-foot{font-size:6px;color:var(--muted);margin-top:8px}
+.secondary-price-row{display:flex;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:11px;margin:8px 0}
+.secondary-price-row span{font-size:6.5px;color:var(--muted)}.secondary-price-row strong{font-size:9px}
+@media(max-width:620px){
+  .pc-price-grid{grid-template-columns:repeat(2,1fr)}
+  .pc-price-card.muted,.pc-price-head{align-items:flex-start;flex-direction:column}
+}

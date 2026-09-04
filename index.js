@@ -3,7 +3,8 @@
  * Cloudflare Workers backend.
  *
  * Secrets:
- *   BESTBUY_API_KEY  - Best Buy Developer API key
+ *   BESTBUY_API_KEY          - Best Buy Developer API key
+ *   PRICECHARTING_API_TOKEN   - PriceCharting API token
  *
  * Vars:
  *   ALLOWED_ORIGIN   - e.g. https://2genrips.github.io
@@ -11,9 +12,10 @@
  * Endpoints:
  *   GET /health
  *   GET /inventory?q=...&zip=...&radius=25&retailers=Best%20Buy,...
+ *   GET /card-price?q=...&game=...
  */
 
-const VERSION = "5.0.0";
+const VERSION = "7.4.0";
 const BESTBUY_BASE = "https://api.bestbuy.com/v1";
 const MAX_PRODUCT_MATCHES = 4;
 const CACHE_TTL_SECONDS = 120;
@@ -84,6 +86,66 @@ function providerStatus(env){
     }
   ];
 }
+
+function dollarsFromPennies(v){
+  const n=Number(v);
+  return Number.isFinite(n)&&n>0?n/100:null;
+}
+function priceChartingStatus(env){
+  return {
+    id:"pricecharting",
+    name:"PriceCharting",
+    mode:"premium_api",
+    configured:!!env.PRICECHARTING_API_TOKEN,
+    description:env.PRICECHARTING_API_TOKEN
+      ?"Primary current card-price guide connector is configured server-side."
+      :"Connector ready. Add PRICECHARTING_API_TOKEN as a Cloudflare Worker secret."
+  };
+}
+async function priceChartingProduct(q,env,cache){
+  if(!env.PRICECHARTING_API_TOKEN)return null;
+  const clean=safeText(q,140);
+  if(!clean)return null;
+
+  const cacheKey=new Request(`https://cache.2gen-vault.local/pricecharting?q=${encodeURIComponent(clean.toLowerCase())}`);
+  const cached=await cache.match(cacheKey);
+  if(cached)return await cached.json();
+
+  const u=new URL("https://www.pricecharting.com/api/product");
+  u.searchParams.set("t",env.PRICECHARTING_API_TOKEN);
+  u.searchParams.set("q",clean);
+
+  const r=await fetch(u.toString(),{headers:{Accept:"application/json"}});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok || d.status==="error")throw new Error(d["error-message"]||`PriceCharting lookup ${r.status}`);
+
+  const result={
+    id:String(d.id||""),
+    productName:d["product-name"]||clean,
+    category:d["console-name"]||d.genre||"Trading Card",
+    genre:d.genre||"",
+    releaseDate:d["release-date"]||"",
+    salesVolume:Number(d["sales-volume"])||null,
+    ungraded:dollarsFromPennies(d["loose-price"]),
+    grade7:dollarsFromPennies(d["cib-price"]),
+    grade8:dollarsFromPennies(d["new-price"]),
+    grade9:dollarsFromPennies(d["graded-price"]),
+    grade95:dollarsFromPennies(d["box-only-price"]),
+    psa10:dollarsFromPennies(d["manual-only-price"]),
+    bgs10:dollarsFromPennies(d["bgs-10-price"]),
+    source:"PriceCharting",
+    sourceType:"premium_api",
+    checkedAt:new Date().toISOString(),
+    searchUrl:`https://www.pricecharting.com/search-products?type=prices&q=${encodeURIComponent(d["product-name"]||clean)}`
+  };
+
+  const cacheResponse=new Response(JSON.stringify(result),{
+    headers:{"content-type":"application/json","cache-control":"public, max-age=300"}
+  });
+  await cache.put(cacheKey,cacheResponse.clone());
+  return result;
+}
+
 function retailerFallbackResults({q,retailers}){
   const enc=encodeURIComponent(q);
   const rows=[];
@@ -233,9 +295,44 @@ export default {
       return json({
         ok:true,version:VERSION,message:"2GEN Real Inventory Worker is online",
         providers:providerStatus(env),
+        pricingProviders:[priceChartingStatus(env)],
         checkedAt:new Date().toISOString()
       },200,origin);
     }
+    if(url.pathname==="/card-price"){
+      const q=safeText(url.searchParams.get("q"),140);
+      const game=safeText(url.searchParams.get("game"),40);
+      if(!q)return json({error:"Missing q card query"},400,origin);
+
+      if(!env.PRICECHARTING_API_TOKEN){
+        return json({
+          ok:true,
+          configured:false,
+          provider:priceChartingStatus(env),
+          result:null,
+          message:"PRICECHARTING_API_TOKEN is not configured"
+        },200,origin);
+      }
+
+      try{
+        const result=await priceChartingProduct([q,game].filter(Boolean).join(" "),env,caches.default);
+        return json({
+          ok:true,
+          configured:true,
+          provider:priceChartingStatus(env),
+          result,
+          checkedAt:new Date().toISOString()
+        },200,origin);
+      }catch(e){
+        return json({
+          ok:false,
+          configured:true,
+          provider:priceChartingStatus(env),
+          error:e.message||"PriceCharting lookup failed"
+        },502,origin);
+      }
+    }
+
     if(url.pathname!=="/inventory")return json({error:"Not found"},404,origin);
 
     const q=safeText(url.searchParams.get("q"),120);

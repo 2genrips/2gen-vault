@@ -101,3 +101,18 @@ Inventory changes quickly. A result means the provider reported that availabilit
 - whether quantity is actually known
 
 Unknown quantities stay unknown.
+
+
+## v7.4 — PriceCharting card pricing
+
+New Worker endpoint:
+
+`GET /card-price?q=...&game=...`
+
+New Cloudflare secret:
+
+`PRICECHARTING_API_TOKEN`
+
+Keep this token server-side only. Never place it in `config.js`, `app.js`, or GitHub Pages.
+
+When configured, the Smart Scanner uses PriceCharting as its primary guide and keeps the existing game-specific provider as a secondary reference.

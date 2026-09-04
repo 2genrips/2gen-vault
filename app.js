@@ -148,6 +148,9 @@ let scannerAutoRunAfterCapture = true;
 let scannerBestMatch = null;
 let scannerLiveStream = null;
 let scannerLiveCameraOpen = false;
+let scannerPriceChartingResult = null;
+let scannerPriceChartingStatus = 'unknown';
+const SCANNER_GAME_OPTIONS=['Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece'];
 let scannerOcrText = '';
 let scannerOcrConfidence = null;
 let scannerAutoCandidates = [];
@@ -3998,7 +4001,7 @@ async function openLiveScannerCamera(){
       </div>
       <div class="scanner-live-stage">
         <video id="scannerLiveVideo" autoplay muted playsinline></video>
-        <div class="scanner-card-guide"><i></i></div>
+        <div class="scanner-card-guide"><i></i><b>PLACE ENTIRE CARD HERE</b></div>
         <div id="scannerCameraMessage" class="scanner-camera-message">Waiting for camera permission…</div>
       </div>
       <div class="scanner-camera-tips">Fill the outline with the card • keep it flat • reduce glare • make the name + collector number readable</div>
@@ -4134,7 +4137,7 @@ async function captureLiveScannerFrame(){
     cameraPreview=canvas.toDataURL('image/jpeg',.94);
 
     closeLiveScannerCamera();
-    scannerBestMatch=null;scannerOcrText='';scannerOcrConfidence=null;
+    scannerBestMatch=null;scannerPriceChartingResult=null;scannerPriceChartingStatus='unknown';scannerOcrText='';scannerOcrConfidence=null;
     scannerAutoCandidates=[];scannerSearchResults=[];
     renderTools();
 
@@ -4168,25 +4171,141 @@ async function scannerOcrImage(dataUrl){
 }
 async function handleScannerPhotoFile(file){
   if(scannerPhotoBusy)return;
-  scannerPhotoBusy=true;scannerBestMatch=null;scannerOcrText='';scannerOcrConfidence=null;scannerAutoCandidates=[];scannerSearchResults=[];
+  scannerPhotoBusy=true;scannerBestMatch=null;scannerPriceChartingResult=null;scannerPriceChartingStatus='unknown';scannerOcrText='';scannerOcrConfidence=null;scannerAutoCandidates=[];scannerSearchResults=[];
   try{
     toast('Preparing card photo…');cameraPreview=await resizeScannerImage(file);renderTools();await new Promise(r=>setTimeout(r,80));
     if(scannerAutoRunAfterCapture)await autoIdentifyFromPhoto(true);else toast('Photo ready — tap Identify & live value');
   }catch(e){toast(e.message||'Could not use that photo')}
   finally{scannerPhotoBusy=false;const input=$('hiddenCamera');if(input)input.value='';}
 }
+
+function scannerPriceQuery(card,ocrText=''){
+  const parts=[];
+  if(card?.name)parts.push(card.name);
+  if(card?.number)parts.push(`#${card.number}`);
+  if(!card?.name){
+    parts.push(...scannerTitleTokens(ocrText).slice(0,4));
+    const no=extractLikelyCardNumber(ocrText);
+    if(no)parts.push(`#${no}`);
+  }
+  if(scannerGame)parts.push(scannerGame);
+  return parts.join(' ').trim();
+}
+async function fetchPriceChartingPrimary(query){
+  scannerPriceChartingStatus='checking';
+  if(!query || !inventoryBackendConnected()){
+    scannerPriceChartingStatus='unavailable';
+    return null;
+  }
+  try{
+    const u=new URL(`${inventoryBackendBase()}/card-price`);
+    u.searchParams.set('q',query);
+    u.searchParams.set('game',scannerGame||'');
+    const r=await fetch(u.toString(),{headers:{Accept:'application/json'}});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||`Pricing lookup returned ${r.status}`);
+    if(d.configured===false){
+      scannerPriceChartingStatus='not_configured';
+      return null;
+    }
+    if(!d.result){
+      scannerPriceChartingStatus='no_match';
+      return null;
+    }
+    scannerPriceChartingStatus='connected';
+    return d.result;
+  }catch(e){
+    scannerPriceChartingStatus='error';
+    console.warn('PriceCharting lookup failed',e);
+    return null;
+  }
+}
+function priceChartingCardObject(pc,score=62){
+  return {
+    id:`pricecharting:${pc.id||uid()}`,
+    game:scannerGame,
+    name:pc.productName||'PriceCharting match',
+    set:pc.category||'Trading Card',
+    number:'',
+    rarity:'',
+    market:Number(pc.ungraded)||0,
+    low:Number(pc.ungraded)||0,
+    providerMarket:undefined,
+    url:pc.searchUrl||'https://www.pricecharting.com/',
+    autoScore:score,
+    priceCharting:pc,
+    pricingPrimary:'PriceCharting'
+  };
+}
+async function enrichCardWithPriceCharting(card,ocrText=''){
+  const pc=await fetchPriceChartingPrimary(scannerPriceQuery(card,ocrText));
+  scannerPriceChartingResult=pc;
+  if(!pc)return card;
+  const primary=Number(pc.ungraded);
+  return {
+    ...card,
+    providerMarket:Number(card?.market)||undefined,
+    providerLow:Number(card?.low)||undefined,
+    priceCharting:pc,
+    market:Number.isFinite(primary)&&primary>0?primary:card?.market,
+    low:Number.isFinite(primary)&&primary>0?primary:card?.low,
+    pricingPrimary:'PriceCharting'
+  };
+}
+function scannerPriceChartingMarkup(){
+  const pc=scannerPriceChartingResult;
+  if(pc){
+    return `<div class="pc-price-card">
+      <div class="pc-price-head">
+        <div><div class="eyebrow">PRIMARY PRICE GUIDE • PRICECHARTING</div><strong>${esc(pc.productName||'Matched card')}</strong><span>${esc(pc.category||'Trading Card')}</span></div>
+        <a class="btn" href="${esc(pc.searchUrl||'https://www.pricecharting.com/')}" target="_blank" rel="noreferrer">Open PriceCharting ↗</a>
+      </div>
+      <div class="pc-price-grid">
+        <div class="primary"><span>Ungraded</span><strong>${pc.ungraded?money(pc.ungraded):'—'}</strong></div>
+        <div><span>Grade 9</span><strong>${pc.grade9?money(pc.grade9):'—'}</strong></div>
+        <div><span>PSA 10</span><strong>${pc.psa10?money(pc.psa10):'—'}</strong></div>
+        <div><span>BGS 10</span><strong>${pc.bgs10?money(pc.bgs10):'—'}</strong></div>
+      </div>
+      <div class="pc-price-foot">Current PriceCharting guide values • checked ${humanAge(pc.checkedAt)} • not a guaranteed sale price</div>
+    </div>`;
+  }
+  if(scannerPriceChartingStatus==='not_configured'){
+    return `<div class="pc-price-card muted"><div><div class="eyebrow">PRIMARY PRICE GUIDE • PRICECHARTING</div><strong>Connector ready — API token not configured</strong><span>Add PRICECHARTING_API_TOKEN as a Cloudflare Worker secret. Never put it in GitHub Pages.</span></div><a class="btn" href="https://www.pricecharting.com/" target="_blank" rel="noreferrer">PriceCharting ↗</a></div>`;
+  }
+  if(scannerPriceChartingStatus==='error'){
+    return `<div class="pc-price-card muted"><div><strong>PriceCharting could not be reached.</strong><span>The selected game's existing provider remains available as a fallback.</span></div></div>`;
+  }
+  return '';
+}
+
 async function refreshScannerCandidate(card){
   try{if(!liveProviderSupported(card))return card;const live=await refreshUniversalCard(card);return {...live,autoScore:card.autoScore};}catch{return card}
 }
 function scannerBestMatchMarkup(){
-  const card=scannerBestMatch;if(!card)return '';
-  const value=Number(card.market),score=Number(card.autoScore)||0;
-  return `<div class="scanner-best-value"><div class="scanner-best-label">BEST CURRENT MATCH • ${score}% ${autoConfidenceLabel(card)}</div>
-    <div class="scanner-best-main">${cardArt(card)}<div class="grow"><strong>${esc(card.name)}</strong><span>${esc(card.set)} • ${esc(card.number||'—')}</span><small>Confirm set, number and variant before relying on this value.</small></div>
-      <div class="scanner-live-price"><span>LIVE MARKET REF.</span><strong>${Number.isFinite(value)?money(value):'—'}</strong>${typeof card.low==='number'?`<small>Low ${money(card.low)}</small>`:''}</div></div>
-    <div class="action-row"><button class="btn primary" onclick='selectAutoMatch(${JSON.stringify(card).replace(/'/g,"&#39;")})'>Confirm match</button><button class="btn" onclick='queueCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>＋ Queue</button>${card.url?`<a class="btn" href="${esc(card.url)}" target="_blank" rel="noreferrer">Market source ↗</a>`:''}</div></div>`;
-}
+  const card=scannerBestMatch;
+  if(!card)return scannerPriceChartingMarkup();
 
+  const value=Number(card.market),score=Number(card.autoScore)||0;
+  const pc=card.priceCharting||scannerPriceChartingResult;
+  const providerValue=Number(card.providerMarket);
+  const provider=providerForGame(scannerGame);
+
+  return `<div class="scanner-best-value">
+    <div class="scanner-best-label">BEST CURRENT MATCH • ${score}% ${autoConfidenceLabel(card)}</div>
+    <div class="scanner-best-main">
+      ${cardArt(card)}
+      <div class="grow"><strong>${esc(card.name)}</strong><span>${esc(card.set)} ${card.number?`• ${esc(card.number)}`:''}</span><small>Confirm exact printing, finish and condition before adding it.</small></div>
+      <div class="scanner-live-price"><span>${pc?'PRICECHARTING UNGRADED':'GAME PROVIDER MARKET REF.'}</span><strong>${Number.isFinite(value)&&value>0?money(value):'—'}</strong><small>${pc?'Primary pricing guide':esc(provider?.label||'Fallback provider')}</small></div>
+    </div>
+    ${scannerPriceChartingMarkup()}
+    ${Number.isFinite(providerValue)&&providerValue>0?`<div class="secondary-price-row"><span>${esc(provider?.label||'Game provider')} secondary reference</span><strong>${money(providerValue)}</strong></div>`:''}
+    <div class="action-row">
+      <button class="btn primary" onclick='selectAutoMatch(${JSON.stringify(card).replace(/'/g,"&#39;")})'>Confirm match</button>
+      <button class="btn" onclick='queueCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>＋ Queue</button>
+      ${(pc?.searchUrl||card.url)?`<a class="btn" href="${esc(pc?.searchUrl||card.url)}" target="_blank" rel="noreferrer">Pricing source ↗</a>`:''}
+    </div>
+  </div>`;
+}
 
 async function scannerLoadImage(dataUrl){
   return await new Promise((resolve,reject)=>{
@@ -4345,7 +4464,10 @@ async function autoIdentifyFromPhoto(autoRun=false){
     const numberHint=extractLikelyCardNumber(scannerOcrText);
     let ranked=[];
 
-    if(scannerGame==='Pokemon'){
+    if(scannerGame==='One Piece'){
+      scannerPriceChartingResult=await fetchPriceChartingPrimary(scannerPriceQuery(null,scannerOcrText));
+      ranked=scannerPriceChartingResult?[priceChartingCardObject(scannerPriceChartingResult,68)]:[];
+    }else if(scannerGame==='Pokemon'){
       ranked=await pokemonScannerCandidatesFromOcr(scannerOcrText,numberHint);
     }else{
       const tokens=scannerTitleTokens(scannerOcrText);
@@ -4365,6 +4487,10 @@ async function autoIdentifyFromPhoto(autoRun=false){
     }
 
     ranked=ranked.slice(0,12);
+    if(!ranked.length){
+      scannerPriceChartingResult=await fetchPriceChartingPrimary(scannerPriceQuery(null,scannerOcrText));
+      if(scannerPriceChartingResult)ranked=[priceChartingCardObject(scannerPriceChartingResult,55)];
+    }
     if(!ranked.length)throw new Error(`I read the photo but could not match a ${scannerGame} printing. Fill more of the card guide and try again.`);
 
     const refreshed=[];
@@ -4376,7 +4502,16 @@ async function autoIdentifyFromPhoto(autoRun=false){
     scannerAutoCandidates=ranked;
     scannerSearchResults=ranked;
     scannerBestMatch=ranked[0]||null;
-    ranked.forEach(c=>captureCardPrice(c,'Scanner live-value lookup'));
+
+    if(scannerBestMatch && !scannerBestMatch.priceCharting){
+      scannerBestMatch=await enrichCardWithPriceCharting(scannerBestMatch,scannerOcrText);
+      scannerAutoCandidates=[scannerBestMatch,...ranked.slice(1)];
+      scannerSearchResults=scannerAutoCandidates;
+    }else if(scannerBestMatch?.priceCharting){
+      scannerPriceChartingResult=scannerBestMatch.priceCharting;
+    }
+
+    scannerSearchResults.forEach(c=>captureCardPrice(c,'Scanner live-value lookup'));
     scannerLastMarketLookupAt=new Date().toISOString();
     saveState();
 
@@ -4489,7 +4624,7 @@ function reviewScannerSettings(){
   if(binder!==null && binderNames().includes(binder.trim())) state.scannerSettings.preferredBinder=binder.trim();
   saveState();renderTools();toast('Scanner settings saved');
 }
-function setScannerGame(game){scannerGame=game;scannerSearchResults=[];scannerAutoCandidates=[];scannerBestMatch=null;scannerLastQuery='';renderTools();}
+function setScannerGame(game){scannerGame=game;scannerSearchResults=[];scannerAutoCandidates=[];scannerBestMatch=null;scannerPriceChartingResult=null;scannerPriceChartingStatus='unknown';scannerLastQuery='';renderTools();}
 async function scannerSearch(event){
   if(event)event.preventDefault();
   const q=($('scannerSearchQ')?.value||scannerLastQuery||'').trim();
@@ -4587,15 +4722,15 @@ function commitScanQueue(){
   saveState();renderTools();
   toast(`Vault updated • ${added} new • ${merged} merged`);
 }
-function clearScannerPhoto(){cameraPreview='';scannerOcrText='';scannerOcrConfidence=null;scannerAutoCandidates=[];scannerSearchResults=[];scannerBestMatch=null;const input=$('hiddenCamera');if(input)input.value='';renderTools();}
+function clearScannerPhoto(){cameraPreview='';scannerOcrText='';scannerOcrConfidence=null;scannerAutoCandidates=[];scannerSearchResults=[];scannerBestMatch=null;scannerPriceChartingResult=null;scannerPriceChartingStatus='unknown';const input=$('hiddenCamera');if(input)input.value='';renderTools();}
 
 function renderScannerTool(){
   ensureScannerSchema();
   const activeRip=activeRipSessionId?ripSessionById(activeRipSessionId):null,secure=location.protocol==='https:'||location.hostname==='localhost',provider=providerForGame(scannerGame);
   return `<div class="panel scanner-pro-panel scanner-v71">
     <div class="section-head"><div><div class="eyebrow">2GEN LIVE VALUE SCANNER</div><h2>Take a photo → identify → live market reference</h2><p>Tap TAKE CARD PHOTO to open a live rear-camera view inside 2GEN Vault. Capture one card, then identification and live-provider value lookup start automatically.</p></div><button class="btn" onclick="reviewScannerSettings()">⚙ Rules</button></div>
-    <div class="scanner-status-strip"><span class="${secure?'good':'bad'}">${secure?'✓ Direct camera supported':'! Direct camera needs HTTPS'}</span><span>Game: <b>${esc(scannerGame)}</b></span><span>Provider: <b>${esc(provider?.label||'Not connected')}</b></span><span>${scannerLastMarketLookupAt?`Lookup ${humanAge(scannerLastMarketLookupAt)}`:'No lookup yet'}</span></div>
-    <div class="scanner-game-tabs scanner-game-tabs-top">${Object.keys(LIVE_CARD_PROVIDERS).map(g=>`<button class="${scannerGame===g?'active':''}" onclick='setScannerGame(${JSON.stringify(g)})'>${esc(g)}</button>`).join('')}</div>
+    <div class="scanner-status-strip"><span class="${secure?'good':'bad'}">${secure?'✓ Direct camera supported':'! Direct camera needs HTTPS'}</span><span>Game: <b>${esc(scannerGame)}</b></span><span>Recognition: <b>${esc(provider?.label||'PriceCharting')}</b></span><span>Pricing: <b>PriceCharting primary</b></span><span>${scannerLastMarketLookupAt?`Lookup ${humanAge(scannerLastMarketLookupAt)}`:'No lookup yet'}</span></div>
+    <div class="scanner-game-tabs scanner-game-tabs-top">${SCANNER_GAME_OPTIONS.map(g=>`<button class="${scannerGame===g?'active':''}" onclick='setScannerGame(${JSON.stringify(g)})'>${esc(g)}</button>`).join('')}</div>
     ${activeRip?`<div class="notice good"><span>✦</span><span>Active Rip Session: <b>${esc(activeRip.name)}</b>.</span></div>`:''}
     <div class="scanner-workspace scanner-camera-workspace"><div>
       <div class="scanbox scanner-camera-box">${cameraPreview?`<img src="${cameraPreview}" alt="Card preview">`:`<span class="camera-glyph">◉</span><b>Fill the card outline when taking the photo</b><span>Use even light • avoid glare • keep card name and collector number readable</span>`}</div>
@@ -4603,7 +4738,7 @@ function renderScannerTool(){
       <div class="scanner-auto-note"><span>✓</span><span>A photo automatically starts identification. You still confirm the exact printing before adding it.</span></div>${scannerOcrBusy?`<div class="ocr-progress"><i></i><span id="ocrProgressText">Reading card…</span></div>`:''}
     </div><div>
       <form class="searchbar" onsubmit="scannerSearch(event)"><span>⌕</span><input id="scannerSearchQ" value="${esc(scannerLastQuery)}" placeholder="Manual fallback: card name or number"><button class="btn primary" ${scannerBusy?'disabled':''}>${scannerBusy?'Searching…':'Manual Identify'}</button></form>
-      <div class="scanner-accuracy-box"><b>What the value means</b><span>The camera identifies a likely printing; it does not value physical condition by itself.</span><span>2GEN Vault requests current reference fields from ${esc(provider?.label||'the selected provider')}.</span><span>Condition, exact variant, foil, language and grading can change actual sale value.</span></div>
+      <div class="scanner-accuracy-box"><b>What the value means</b><span>The camera identifies a likely printing; it does not value physical condition by itself.</span><span>2GEN Vault uses PriceCharting as the primary guide when its secure API connector is configured, then keeps ${esc(provider?.label||'the game-specific provider')} as a secondary reference.</span><span>Condition, exact variant, foil, language and grading can change actual sale value.</span></div>
       ${scannerOcrText?`<div class="ocr-readout"><div class="kpi-line"><span>OCR confidence</span><strong>${scannerOcrConfidence!==null?scannerOcrConfidence.toFixed(0)+'%':'—'}</strong></div><p>${esc(scannerOcrText.slice(0,300))}${scannerOcrText.length>300?'…':''}</p></div>`:''}
     </div></div>
     ${scannerBestMatchMarkup()}
@@ -6308,7 +6443,7 @@ function renderTradesTool(){
 
       ${state.wishlist.length?`<div class="subpanel wishlist-trade-box"><div class="eyebrow">YOUR WISHLIST</div>${state.wishlist.slice(0,8).map(w=>`<div class="compact-row">${cardArt(w.card)}<div class="grow"><strong>${esc(w.card.name)}</strong><span>${esc(w.card.set)} • ${money(Number(w.card.market))}</span></div><button class="btn" onclick="addWishlistTradeItem('${w.uid}')">Add</button></div>`).join('')}</div>`:''}
 
-      <div class="provider-tabs mini-provider-tabs">${Object.keys(LIVE_CARD_PROVIDERS).map(g=>`<button class="${tradeSearchGame===g?'active':''}" onclick='setTradeSearchGame(${JSON.stringify(g)})'><b>${esc(g)}</b></button>`).join('')}</div>
+      <div class="provider-tabs mini-provider-tabs">${SCANNER_GAME_OPTIONS.map(g=>`<button class="${tradeSearchGame===g?'active':''}" onclick='setTradeSearchGame(${JSON.stringify(g)})'><b>${esc(g)}</b></button>`).join('')}</div>
       <form class="searchbar" onsubmit="tradeCardSearch(event)" style="margin-top:10px"><span>⌕</span><input id="tradeSearchQ" placeholder="Search a ${esc(tradeSearchGame)} card to receive"><button class="btn primary" ${tradeSearchBusy?'disabled':''}>${tradeSearchBusy?'Searching…':'Search'}</button></form>
       ${tradeSearchResults.length?`<div class="trade-search-results">${tradeSearchResults.slice(0,8).map(c=>`<div class="compact-row">${cardArt(c)}<div class="grow"><strong>${esc(c.name)}</strong><span>${esc(c.set)} • ${esc(c.number||'')} • ${money(Number(c.market))}</span></div><button class="btn primary" onclick='addTradeSearchResult(${JSON.stringify(c).replace(/'/g,"&#39;")})'>Add</button></div>`).join('')}</div>`:''}
 
