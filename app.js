@@ -85,6 +85,8 @@ const seed = {
   priceRefreshLog: [],
   scannerSettings: {gradingValueThreshold:25, preferredBinder:'Main Binder'},
   inventoryResults: [],
+  inventorySearchHistory: [],
+  inventoryProviderStatus: null,
   nearbyStores: [],
   huntRoute: [],
   communityReports: [],
@@ -843,7 +845,7 @@ function renderHome(){
       <div class="eyebrow">2GEN RIPS PRESENTS</div>
       <h1>${esc(state.settings.brand)}</h1>
       <p>${esc(state.settings.tagline)}</p>
-      <p class="sub">Find stock • Scan cards • Track live values • Decide smarter • Trade • Sell</p>
+      <p class="sub">Search real stock • Scan cards • Track products • Decide smarter • Trade • Sell</p>
       <div class="hero-badges">
         <span class="badge primary">◆ COLLECTOR OS</span>
         <span class="badge">◎ ${state.stockWatches.length} STOCK WATCHES</span>
@@ -1002,7 +1004,7 @@ function productObservationRows(product){
   };
   (state.stockReports||[]).forEach(r=>add(r,'Your sighting'));
   (state.communityReports||[]).forEach(r=>add(r,'Community'));
-  (state.inventoryResults||[]).forEach(r=>add(r,'Inventory connector'));
+  (state.inventoryResults||[]).forEach(r=>add(r,r.sourceAttribution||r.provider||'Official inventory source'));
   return rows.sort((a,b)=>new Date(b.ts)-new Date(a.ts));
 }
 function productObservationConfidence(o){
@@ -1366,6 +1368,258 @@ function editWatch(id){
   saveState();renderStock();toast('Watch updated');
 }
 
+
+function ensureRealInventorySchema(){
+  if(!Array.isArray(state.inventoryResults))state.inventoryResults=[];
+  if(!Array.isArray(state.inventorySearchHistory))state.inventorySearchHistory=[];
+  if(!('inventoryProviderStatus' in state))state.inventoryProviderStatus=null;
+}
+function inventoryBackendBase(){
+  return (window.TWOGEN_CONFIG?.inventoryApiBase||'').trim().replace(/\/+$/,'');
+}
+function inventoryBackendConnected(){
+  return !!inventoryBackendBase();
+}
+function selectedProductForStockQuery(){
+  ensureProductInventorySchema();
+  const q=($('stockQuery')?.value||stockQuery||'').trim();
+  if(!q)return null;
+  const matches=findCatalogMatches(q);
+  return matches.find(p=>normalizeName(p.name)===normalizeName(q))||matches[0]||null;
+}
+function normalizeInventoryResult(x={}){
+  const status=String(x.status||'unknown').toLowerCase();
+  return {
+    id:x.id||uid(),
+    provider:x.provider||x.retailer||'Inventory source',
+    retailer:x.retailer||x.provider||'Retailer',
+    store:x.store||x.retailer||x.provider||'Retailer',
+    storeId:x.storeId||null,
+    address:x.address||'',
+    city:x.city||'',
+    state:x.state||'',
+    postalCode:x.postalCode||'',
+    distanceMiles:Number.isFinite(Number(x.distanceMiles))?Number(x.distanceMiles):null,
+    product:x.product||x.name||stockQuery||'Product',
+    productId:x.productId||'',
+    retailerSku:x.retailerSku||x.sku||'',
+    upc:x.upc||'',
+    game:x.game||stockGame||'Pokemon',
+    price:Number(x.price)||0,
+    regularPrice:Number(x.regularPrice)||0,
+    status,
+    quantity:(x.quantity===null||x.quantity===undefined||x.quantity==='')?null:Number(x.quantity),
+    pickupEligible:x.pickupEligible===true,
+    lowStock:x.lowStock===true,
+    sourceType:x.sourceType||'official_api',
+    sourceAttribution:x.sourceAttribution||x.provider||x.retailer||'Inventory provider',
+    sourceAttributionUrl:x.sourceAttributionUrl||'',
+    updatedAt:x.updatedAt||x.checkedAt||new Date().toISOString(),
+    checkedAt:x.checkedAt||x.updatedAt||new Date().toISOString(),
+    url:x.url||'',
+    addToCartUrl:x.addToCartUrl||'',
+    image:x.image||'',
+    rawConfidence:Number.isFinite(Number(x.confidence))?Number(x.confidence):null
+  };
+}
+function inventoryResultConfidence(x){
+  if(Number.isFinite(x.rawConfidence))return Math.max(1,Math.min(99,Math.round(x.rawConfidence)));
+  const age=reportAgeMinutes(x.checkedAt||x.updatedAt);
+  let score=x.sourceType==='official_api'?92:x.sourceType==='retailer_verified'?80:68;
+  if(age<=5)score+=5;
+  else if(age<=30)score+=2;
+  else if(age>180)score-=18;
+  if(x.lowStock)score-=7;
+  return Math.max(10,Math.min(99,Math.round(score)));
+}
+function inventoryStatusLabel(x){
+  const s=String(x.status||'unknown').toLowerCase();
+  if(s==='in_stock')return 'IN STOCK';
+  if(s==='low_stock')return 'LOW STOCK';
+  if(s==='out_of_stock')return 'OUT OF STOCK';
+  if(s==='online')return 'ONLINE';
+  if(s==='retailer_check')return 'CHECK RETAILER';
+  return s.replace(/_/g,' ').toUpperCase();
+}
+function inventoryStatusClass(x){
+  const s=String(x.status||'unknown').toLowerCase();
+  if(s==='in_stock')return 'in';
+  if(s==='low_stock')return 'low';
+  if(s==='out_of_stock')return 'out';
+  if(s==='online')return 'online';
+  if(s==='retailer_check')return 'check';
+  return 'unknown';
+}
+function inventoryResultDedupeKey(x){
+  return normalizeName(`${x.provider}|${x.storeId||x.store}|${x.retailerSku||x.product}|${x.status}`);
+}
+function mergeInventoryResults(results){
+  const m=new Map();
+  for(const raw of results||[]){
+    const x=normalizeInventoryResult(raw);
+    const key=inventoryResultDedupeKey(x);
+    const prior=m.get(key);
+    if(!prior || new Date(x.checkedAt)>new Date(prior.checkedAt))m.set(key,x);
+  }
+  return [...m.values()].sort((a,b)=>{
+    const rank=s=>s==='in_stock'?4:s==='low_stock'?3:s==='online'?2:s==='retailer_check'?1:0;
+    return rank(b.status)-rank(a.status)
+      || (a.distanceMiles??9999)-(b.distanceMiles??9999)
+      || (a.price||999999)-(b.price||999999);
+  });
+}
+function saveInventorySearchHistory(entry){
+  state.inventorySearchHistory.unshift({
+    uid:uid(),
+    query:entry.query||'',
+    game:entry.game||'',
+    zip:entry.zip||'',
+    radius:Number(entry.radius)||0,
+    retailers:entry.retailers||[],
+    resultCount:Number(entry.resultCount)||0,
+    providers:entry.providers||[],
+    checkedAt:entry.checkedAt||new Date().toISOString()
+  });
+  state.inventorySearchHistory=state.inventorySearchHistory.slice(0,50);
+}
+async function checkInventoryBackendHealth(showToast=false){
+  ensureRealInventorySchema();
+  const base=inventoryBackendBase();
+  if(!base){
+    state.inventoryProviderStatus={connected:false,providers:[],checkedAt:new Date().toISOString(),message:'No backend URL configured'};
+    if(showToast)toast('Inventory backend is not configured');
+    return state.inventoryProviderStatus;
+  }
+  try{
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),8000);
+    const r=await fetch(`${base}/health`,{headers:{Accept:'application/json'},signal:controller.signal});
+    clearTimeout(timer);
+    if(!r.ok)throw new Error(`Health check returned ${r.status}`);
+    const data=await r.json();
+    state.inventoryProviderStatus={
+      connected:true,
+      providers:Array.isArray(data.providers)?data.providers:[],
+      checkedAt:new Date().toISOString(),
+      message:data.message||'Inventory service connected',
+      version:data.version||''
+    };
+    saveState();
+    if(showToast)toast('Inventory service connected');
+    return state.inventoryProviderStatus;
+  }catch(e){
+    state.inventoryProviderStatus={connected:false,providers:[],checkedAt:new Date().toISOString(),message:e.name==='AbortError'?'Inventory service timed out':(e.message||'Inventory service unavailable')};
+    saveState();
+    if(showToast)toast(state.inventoryProviderStatus.message);
+    return state.inventoryProviderStatus;
+  }
+}
+function inventoryProviderRows(){
+  const health=state.inventoryProviderStatus;
+  const returned=new Map((health?.providers||[]).map(p=>[String(p.id||p.name||'').toLowerCase(),p]));
+  const fallback=[
+    {id:'bestbuy',name:'Best Buy',mode:'official_api',configured:false,description:'Official developer API supports near-real-time SKU store availability.'},
+    {id:'target',name:'Target',mode:'retailer_check',configured:true,description:'Retailer-verified availability handoff; no 2GEN stock count is invented.'},
+    {id:'walmart',name:'Walmart',mode:'retailer_check',configured:true,description:'Retailer-verified shopping handoff; Marketplace seller inventory API is not shopper store stock.'},
+    {id:'gamestop',name:'GameStop',mode:'retailer_check',configured:true,description:'Retailer search handoff until a supported inventory connector is configured.'}
+  ];
+  return fallback.map(p=>({...p,...(returned.get(p.id)||{})}));
+}
+function retailerCapabilityMarkup(){
+  return `<div class="provider-status-grid">${inventoryProviderRows().map(p=>{
+    const live=p.mode==='official_api'&&p.configured;
+    const cls=live?'live':p.mode==='retailer_check'?'check':'off';
+    const label=live?'LIVE API':p.mode==='retailer_check'?'RETAILER CHECK':'NOT CONNECTED';
+    return `<div class="provider-status-card ${cls}">
+      <div class="provider-status-head"><strong>${esc(p.name||p.id)}</strong><span>${label}</span></div>
+      <p>${esc(p.description||'')}</p>
+      ${p.id==='bestbuy'&&live?`<a class="provider-attribution" href="https://developer.bestbuy.com" target="_blank" rel="noreferrer"><img src="https://developer.bestbuy.com/images/bestbuy-logo.png" alt="Best Buy Developer API"><span>Data via Best Buy Developer API</span></a>`:''}
+    </div>`;
+  }).join('')}</div>`;
+}
+function buildInventoryParams(product=null){
+  const q=($('stockQuery')?.value||stockQuery||product?.name||'').trim();
+  const game=$('stockGame')?.value||stockGame||product?.game||'Pokemon';
+  const params=new URLSearchParams({
+    q,
+    game,
+    zip:state.settings.zip||'',
+    radius:String(Number(state.settings.radius)||25),
+    retailers:[...selectedRetailers].join(',')
+  });
+  if(state.settings.lat)params.set('lat',String(state.settings.lat));
+  if(state.settings.lon)params.set('lon',String(state.settings.lon));
+  if(product){
+    params.set('productId',product.uid||'');
+    if(product.upc)params.set('upc',product.upc);
+    if(product.sku)params.set('sku',product.sku);
+    const bb=product.retailerSkus?.['Best Buy']||product.retailerSkus?.['BestBuy']||'';
+    if(bb)params.set('bestBuySku',bb);
+  }
+  return params;
+}
+async function fetchRealInventory(product=null){
+  ensureRealInventorySchema();
+  const base=inventoryBackendBase();
+  if(!base)throw new Error('Real Inventory backend is not configured yet');
+  const params=buildInventoryParams(product);
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),18000);
+  try{
+    const r=await fetch(`${base}/inventory?${params.toString()}`,{headers:{Accept:'application/json'},signal:controller.signal});
+    if(!r.ok){
+      let detail='';
+      try{detail=(await r.json())?.error||''}catch{}
+      throw new Error(detail||`Inventory service returned ${r.status}`);
+    }
+    const data=await r.json();
+    const results=mergeInventoryResults(Array.isArray(data.results)?data.results:[]);
+    if(Array.isArray(data.providers)){
+      state.inventoryProviderStatus={connected:true,providers:data.providers,checkedAt:new Date().toISOString(),message:'Inventory service connected',version:data.version||''};
+    }
+    return {results,meta:data.meta||{},providers:data.providers||[]};
+  }catch(e){
+    if(e.name==='AbortError')throw new Error('Inventory search timed out. Try again.');
+    throw e;
+  }finally{clearTimeout(timer)}
+}
+function applyInventoryResultsToProductCommand(results,product){
+  if(!product)return;
+  for(const x of results){
+    x.productId=x.productId||product.uid;
+    x.product=x.product||product.name;
+    x.game=x.game||product.game;
+    if(x.upc&&!product.upc)product.upc=x.upc;
+    if(x.retailer==='Best Buy'&&x.retailerSku){
+      product.retailerSkus=product.retailerSkus||{};
+      if(!product.retailerSkus['Best Buy'])product.retailerSkus['Best Buy']=String(x.retailerSku);
+    }
+  }
+}
+async function runProductInventorySearch(id){
+  const p=catalogProductById(id);if(!p)return;
+  stockQuery=p.name;stockGame=p.game||'Pokemon';
+  const base=inventoryBackendBase();
+  if(!base){toast('Connect the Real Inventory backend first');return}
+  toast(`Checking real inventory for ${p.name}…`);
+  try{
+    const data=await fetchRealInventory(p);
+    applyInventoryResultsToProductCommand(data.results,p);
+    state.inventoryResults=data.results;
+    saveInventorySearchHistory({
+      query:p.name,game:p.game,zip:state.settings.zip,radius:state.settings.radius,
+      retailers:[...selectedRetailers],resultCount:data.results.length,
+      providers:[...new Set(data.results.map(x=>x.provider))],checkedAt:new Date().toISOString()
+    });
+    saveState();renderTools();
+    toast(data.results.length?`${data.results.length} current inventory results`:'No in-stock API results found');
+  }catch(e){toast(e.message||'Inventory search failed')}
+}
+function openInventorySetup(){
+  toolsTab='settings';switchTab('tools');
+  setTimeout(()=>toast('Inventory connection status is in Settings'),100);
+}
+
 function renderStock(){
   const cfg = window.TWOGEN_CONFIG || {};
   const hasBackend = !!(cfg.inventoryApiBase||'').trim();
@@ -1374,8 +1628,8 @@ function renderStock(){
 
   $('stock').innerHTML = `
     <div class="page-title">
-      <div><h1>Stock Finder</h1><p>Find nearby stores, watch products and connect live retailer inventory as integrations are added.</p></div>
-      <span class="badge ${hasBackend?'primary':''}">${hasBackend?'● LIVE CONNECTOR':'○ CONNECTOR READY'}</span>
+      <div><h1>Real Inventory Finder</h1><p>Search supported retailer inventory automatically by product, ZIP and radius — manual sightings are optional.</p></div>
+      <span class="badge ${hasBackend?'primary':''}">${hasBackend?'● REAL INVENTORY READY':'○ SETUP REQUIRED'}</span>
     </div>
 
     <div class="panel">
@@ -1392,7 +1646,7 @@ function renderStock(){
     </div>
 
     <div class="panel">
-      <div class="section-head"><div><h2>Product hunt</h2><p>Search once, then save it as a watch.</p></div></div>
+      <div class="section-head"><div><h2>Search real inventory</h2><p>Enter the product once. 2GEN Vault sends the query, identifiers and search area to connected retailer sources.</p></div></div>
       <div class="form-grid">
         <label class="field full"><span>Product / set / SKU keywords</span><input id="stockQuery" value="${esc(stockQuery)}" placeholder="Prismatic Evolutions ETB, Lorcana booster box..."></label>
         <label class="field"><span>TCG</span><select id="stockGame">${games.map(g=>`<option ${g===stockGame?'selected':''}>${g}</option>`).join('')}</select></label>
@@ -1401,16 +1655,21 @@ function renderStock(){
       <div style="margin:11px 0 7px" class="eyebrow">RETAILERS</div>
       <div class="retailer-grid">${retailers.map(r=>`<button class="retailer-chip ${selectedRetailers.has(r)?'on':''}" onclick='toggleRetailer(${JSON.stringify(r)})'>${esc(r)}</button>`).join('')}</div>
       <div class="action-row" style="margin-top:11px">
-        <button class="btn primary" onclick="runInventorySearch()">◎ Check inventory</button>
+        <button class="btn primary live-search-btn" onclick="runInventorySearch()">◎ SEARCH REAL INVENTORY</button>
         <button class="btn" onclick="findNearbyStores()">⌖ Nearby stores</button>
         <button class="btn green" onclick="saveStockWatch()">＋ Save watch</button>
       </div>
     </div>
 
     ${hasBackend
-      ? `<div class="notice good"><span>●</span><span>Your inventory backend URL is configured. “Check inventory” will request current data from that connector.</span></div>`
-      : `<div class="notice warn"><span>!</span><span><b>No live retailer backend is connected yet.</b> The app will not invent stock counts. Nearby store locations, retailer search links, watchlists and your own reports work now. We can connect supported retailer feeds/APIs to the same screen later without rebuilding the app.</span></div>`
+      ? `<div class="notice good"><span>●</span><span><b>Real Inventory Engine configured.</b> Search results are labeled by source and checked time. Sources that cannot legally provide in-app inventory are shown as retailer checks instead of fake stock.</span></div>`
+      : `<div class="notice warn"><span>!</span><span><b>One-time Real Inventory setup is still required.</b> Your public GitHub Pages app cannot safely contain retailer API secrets. The v5 ZIP includes the secure free-worker backend. After its public URL is placed in config.js, searches run automatically without you entering store inventory.</span></div>`
     }
+
+    <div class="panel inventory-provider-panel" style="margin-top:10px">
+      <div class="section-head"><div><div class="eyebrow">LIVE SOURCE STATUS</div><h2>Retailer connector network</h2><p>2GEN Vault clearly separates official API data from retailer-site checks.</p></div><button class="btn" onclick="checkInventoryBackendHealth(true).then(()=>renderStock())">Test connection</button></div>
+      ${retailerCapabilityMarkup()}
+    </div>
 
 
 
@@ -1464,7 +1723,7 @@ function renderStock(){
     </div>
 
     <div class="panel">
-      <div class="section-head"><div><h2>Inventory results</h2><p id="inventoryResultCaption">${state.inventoryResults.length ? `${state.inventoryResults.length} saved/live results` : 'No inventory results yet.'}</p></div><button class="link-btn" onclick="clearInventoryResults()">Clear</button></div>
+      <div class="section-head"><div><h2>Real inventory results</h2><p id="inventoryResultCaption">${state.inventoryResults.length ? `${state.inventoryResults.length} current/saved results` : 'Search a product above.'}</p></div><button class="link-btn" onclick="clearInventoryResults()">Clear</button></div>
       <div id="inventoryResults">${renderInventoryResults()}</div>
     </div>
 
@@ -1474,7 +1733,7 @@ function renderStock(){
     </div>
 
     <div class="panel">
-      <div class="section-head"><div><h2>Quick retailer checks</h2><p>Open the retailer's public product search while live stock integrations are being connected.</p></div></div>
+      <div class="section-head"><div><h2>Retailer-verified fallback checks</h2><p>For retailers without a connected official feed, jump to the retailer's own search/availability experience rather than showing invented stock.</p></div></div>
       <div class="retailer-grid">${[...selectedRetailers].map(r=>`<button class="retailer-chip on" onclick='openRetailerSearch(${JSON.stringify(r)}, document.getElementById("stockQuery")?.value || "")'>↗ ${esc(r)}</button>`).join('') || '<span class="tiny">Select at least one retailer above.</span>'}</div>
     </div>
 
@@ -1550,47 +1809,97 @@ function removeStockReport(id){ state.stockReports=state.stockReports.filter(x=>
 function clearInventoryResults(){ state.inventoryResults=[]; saveState(); renderStock(); }
 
 async function runInventorySearch(){
-  stockQuery = $('stockQuery')?.value.trim() || '';
-  stockGame = $('stockGame')?.value || 'Pokemon';
-  const base = (window.TWOGEN_CONFIG?.inventoryApiBase||'').trim().replace(/\/+$/,'');
-  if(!stockQuery){ toast('Enter a product or set first'); return; }
-  if(!base){
-    toast('Live inventory connector is not configured yet');
+  ensureRealInventorySchema();
+  stockQuery=$('stockQuery')?.value.trim()||'';
+  stockGame=$('stockGame')?.value||'Pokemon';
+  if(!stockQuery){toast('Enter a product, UPC or SKU first');return;}
+  const product=selectedProductForStockQuery();
+  if(!inventoryBackendConnected()){
+    toast('Real Inventory backend is not connected yet');
+    openInventorySetup();
     return;
   }
-  const zip = state.settings.zip || '';
-  const params = new URLSearchParams({
-    zip, radius:String(state.settings.radius||25), q:stockQuery, game:stockGame,
-    retailers:[...selectedRetailers].join(',')
-  });
-  const cap = $('inventoryResultCaption'); if(cap) cap.textContent='Checking live inventory…';
+
+  const cap=$('inventoryResultCaption');
+  if(cap)cap.textContent='Checking connected retailer sources…';
+  const btn=document.querySelector('.live-search-btn');
+  if(btn){btn.disabled=true;btn.textContent='Checking retailers…'}
+
   try{
-    const r = await fetch(`${base}/inventory?${params.toString()}`,{headers:{'Accept':'application/json'}});
-    if(!r.ok) throw new Error(`Inventory service returned ${r.status}`);
-    const data = await r.json();
-    state.inventoryResults = Array.isArray(data.results) ? data.results : [];
-    saveState(); renderStock(); toast(`${state.inventoryResults.length} inventory results`);
+    const data=await fetchRealInventory(product);
+    applyInventoryResultsToProductCommand(data.results,product);
+    state.inventoryResults=data.results;
+    saveInventorySearchHistory({
+      query:stockQuery,game:stockGame,zip:state.settings.zip,radius:state.settings.radius,
+      retailers:[...selectedRetailers],resultCount:data.results.length,
+      providers:[...new Set(data.results.map(x=>x.provider))],checkedAt:new Date().toISOString()
+    });
+    saveState();renderStock();
+    toast(data.results.length?`${data.results.length} real inventory result${data.results.length===1?'':'s'}`:'No in-stock API results found nearby');
   }catch(e){
-    renderStock(); toast(e.message || 'Inventory lookup failed');
+    renderStock();toast(e.message||'Inventory lookup failed');
   }
 }
 function renderInventoryResults(){
-  if(!state.inventoryResults.length) return `<div class="empty">No connected inventory results yet. Use Nearby stores or retailer search links while integrations are being added.</div>`;
-  return state.inventoryResults.map(x=>{
-    const status = String(x.status||'unknown').toLowerCase();
-    const cls = status.includes('in') ? 'in' : status.includes('low') ? 'low' : 'out';
-    const label = status==='in_stock'?'IN STOCK':status==='low_stock'?'LOW STOCK':status==='out_of_stock'?'OUT OF STOCK':esc(String(x.status||'UNKNOWN').toUpperCase());
-    return `<div class="inventory-card">
-      <div class="topline"><div class="grow"><div class="eyebrow">${esc(x.retailer||'Retailer')}</div><h3>${esc(x.product||'Product')}</h3><p>${esc(x.store||'')} ${x.address?`• ${esc(x.address)}`:''}</p></div><span class="stock-pill ${cls}">${label}</span></div>
-      <div class="meta-grid"><div class="meta"><span>Price</span><strong>${money(Number(x.price))}</strong></div><div class="meta"><span>Qty</span><strong>${x.quantity ?? '—'}</strong></div><div class="meta"><span>Distance</span><strong>${typeof x.distanceMiles==='number'?x.distanceMiles.toFixed(1)+' mi':'—'}</strong></div></div>
-      <div class="action-row">${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Open retailer ↗</a>`:''}<button class="btn" onclick='saveInventoryResultAsReport(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Save report</button><button class="btn green" onclick='buyInventoryResult(${JSON.stringify(x).replace(/'/g,"&#39;")})'>$ Bought it</button><button class="btn" onclick='openInventoryProduct(${JSON.stringify(x).replace(/'/g,"&#39;")})'>◈ Product page</button></div>
-      <div class="tiny" style="margin-top:8px">Updated ${dateShort(x.updatedAt)}</div>
+  ensureRealInventorySchema();
+  if(!state.inventoryResults.length)return `<div class="empty">No automatic inventory results yet. Search above. If a retailer has no supported API connector, use its retailer-verified fallback button instead.</div>`;
+  return state.inventoryResults.map(raw=>{
+    const x=normalizeInventoryResult(raw);
+    const confidence=inventoryResultConfidence(x);
+    const label=inventoryStatusLabel(x);
+    const cls=inventoryStatusClass(x);
+    const qty=x.quantity===null?'Not provided':x.quantity;
+    const verified=x.sourceType==='official_api';
+    return `<div class="inventory-card real-inventory-card">
+      <div class="topline">
+        ${x.image?`<img class="inventory-product-img" src="${esc(x.image)}" alt="">`:''}
+        <div class="grow">
+          <div class="eyebrow">${esc(x.retailer)} • ${verified?'OFFICIAL API':'RETAILER CHECK'}</div>
+          <h3>${esc(x.product)}</h3>
+          <p>${esc(x.store||'')} ${x.address?`• ${esc(x.address)}`:''}</p>
+        </div>
+        <span class="stock-pill ${cls}">${label}</span>
+      </div>
+      <div class="meta-grid">
+        <div class="meta"><span>Price</span><strong>${x.price?money(x.price):'—'}</strong></div>
+        <div class="meta"><span>Quantity</span><strong>${esc(String(qty))}</strong></div>
+        <div class="meta"><span>Distance</span><strong>${typeof x.distanceMiles==='number'?x.distanceMiles.toFixed(1)+' mi':'—'}</strong></div>
+        <div class="meta"><span>Checked</span><strong>${humanAge(x.checkedAt)}</strong></div>
+      </div>
+      <div class="inventory-trust-row">
+        <span class="confidence-badge ${confidence>=85?'high':confidence>=60?'mid':'low'}">${confidence}% source confidence</span>
+        ${x.lowStock?`<span class="stock-pill low">LOW STOCK FLAG</span>`:''}
+        ${x.retailerSku?`<span>SKU ${esc(String(x.retailerSku))}</span>`:''}
+      </div>
+      <div class="action-row">
+        ${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Open retailer ↗</a>`:''}
+        ${x.addToCartUrl?`<a class="btn green" href="${esc(x.addToCartUrl)}" target="_blank" rel="noreferrer">Cart ↗</a>`:''}
+        <button class="btn" onclick='saveInventoryResultAsReport(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Save snapshot</button>
+        <button class="btn green" onclick='buyInventoryResult(${JSON.stringify(x).replace(/'/g,"&#39;")})'>$ Bought it</button>
+        <button class="btn" onclick='openInventoryProduct(${JSON.stringify(x).replace(/'/g,"&#39;")})'>◈ Product</button>
+      </div>
+      <div class="inventory-source-line">
+        <span>Source: ${esc(x.sourceAttribution)}</span>
+        ${x.sourceAttributionUrl?`<a href="${esc(x.sourceAttributionUrl)}" target="_blank" rel="noreferrer">Provider info ↗</a>`:''}
+      </div>
+      ${x.provider==='Best Buy'?`<a class="bestbuy-attribution" href="https://developer.bestbuy.com" target="_blank" rel="noreferrer"><img src="https://developer.bestbuy.com/images/bestbuy-logo.png" alt="Best Buy Developer API"><span>Best Buy data via Developer API</span></a>`:''}
     </div>`;
   }).join('');
 }
-function saveInventoryResultAsReport(x){
-  state.stockReports.unshift({uid:uid(),store:x.store||x.retailer||'',product:x.product||'',status:x.status==='in_stock'?'In stock':x.status==='low_stock'?'Low stock':'Out of stock',qty:x.quantity||'',price:Number(x.price)||0,notes:'Saved from inventory connector',ts:new Date().toISOString(),confirmations:1,soldOutConfirmations:0});
-  saveState(); renderStock(); toast('Saved to stock reports');
+function saveInventoryResultAsReport(raw){
+  const x=normalizeInventoryResult(raw);
+  const p=x.productId?catalogProductById(x.productId):findCatalogMatches(x.product)[0]||null;
+  const report={
+    uid:uid(),productId:p?.uid||x.productId||'',store:x.store||x.retailer||'',retailer:x.retailer||'',
+    product:x.product||'',game:x.game||p?.game||stockGame||'Pokemon',
+    status:x.status==='in_stock'?'In stock':x.status==='low_stock'?'Low stock':x.status==='out_of_stock'?'Out of stock':inventoryStatusLabel(x),
+    qty:x.quantity===null?'':x.quantity,price:Number(x.price)||0,upc:x.upc||p?.upc||'',sku:x.retailerSku||p?.sku||'',
+    notes:`Saved from ${x.sourceAttribution||'inventory connector'}`,ts:x.checkedAt||new Date().toISOString(),
+    confirmations:x.sourceType==='official_api'?2:1,soldOutConfirmations:0,source:x.sourceType||'inventory_connector'
+  };
+  state.stockReports.unshift(report);
+  if(p)recordProductInventoryEvent(p.uid,'Inventory snapshot',`${report.status} at ${report.store}`,`${report.price?money(report.price):'Price unknown'} • ${x.sourceAttribution}`);
+  saveState();renderStock();toast('Inventory snapshot saved');
 }
 
 async function useMyLocation(){
@@ -3084,6 +3393,7 @@ function renderProductDetail(p){
 
     <div class="product-action-grid command-actions">
       <button class="quick-card" onclick="watchProduct('${p.uid}')"><span class="big-icon">◎</span><b>${s.watch?'Stock watch':'Watch inventory'}</b><span>${s.watch?`${esc(s.watch.priority||'High')} • ${s.watch.radius} mi • max ${s.watch.maxPrice?money(s.watch.maxPrice):'open'}`:'Create a Restock Radar watch.'}</span></button>
+      <button class="quick-card live-command-card" onclick="runProductInventorySearch('${p.uid}')"><span class="big-icon">◉</span><b>SEARCH LIVE INVENTORY</b><span>Send this product's name, UPC/SKU and your ZIP/radius to connected retailer sources.</span></button>
       <button class="quick-card" onclick="huntProductNow('${p.uid}')"><span class="big-icon">⌖</span><b>Hunt now</b><span>Load this exact product into Stock Finder and nearby-store workflow.</span></button>
       <button class="quick-card" onclick="openProductStockReport('${p.uid}')"><span class="big-icon">◎</span><b>Log sighting</b><span>Record retailer, quantity and price with product identity attached.</span></button>
       <button class="quick-card" onclick="buyCatalogProduct('${p.uid}')"><span class="big-icon">$</span><b>Log purchase</b><span>Add purchase cost and optionally sealed inventory.</span></button>
@@ -5383,7 +5693,13 @@ function renderSettingsTool(){
   const cfg=window.TWOGEN_CONFIG||{};
   return `<div class="panel"><div class="section-head"><div><h2>App settings</h2><p>Branding, backup and integration status.</p></div></div><div class="form-grid"><label class="field"><span>App name</span><input id="brandName" value="${esc(state.settings.brand)}"></label><label class="field"><span>Tagline</span><input id="brandTagline" value="${esc(state.settings.tagline)}"></label></div><button class="btn primary" style="margin-top:10px" onclick="saveBrandSettings()">Save branding</button></div>
   <div class="panel"><h2>Cloud status</h2><div class="notice ${cloudReady()?'good':'warn'}"><span>${cloudReady()?'●':'!'}</span><span>${cloudReady()?`Cloud project connected • ${signedIn()?'signed in':'guest mode'}`:'Cloud project not configured. Accounts and community reports remain local-only until setup.'}</span></div></div>
-  <div class="panel"><h2>Inventory integration</h2><div class="notice ${cfg.inventoryApiBase?'good':'warn'}"><span>${cfg.inventoryApiBase?'●':'!'}</span><span>${cfg.inventoryApiBase?`Connected to ${esc(cfg.inventoryApiBase)}`:'No secure retailer-inventory backend is configured. Edit only the public inventoryApiBase in config.js after we create the backend. Never put secret retailer/API keys in GitHub Pages.'}</span></div></div>
+  <div class="panel inventory-setup-panel">
+    <div class="section-head"><div><div class="eyebrow">REAL INVENTORY ENGINE</div><h2>Secure retailer connection</h2><p>Retailer secrets stay off GitHub Pages. The app talks only to your public worker URL.</p></div><button class="btn primary" onclick="checkInventoryBackendHealth(true).then(()=>renderTools())">Test connection</button></div>
+    <div class="notice ${cfg.inventoryApiBase?'good':'warn'}"><span>${cfg.inventoryApiBase?'●':'!'}</span><span>${cfg.inventoryApiBase?`Configured backend: ${esc(cfg.inventoryApiBase)}`:'No secure inventory backend URL is configured yet. The v5 package contains a ready-to-deploy Cloudflare Worker.'}</span></div>
+    <div class="connection-code"><span>config.js</span><code>inventoryApiBase: "${esc(cfg.inventoryApiBase||'https://YOUR-WORKER.workers.dev')}"</code></div>
+    ${retailerCapabilityMarkup()}
+    <div class="notice" style="margin-top:10px"><span>🔒</span><span>Never paste Best Buy or other private retailer API keys into config.js. Store them as backend secrets only.</span></div>
+  </div>
   <div class="panel"><h2>Backup & portability</h2><div class="action-row"><button class="btn" onclick="exportBackup()">Export full backup</button><button class="btn" onclick="$('hiddenImport').click()">Import backup</button><button class="btn red" onclick="resetApp()">Reset local data</button></div><p style="margin-top:9px">Version ${esc(String(cfg.appVersion||'0.4.0'))}. Data currently lives on this device until cloud accounts are added.</p></div>`;
 }
 function saveBrandSettings(){state.settings.brand=$('brandName')?.value.trim()||'2GEN Vault';state.settings.tagline=$('brandTagline')?.value.trim()||'Two Generations. One Collection.';saveState();renderTools();toast('Branding saved')}
@@ -5405,7 +5721,7 @@ function exportCollectionCSV(){
 }
 
 Object.assign(window,{
-  switchTab,openVault,openTool,toggleRetailer,saveStockArea,useMyLocation,runInventorySearch,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
+  switchTab,openVault,openTool,toggleRetailer,saveStockArea,useMyLocation,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
@@ -5439,6 +5755,7 @@ ensureSalesSchema();
 ensureScannerSchema();
 ensureCatalogSeed();
 ensureProductInventorySchema();
+ensureRealInventorySchema();
 ensureDailySnapshot();
 evaluateWatchtower({notify:false});
 render('home');

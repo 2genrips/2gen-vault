@@ -13,8 +13,12 @@
   Example:
     inventoryApiBase: "https://api.yourdomain.com"
 
-  Expected inventory endpoint:
-    GET {inventoryApiBase}/inventory?zip=28752&radius=25&q=prismatic&game=Pokemon&retailers=Target,Walmart
+  v5 Real Inventory Engine endpoints:
+    GET {inventoryApiBase}/health
+    GET {inventoryApiBase}/inventory?zip=28752&radius=25&q=prismatic&game=Pokemon&retailers=Best%20Buy,Target
+
+  The v5 ZIP includes a Cloudflare Worker backend in /inventory-worker.
+  Put private retailer keys in Worker secrets — NEVER in this public config file.
 
   Expected JSON response:
   {
@@ -40,5 +44,5 @@ window.TWOGEN_CONFIG = {
   inventoryApiBase: "",
   supabaseUrl: "",
   supabaseAnonKey: "",
-  appVersion: "4.0.0"
+  appVersion: "5.0.0"
 };

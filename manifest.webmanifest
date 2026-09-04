@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault by 2GEN RIPS \u2014 Collector OS v4 with Product Command retail/sealed inventory intelligence, VaultIQ, Universal Live Card Network, Watchtower, Market Pulse, Trade Lab and Sell Lab.",
+  "description": "2GEN Vault v5 \u2014 Collector OS with secure Real Inventory Engine, Product Command, VaultIQ, multi-TCG live card search, Watchtower, Market Pulse, Trade Lab and Sell Lab.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

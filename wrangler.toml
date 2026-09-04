@@ -1,0 +1,8 @@
+name = "2gen-vault-inventory"
+main = "src/index.js"
+compatibility_date = "2026-09-04"
+
+[vars]
+# Replace with your GitHub Pages origin after deployment.
+# Example: "https://2genrips.github.io"
+ALLOWED_ORIGIN = "https://2genrips.github.io"

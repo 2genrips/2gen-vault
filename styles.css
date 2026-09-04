@@ -831,3 +831,43 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   .inventory-history-row{grid-template-columns:1fr auto}.inventory-history-row>strong{grid-column:2}
   .command-actions{grid-template-columns:1fr}
 }
+
+
+/* v5.0 — Real Inventory Engine */
+.live-search-btn{
+  min-height:42px;
+  box-shadow:0 0 0 1px rgba(46,211,154,.12),0 10px 28px rgba(21,101,255,.12);
+}
+.inventory-provider-panel{background:radial-gradient(circle at 100% 0%,rgba(46,211,154,.07),transparent 28%),rgba(17,21,29,.96)}
+.provider-status-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}
+.provider-status-card{border:1px solid var(--line);border-radius:13px;padding:10px;background:#0c1219}
+.provider-status-card.live{border-color:rgba(46,211,154,.28);background:rgba(46,211,154,.04)}
+.provider-status-card.check{border-color:rgba(241,199,91,.22)}
+.provider-status-card.off{opacity:.55}
+.provider-status-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.provider-status-head strong{font-size:8px}.provider-status-head span{font-size:6px;padding:3px 5px;border-radius:999px;border:1px solid var(--line-soft);color:var(--muted)}
+.provider-status-card.live .provider-status-head span{color:#83e8c4;border-color:rgba(46,211,154,.3)}
+.provider-status-card.check .provider-status-head span{color:#efd47d;border-color:rgba(241,199,91,.28)}
+.provider-status-card p{font-size:6.5px;line-height:1.45;color:var(--muted);margin:7px 0 0}
+.provider-attribution,.bestbuy-attribution{display:flex;gap:7px;align-items:center;margin-top:8px;color:var(--muted);text-decoration:none;font-size:6.5px}
+.provider-attribution img,.bestbuy-attribution img{height:20px;width:auto;object-fit:contain;background:#fff;border-radius:4px;padding:2px}
+.real-inventory-card{position:relative;overflow:hidden}
+.real-inventory-card:before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(180deg,var(--blue),#42d5a3)}
+.inventory-product-img{width:58px;height:78px;object-fit:contain;border-radius:8px;background:#09111d}
+.inventory-trust-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:9px 0}
+.inventory-trust-row>span:not(.confidence-badge):not(.stock-pill){font-size:6px;color:var(--muted);border:1px solid var(--line-soft);border-radius:999px;padding:3px 5px}
+.inventory-source-line{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:8px;border-top:1px solid var(--line-soft);padding-top:7px}
+.inventory-source-line span,.inventory-source-line a{font-size:6px;color:#687a92}
+.inventory-source-line a{text-decoration:none}
+.stock-pill.online{color:#94b9ff;border-color:rgba(21,101,255,.28)}
+.stock-pill.check{color:#efd47d;border-color:rgba(241,199,91,.28)}
+.live-command-card{border-color:rgba(46,211,154,.3)!important;background:radial-gradient(circle at 100% 0%,rgba(46,211,154,.08),transparent 40%),#0c1219!important}
+.inventory-setup-panel{background:radial-gradient(circle at 100% 0%,rgba(21,101,255,.08),transparent 30%),rgba(17,21,29,.96)}
+.connection-code{display:grid;gap:4px;margin:9px 0;padding:9px;border:1px solid var(--line);border-radius:12px;background:#08111d}
+.connection-code span{font-size:6px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.connection-code code{font-size:7px;word-break:break-all;color:#a9c2ff}
+@media(max-width:620px){
+  .provider-status-grid{grid-template-columns:1fr}
+  .inventory-product-img{width:46px;height:64px}
+  .inventory-source-line{display:block}.inventory-source-line a{display:block;margin-top:4px}
+}

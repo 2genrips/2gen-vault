@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v4.0 Product Command
+## Current build: v5.0 Real Inventory Engine
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -296,3 +296,26 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Product Command -> VaultIQ
 - Dashboard Pro product analytics
 - Action Center product opportunities
+
+
+## v5.0 completed
+- Real Inventory Engine frontend
+- Secure backend contract
+- Cloudflare Worker backend included
+- Backend health/provider diagnostics
+- Official Best Buy API connector
+- Best Buy product keyword lookup
+- Best Buy exact SKU lookup
+- Best Buy UPC lookup
+- Near-real-time Best Buy in-store availability
+- Radius filtering
+- Low-stock handling
+- Explicit unknown quantity handling
+- Retailer-site fallback checks for unsupported connectors
+- Automatic Product Command identifier handoff
+- Product Command -> Search Live Inventory
+- Inventory result normalization/deduplication
+- Source type / checked time / confidence
+- Inventory search history
+- Best Buy attribution support
+- No-retailer-secret GitHub Pages architecture
