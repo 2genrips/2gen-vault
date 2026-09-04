@@ -49,5 +49,5 @@ window.TWOGEN_CONFIG = {
   premiumPreview: true,
   releaseChannel: "development",
   premiumEntitlementApiBase: "",
-  appVersion: "10.4.0"
+  appVersion: "10.5.0"
 };

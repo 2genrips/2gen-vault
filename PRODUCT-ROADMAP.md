@@ -1,6 +1,6 @@
 # VaultSignal — Product Roadmap
 
-## Current build: v10.4 Stock Command
+## Current build: v10.5 Live Drops Alert Network
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -408,3 +408,12 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - optional production Google Places connector
 - store-discovery source visible in scan history
 - production/store-discovery architecture separated from live inventory feeds
+
+
+## v10.5 completed
+- Live Drops alert feed
+- starter specialty-store storefront monitors
+- sealed TCG filtering
+- local new-listing/restock/price-drop classification
+- watch matching + direct buy links
+- 60-second foreground feed refresh

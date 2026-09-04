@@ -1,7 +1,7 @@
 {
   "name": "VaultSignal",
   "short_name": "VaultSignal",
-  "description": "VaultSignal v10.4 \u2014 professional Stock Command with watched-product scanning, stronger store discovery and production Places API connector support.",
+  "description": "VaultSignal v10.5 \u2014 Live Drops alert network with real public storefront feeds, watch matching and direct buy links.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

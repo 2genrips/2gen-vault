@@ -15,9 +15,10 @@
  *   GET /inventory?q=...&zip=...&radius=25&retailers=Best%20Buy,...
  *   GET /card-price?q=...&game=...
  *   GET /area-scan?zip=28761&radius=25&games=Pokemon,Lorcana
+ *   GET /drop-feed?games=Pokemon,One%20Piece&limit=120
  */
 
-const VERSION = "10.4.0";
+const VERSION = "10.5.0";
 const BESTBUY_BASE = "https://api.bestbuy.com/v1";
 const MAX_PRODUCT_MATCHES = 4;
 const CACHE_TTL_SECONDS = 120;
@@ -595,6 +596,65 @@ async function fastAreaScan(url,env){
   };
 }
 
+const PUBLIC_STOREFRONT_MONITORS=[
+  {id:"safari-zone",name:"Safari Zone",base:"https://safari-zone.com",region:"US"},
+  {id:"smoke-mirrors",name:"Smoke and Mirrors Hobby",base:"https://www.smokeandmirrorshobby.com",region:"US"},
+  {id:"zulus-games",name:"Zulu's Games",base:"https://zulusgames.com",region:"US"},
+  {id:"pkmn-colosseum",name:"PKMN Colosseum",base:"https://pkmncolosseum.com",region:"US"},
+  {id:"tcg-stadium",name:"TCG Stadium",base:"https://tcg-stadium.com",region:"US"},
+  {id:"real-good-deal",name:"Real Good Deal",base:"https://realgoodeal.com",region:"US"}
+];
+function monitorGame(title="",tags=[]){
+  const t=`${title} ${(tags||[]).join(" ")}`.toLowerCase();
+  if(/one[\s-]?piece/.test(t))return "One Piece";
+  if(/lorcana/.test(t))return "Lorcana";
+  if(/yu[\s-]?gi[\s-]?oh|yugioh/.test(t))return "Yu-Gi-Oh!";
+  if(/magic[:\s]|mtg|the gathering/.test(t))return "Magic";
+  if(/pokemon|pokémon/.test(t))return "Pokemon";
+  return "";
+}
+function looksLikeSealed(title="",productType="",tags=[]){
+  const t=`${title} ${productType} ${(tags||[]).join(" ")}`.toLowerCase();
+  if(!monitorGame(title,tags))return false;
+  if(/single card|singles|graded|psa |cgc |bgs |slab|playmat|binder|sleeves|deck box|toploader|plush|figure|funko/.test(t))return false;
+  return /booster|elite trainer|etb|bundle|collection|tin|box|display|pack|blister|deck|case|premium|poster|trainer toolkit|build.*battle|starter/.test(t);
+}
+async function storefrontRows(source,games,perSource){
+  const url=`${source.base.replace(/\/$/,"")}/products.json?limit=250`;
+  const r=await withTimeout(url,{headers:{Accept:"application/json","User-Agent":"VaultSignal/10.5"}},4500);
+  if(!r.ok)throw new Error(`${source.name} ${r.status}`);
+  const d=await r.json();const rows=[];
+  for(const p of d.products||[]){
+    const game=monitorGame(p.title,p.tags);if(!game||!games.includes(game))continue;
+    if(!looksLikeSealed(p.title,p.product_type,p.tags))continue;
+    const variants=Array.isArray(p.variants)?p.variants:[];
+    const av=variants.filter(v=>v.available===true),chosen=av[0]||variants[0]||{};
+    rows.push({
+      id:`${source.id}:${p.id}`,sourceId:source.id,sourceLabel:"Public storefront feed",store:source.name,region:source.region||"Online",game,
+      product:p.title||"TCG product",productType:p.product_type||"",productId:String(p.id||""),handle:p.handle||"",sku:String(chosen.sku||""),
+      price:Number(chosen.price)||0,compareAtPrice:Number(chosen.compare_at_price)||0,available:av.length>0,
+      image:p.images?.[0]?.src||p.image?.src||"",url:`${source.base.replace(/\/$/,"")}/products/${p.handle||""}`,checkedAt:new Date().toISOString()
+    });
+    if(rows.length>=perSource)break;
+  }
+  return rows;
+}
+async function liveDropFeed(url){
+  const started=Date.now();
+  const allowed=["Pokemon","Lorcana","Magic","Yu-Gi-Oh!","One Piece"];
+  const requested=(url.searchParams.get("games")||"Pokemon").split(",").map(x=>safeText(x,40)).filter(x=>allowed.includes(x));
+  const games=requested.length?requested:["Pokemon"];
+  const limit=boundedNumber(url.searchParams.get("limit"),10,160,120);
+  const perSource=Math.max(20,Math.ceil(limit/PUBLIC_STOREFRONT_MONITORS.length));
+  const settled=await Promise.all(PUBLIC_STOREFRONT_MONITORS.map(async source=>{
+    try{return {ok:true,source,rows:await storefrontRows(source,games,perSource)}}catch(e){return {ok:false,source,error:e.message||"monitor failed",rows:[]}}
+  }));
+  const seen=new Set();
+  const results=settled.flatMap(x=>x.rows).filter(x=>{const k=x.url||x.id;if(seen.has(k))return false;seen.add(k);return true;})
+    .sort((a,b)=>(b.available===true)-(a.available===true)||Number(a.price||999999)-Number(b.price||999999)).slice(0,limit);
+  return {version:VERSION,results,checkedAt:new Date().toISOString(),meta:{sourcesChecked:settled.length,sourcesOk:settled.filter(x=>x.ok).length,errors:settled.filter(x=>!x.ok).map(x=>({source:x.source.name,error:x.error})),durationMs:Date.now()-started}};
+}
+
 export default {
   async fetch(request, env, ctx){
     const origin=corsOrigin(request,env);
@@ -615,6 +675,9 @@ export default {
         pricingProviders:[priceChartingStatus(env)],
         checkedAt:new Date().toISOString()
       },200,origin);
+    }
+    if(url.pathname==="/drop-feed"){
+      try{return json(await liveDropFeed(url),200,origin)}catch(e){return json({ok:false,error:e.message||"Drop feed failed",checkedAt:new Date().toISOString()},502,origin)}
     }
     if(url.pathname==="/area-scan"){
       try{

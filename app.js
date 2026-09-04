@@ -111,6 +111,10 @@ const seed = {
   inventorySearchHistory: [],
   areaInventoryResults: [],
   areaRetailerCheckResults: [],
+  liveDropFeed: [],
+  liveDropSnapshot: {},
+  liveDropMeta: {checkedAt:null,durationMs:0,sourcesChecked:0,sourcesOk:0,errors:[]},
+  liveDropFilters: {game:'All',store:'All',watchOnly:false,inStockOnly:true},
   areaScanHistory: [],
   inventoryPulseEvents: [],
   favoriteInventoryStores: [],
@@ -2029,6 +2033,10 @@ function ensureRealInventorySchema(){
   if(!Array.isArray(state.inventorySearchHistory))state.inventorySearchHistory=[];
   if(!Array.isArray(state.areaInventoryResults))state.areaInventoryResults=[];
   if(!Array.isArray(state.areaRetailerCheckResults))state.areaRetailerCheckResults=[];
+  if(!Array.isArray(state.liveDropFeed))state.liveDropFeed=[];
+  if(!state.liveDropSnapshot||typeof state.liveDropSnapshot!=='object')state.liveDropSnapshot={};
+  state.liveDropMeta={checkedAt:null,durationMs:0,sourcesChecked:0,sourcesOk:0,errors:[],...(state.liveDropMeta||{})};
+  state.liveDropFilters={game:'All',store:'All',watchOnly:false,inStockOnly:true,...(state.liveDropFilters||{})};
   if(!Array.isArray(state.areaScanHistory))state.areaScanHistory=[];
   if(!Array.isArray(state.inventoryPulseEvents))state.inventoryPulseEvents=[];
   if(!Array.isArray(state.favoriteInventoryStores))state.favoriteInventoryStores=[];
@@ -2535,6 +2543,71 @@ async function maybeAutoScanArea(){
   await runAreaInventoryScan(true);
 }
 
+let liveDropBusy=false;
+let liveDropAutoTimer=null;
+function liveDropKey(x){return `${x.sourceId||x.store}|${x.productId||x.handle||x.url||x.product}`;}
+function dropWatchMatch(x){
+  const text=`${x.product||''} ${x.game||''} ${x.store||''}`.toLowerCase();
+  return stockWatchQueriesForScan().find(q=>text.includes(q.toLowerCase()))||'';
+}
+function classifyLiveDropChanges(rows){
+  const prev=state.liveDropSnapshot||{},next={};
+  const enriched=rows.map(x=>{
+    const key=liveDropKey(x),before=prev[key];
+    const now={available:x.available===true,price:Number(x.price)||0,seenAt:new Date().toISOString()};
+    next[key]=now;
+    let eventType='IN STOCK';
+    if(!before)eventType='NEW LISTING';
+    else if(before.available===false&&now.available===true)eventType='RESTOCK';
+    else if(before.price&&now.price&&now.price<before.price)eventType='PRICE DROP';
+    return {...x,eventType,previousPrice:before?.price||null,watchMatch:dropWatchMatch(x)};
+  });
+  state.liveDropSnapshot=next;
+  return enriched;
+}
+function liveDropStores(){return [...new Set((state.liveDropFeed||[]).map(x=>x.store).filter(Boolean))].sort();}
+function setLiveDropFilter(key,value){state.liveDropFilters[key]=value;saveState();renderStock();}
+function filteredLiveDrops(){
+  const f=state.liveDropFilters||{};let rows=(state.liveDropFeed||[]).slice();
+  if(f.game&&f.game!=='All')rows=rows.filter(x=>x.game===f.game);
+  if(f.store&&f.store!=='All')rows=rows.filter(x=>x.store===f.store);
+  if(f.watchOnly)rows=rows.filter(x=>x.watchMatch);
+  if(f.inStockOnly)rows=rows.filter(x=>x.available===true);
+  const rank={'RESTOCK':4,'NEW LISTING':3,'PRICE DROP':2,'IN STOCK':1};
+  return rows.sort((a,b)=>(rank[b.eventType]||0)-(rank[a.eventType]||0)||new Date(b.checkedAt)-new Date(a.checkedAt));
+}
+async function refreshLiveDrops(silent=false){
+  if(liveDropBusy)return;
+  if(!inventoryBackendConnected()){if(!silent)toast('Inventory service is not connected');return;}
+  liveDropBusy=true;if(!silent)renderStock();
+  try{
+    const gs=areaScanGames().length?areaScanGames():['Pokemon'];
+    const p=new URLSearchParams({games:gs.join(','),limit:'120'});
+    const c=new AbortController();const timer=setTimeout(()=>c.abort(),9000);
+    let r;try{r=await fetch(`${inventoryBackendBase()}/drop-feed?${p}`,{headers:{Accept:'application/json'},signal:c.signal});}finally{clearTimeout(timer)}
+    const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||`Drop feed returned ${r.status}`);
+    state.liveDropFeed=classifyLiveDropChanges(d.results||[]);
+    state.liveDropMeta={checkedAt:d.checkedAt||new Date().toISOString(),durationMs:Number(d.meta?.durationMs)||0,sourcesChecked:Number(d.meta?.sourcesChecked)||0,sourcesOk:Number(d.meta?.sourcesOk)||0,errors:d.meta?.errors||[]};
+    saveState();
+    if(!silent){const hits=state.liveDropFeed.filter(x=>x.watchMatch&&x.available).length;toast(`${state.liveDropFeed.length} live products • ${hits} watch hit${hits===1?'':'s'} • ${state.liveDropMeta.sourcesOk}/${state.liveDropMeta.sourcesChecked} sources`);}
+  }catch(e){if(!silent)toast(e.name==='AbortError'?'Live Drops timed out after 9 seconds':(e.message||'Live Drops failed'));}
+  finally{liveDropBusy=false;renderStock();}
+}
+function startLiveDropAutoRefresh(){
+  if(liveDropAutoTimer)clearInterval(liveDropAutoTimer);
+  liveDropAutoTimer=setInterval(()=>{if(currentTab==='stock'&&!liveDropBusy)refreshLiveDrops(true);},60000);
+}
+function liveDropEventClass(t=''){return t==='RESTOCK'?'restock':t==='NEW LISTING'?'new':t==='PRICE DROP'?'price':'stock';}
+function renderLiveDropCard(x){
+  return `<div class="drop-alert-card ${liveDropEventClass(x.eventType)}"><div class="drop-alert-top"><div class="drop-alert-type">${esc(x.eventType)}</div><div class="drop-alert-age">${stockFreshnessLabel(x)}</div></div><div class="drop-alert-body">${x.image?`<img src="${esc(x.image)}" alt="">`:`<div class="drop-alert-fallback">◈</div>`}<div class="grow"><div class="eyebrow">${esc(x.store)} • ${esc(x.game||'TCG')}</div><strong>${esc(x.product)}</strong><span>${esc(x.productType||'Sealed TCG product')}</span>${x.watchMatch?`<b class="drop-watch-hit">WATCH HIT • ${esc(x.watchMatch)}</b>`:''}</div><div class="drop-alert-price"><strong>${x.price?money(x.price):'—'}</strong>${x.previousPrice&&x.price<x.previousPrice?`<small>${money(x.previousPrice)} → ${money(x.price)}</small>`:''}<span>${x.available?'● IN STOCK':'○ OUT'}</span></div></div><div class="drop-alert-foot"><span>${esc(x.sourceLabel||'Public storefront feed')} • ${esc(x.region||'Online')}</span>${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">BUY / VIEW ↗</a>`:''}</div></div>`;
+}
+function renderLiveDropNetwork(){
+  const rows=filteredLiveDrops(),f=state.liveDropFilters||{},stores=liveDropStores(),meta=state.liveDropMeta||{};
+  const hits=(state.liveDropFeed||[]).filter(x=>x.watchMatch&&x.available).length;
+  const restocks=(state.liveDropFeed||[]).filter(x=>x.eventType==='RESTOCK').length;
+  return `<div class="panel live-drops-panel"><div class="section-head"><div><div class="eyebrow">VAULTSIGNAL • LIVE DROPS</div><h2>Restock alert feed</h2><p>New listings, restocks, price drops and in-stock sealed products from connected online storefront monitors.</p></div><button class="btn primary" ${liveDropBusy?'disabled':''} onclick="refreshLiveDrops(false)">${liveDropBusy?'Checking…':'↻ Refresh feed'}</button></div><div class="drop-network-stats"><div><span>Live products</span><strong>${state.liveDropFeed.length}</strong></div><div><span>Watch hits</span><strong>${hits}</strong></div><div><span>Restocks</span><strong>${restocks}</strong></div><div><span>Sources online</span><strong>${meta.sourcesOk||0}/${meta.sourcesChecked||0}</strong></div><div><span>Feed speed</span><strong>${meta.durationMs?`${(meta.durationMs/1000).toFixed(1)}s`:'—'}</strong></div></div><div class="drop-filter-row"><select onchange="setLiveDropFilter('game',this.value)">${['All','Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece'].map(v=>`<option ${f.game===v?'selected':''}>${v}</option>`).join('')}</select><select onchange="setLiveDropFilter('store',this.value)"><option>All</option>${stores.map(v=>`<option ${f.store===v?'selected':''}>${esc(v)}</option>`).join('')}</select><label><input type="checkbox" ${f.inStockOnly?'checked':''} onchange="setLiveDropFilter('inStockOnly',this.checked)"> In stock only</label><label><input type="checkbox" ${f.watchOnly?'checked':''} onchange="setLiveDropFilter('watchOnly',this.checked)"> My watch hits</label></div><div class="drop-alert-feed">${rows.length?rows.slice(0,80).map(renderLiveDropCard).join(''):`<div class="empty">${liveDropBusy?'Checking storefront monitors…':'No products match these filters yet. Tap Refresh feed.'}</div>`}</div><div class="drop-feed-note">Live Drops is online-product intelligence. Local shelf quantity remains separate and is shown only when an authorized retailer source supplies it.</div></div>`;
+}
+
 function stockWatchQueriesForScan(){
   const q=[];
   for(const w of state.stockWatches||[]){
@@ -2847,6 +2920,7 @@ function renderStock(){
   $('stock').innerHTML=`
     <div class="page-title"><div><h1>Inventory Radar</h1><p>Verified live inventory when an authorized source is connected, plus nearby retailer checks everywhere else.</p></div><span class="badge ${connection.mode==='live'?'primary':connection.mode==='checks'?'signal-gold':''}">${backendOnline?'● INVENTORY SERVICE ONLINE':'○ SETUP REQUIRED'}</span></div>
     <div class="panel inventory-source-truth ${connection.mode}"><div class="inventory-source-icon">${connection.mode==='live'?'●':connection.mode==='checks'?'↗':'!'}</div><div class="grow"><div class="eyebrow">SOURCE MODE</div><strong>${esc(connection.title)}</strong><span>${esc(connection.detail)}</span></div><b>${esc(connection.badge)}</b></div>
+    ${renderLiveDropNetwork()}
     <div class="panel stock-command-panel">
       <div class="section-head">
         <div><div class="eyebrow">VAULTSIGNAL • STOCK COMMAND</div><h2>Inventory intelligence, not manual searching</h2><p>VaultSignal scans your area once, prioritizes watched products, groups live results by physical store and shows exactly where each result came from.</p></div>
@@ -2877,7 +2951,7 @@ function renderStock(){
     <div class="panel inventory-provider-panel"><div class="section-head"><div><div class="eyebrow">SOURCE STATUS</div><h2>What VaultSignal can actually verify</h2><p>Backend connectivity and live inventory are shown separately.</p></div><button class="btn" onclick="checkInventoryBackendHealth(true).then(()=>renderStock())">Refresh status</button></div>${retailerCapabilityMarkup()}</div>
     <div class="panel radar-panel"><div class="section-head"><div><div class="eyebrow">RESTOCK RADAR</div><h2>Saved product intelligence</h2><p>Your targeted product watches remain connected to Product Command and Inventory Command.</p></div></div>${renderRestockRadar()}</div>
     <div class="panel"><div class="section-head"><div><h2>Stock watches</h2><p>Specific products you want prioritized.</p></div></div>${renderStockWatches()}</div>`;
-  setTimeout(()=>maybeAutoScanArea(),0);
+  setTimeout(()=>{maybeAutoScanArea();if(!state.liveDropFeed.length)refreshLiveDrops(true);startLiveDropAutoRefresh();},0);
 }
 function toggleRetailer(name){
   selectedRetailers.has(name) ? selectedRetailers.delete(name) : selectedRetailers.add(name);
@@ -7637,7 +7711,7 @@ function exportCollectionCSV(){
 }
 
 Object.assign(window,{
-  switchTab,openVault,openTool,premiumPurchaseAction,premiumRestorePurchases,setInventoryFilter,quickInventoryCount,inventoryAuditAll,exportUnifiedInventoryCsv,openProductFromInventory,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
+  switchTab,openVault,openTool,premiumPurchaseAction,refreshLiveDrops,setLiveDropFilter,premiumRestorePurchases,setInventoryFilter,quickInventoryCount,inventoryAuditAll,exportUnifiedInventoryCsv,openProductFromInventory,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
