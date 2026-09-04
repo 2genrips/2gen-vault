@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault by 2GEN RIPS \u2014 Collector OS with Watchtower alert inbox, Action Center, family profiles, Creator Hub, Sell Lab, Trade Lab, Market Pulse and Smart Scanner.",
+  "description": "2GEN Vault by 2GEN RIPS \u2014 Collector OS with Collection Passport Showcase Studio, Watchtower, Action Center, family profiles, Sell Lab, Trade Lab, Market Pulse and Smart Scanner.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

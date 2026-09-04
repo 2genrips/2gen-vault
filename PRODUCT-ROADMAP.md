@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v1.9 Watchtower
+## Current build: v2.0 Showcase Studio
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -235,3 +235,20 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Best-effort local browser alerts
 - Service-worker notification click handling
 - Home Watchtower preview
+
+
+## v2.0 completed
+- Collection Passport
+- Per-collector showcase preview
+- Up to 9 featured cards
+- Automatic fallback featured holdings
+- Privacy toggles
+- Wishlist / hunt list showcase
+- Trade-duplicate showcase
+- Sealed showcase
+- Set-progress showcase
+- Standalone HTML profile export
+- Privacy-filtered JSON export
+- Mobile Web Share summary
+- Rip Session double-finish bug fix
+- Sealed opening stale-navigation bug fix

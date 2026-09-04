@@ -43,6 +43,16 @@ const seed = {
   contentQueue: [],
   actionSnoozes: {},
   notificationInbox: [],
+  showcaseSettings: {
+    title:'2GEN Vault Showcase',
+    bio:'Two Generations. One Collection.',
+    featuredCardIds:[],
+    showCollectionValue:true,
+    showWishlist:true,
+    showTradeDuplicates:true,
+    showSealed:true,
+    showSetProgress:true
+  },
   notificationSeenKeys: {},
   notificationPrefs: {
     enabled:true,
@@ -119,6 +129,7 @@ let sellDraftSource = null;
 let sellMarketplace = 'Local / Cash';
 let activeCollectorProfileId = 'collector-household';
 let watchtowerLastEvaluatedAt = null;
+let showcasePreviewProfileId = null;
 let toastTimer;
 
 function $(id){ return document.getElementById(id); }
@@ -718,6 +729,7 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('family')"><span class="big-icon">2G</span><b>2GEN Hub</b><span>Family collections, giveaways and creator content in one place.</span></button>
         <button class="quick-card" onclick="openTool('actions')"><span class="big-icon">✓</span><b>Action Center</b><span>${homeActionCounts.total} priorities • ${homeActionCounts.high} high • know what to do next.</span></button>
         <button class="quick-card" onclick="openTool('watchtower')"><span class="big-icon">◉</span><b>Watchtower</b><span>${homeWatchtowerUnread} unread alerts • ${homeWatchtowerHigh} high priority.</span></button>
+        <button class="quick-card" onclick="openTool('showcase')"><span class="big-icon">★</span><b>Showcase Studio</b><span>Build a privacy-safe Collection Passport and shareable collector page.</span></button>
       </div>
     </div>
 
@@ -1830,6 +1842,7 @@ function renderTools(){
       ${toolButton('stockreport','◎','Stock report','Log store inventory')}
       ${toolButton('budget','$','Budget','Spending & purchases')}
       ${toolButton('grading','◇','Grading','Submission tracker')}
+      ${toolButton('showcase','★','Showcase Studio','Collection Passport')}
       ${toolButton('family','2G','2GEN Hub','Family + creator tools')}
       ${toolButton('sell','$','Sell Lab','Profit & listing tools')}
       ${toolButton('trades','⇄','Trade Lab','Fair-trade builder')}
@@ -1842,6 +1855,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='showcase') return renderShowcaseStudio();
   if(toolsTab==='watchtower') return renderWatchtowerTool();
   if(toolsTab==='actions') return renderActionCenterTool();
   if(toolsTab==='family') return renderFamilyCreatorHub();
@@ -4024,6 +4038,248 @@ function watchtowerNotificationMarkup(n){
     </div>
   </div>`;
 }
+
+function ensureShowcaseSchema(){
+  state.showcaseSettings={
+    title:'2GEN Vault Showcase',
+    bio:'Two Generations. One Collection.',
+    featuredCardIds:[],
+    showCollectionValue:true,
+    showWishlist:true,
+    showTradeDuplicates:true,
+    showSealed:true,
+    showSetProgress:true,
+    ...(state.showcaseSettings||{})
+  };
+  if(!Array.isArray(state.showcaseSettings.featuredCardIds)) state.showcaseSettings.featuredCardIds=[];
+}
+function showcaseProfile(){
+  ensureFamilySchema();ensureShowcaseSchema();
+  const id=showcasePreviewProfileId||activeCollectorProfileId||state.collectorProfiles[0].uid;
+  return collectorById(id);
+}
+function showcaseCards(profileId){
+  return (state.collection||[]).filter(i=>i.ownerProfileId===profileId);
+}
+function showcaseSealed(profileId){
+  return (state.sealed||[]).filter(i=>i.ownerProfileId===profileId);
+}
+function showcaseWishlist(profileId){
+  return (state.wishlist||[]).filter(w=>!w.ownerProfileId || w.ownerProfileId===profileId);
+}
+function showcaseFeatured(profileId){
+  const ids=new Set(state.showcaseSettings.featuredCardIds||[]);
+  const cards=showcaseCards(profileId);
+  const explicit=cards.filter(i=>ids.has(i.uid));
+  if(explicit.length) return explicit.slice(0,9);
+  return cards.slice().sort((a,b)=>
+    ((Number(b.card?.market)||0)*(Number(b.qty)||0))-
+    ((Number(a.card?.market)||0)*(Number(a.qty)||0))
+  ).slice(0,9);
+}
+function toggleShowcaseFeatured(itemId){
+  ensureShowcaseSchema();
+  const arr=state.showcaseSettings.featuredCardIds;
+  const idx=arr.indexOf(itemId);
+  if(idx>=0) arr.splice(idx,1);
+  else{
+    if(arr.length>=9){toast('Showcase supports up to 9 featured cards');return;}
+    arr.push(itemId);
+  }
+  saveState();renderTools();
+}
+function setShowcaseProfile(id){
+  showcasePreviewProfileId=id;renderTools();
+}
+function editShowcaseText(){
+  ensureShowcaseSchema();
+  const title=prompt('Showcase title',state.showcaseSettings.title||'2GEN Vault Showcase');
+  if(title!==null && title.trim()) state.showcaseSettings.title=title.trim();
+  const bio=prompt('Short showcase bio',state.showcaseSettings.bio||'');
+  if(bio!==null) state.showcaseSettings.bio=bio.trim();
+  saveState();renderTools();
+}
+function toggleShowcaseSetting(key){
+  ensureShowcaseSchema();
+  state.showcaseSettings[key]=!state.showcaseSettings[key];
+  saveState();renderTools();
+}
+function publicShowcasePayload(profileId){
+  ensureShowcaseSchema();
+  const p=collectorById(profileId);
+  const cards=showcaseCards(profileId);
+  const sealed=showcaseSealed(profileId);
+  const featured=showcaseFeatured(profileId);
+  const wishlist=showcaseWishlist(profileId);
+  const dupes=cards.filter(i=>(Number(i.qty)||0)>1);
+  const sets=collectionSetAnalytics().filter(x=>x.total).slice(0,8);
+  const stats=collectorStats(profileId);
+
+  return {
+    brand:'2GEN Vault',
+    title:state.showcaseSettings.title,
+    bio:state.showcaseSettings.bio,
+    collector:{name:p.name,role:p.role},
+    stats:{
+      cards:stats.cards,sealed:stats.sealed,
+      value:state.showcaseSettings.showCollectionValue?stats.value:null
+    },
+    featured:featured.map(i=>({
+      name:i.card?.name||'Card',set:i.card?.set||'',number:i.card?.number||'',
+      rarity:i.card?.rarity||'',image:i.card?.image||'',
+      qty:Number(i.qty)||0,format:i.format||'Raw',
+      market:state.showcaseSettings.showCollectionValue?(Number(i.card?.market)||0):null
+    })),
+    sealed:state.showcaseSettings.showSealed?sealed.map(i=>({
+      name:i.name,game:i.game,qty:Number(i.qty)||0,
+      current:state.showcaseSettings.showCollectionValue?(Number(i.current)||0):null
+    })):[],
+    wishlist:state.showcaseSettings.showWishlist?wishlist.slice(0,12).map(w=>({
+      name:w.card?.name||'Card',set:w.card?.set||'',number:w.card?.number||'',
+      image:w.card?.image||''
+    })):[],
+    tradeDuplicates:state.showcaseSettings.showTradeDuplicates?dupes.slice(0,12).map(i=>({
+      name:i.card?.name||'Card',set:i.card?.set||'',number:i.card?.number||'',
+      extras:Math.max(0,(Number(i.qty)||0)-1),image:i.card?.image||''
+    })):[],
+    sets:state.showcaseSettings.showSetProgress?sets.map(s=>({
+      name:s.name,owned:s.owned,total:s.total,pct:s.pct
+    })):[],
+    generatedAt:new Date().toISOString()
+  };
+}
+function showcaseSafeText(v=''){
+  return String(v).replace(/[<>&"]/g,m=>({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;' }[m]));
+}
+function standaloneShowcaseHtml(payload){
+  const p=payload;
+  const moneyHtml=v=>v===null||v===undefined?'':`$${Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  const cards=p.featured.map(c=>`<article class="card">${c.image?`<img src="${showcaseSafeText(c.image)}" alt="${showcaseSafeText(c.name)}">`:`<div class="noimg">2G</div>`}<div><b>${showcaseSafeText(c.name)}</b><span>${showcaseSafeText(c.set)}${c.number?' • #'+showcaseSafeText(c.number):''}</span><small>${showcaseSafeText(c.format)}${c.market!==null?' • '+moneyHtml(c.market):''}</small></div></article>`).join('');
+  const sealed=p.sealed.map(s=>`<li><b>${showcaseSafeText(s.name)}</b><span>${showcaseSafeText(s.game)} • Qty ${s.qty}${s.current!==null?' • '+moneyHtml(s.current):''}</span></li>`).join('');
+  const wish=p.wishlist.map(w=>`<li><b>${showcaseSafeText(w.name)}</b><span>${showcaseSafeText(w.set)}${w.number?' • #'+showcaseSafeText(w.number):''}</span></li>`).join('');
+  const trade=p.tradeDuplicates.map(d=>`<li><b>${showcaseSafeText(d.name)}</b><span>${showcaseSafeText(d.set)} • ${d.extras} extra</span></li>`).join('');
+  const sets=p.sets.map(s=>`<li><div><b>${showcaseSafeText(s.name)}</b><span>${s.owned}/${s.total} • ${Number(s.pct).toFixed(1)}%</span></div><i><em style="width:${Math.min(100,Number(s.pct)||0)}%"></em></i></li>`).join('');
+
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${showcaseSafeText(p.title)}</title><style>
+  *{box-sizing:border-box}body{margin:0;background:#08101c;color:#f4f7ff;font-family:Arial,sans-serif}.wrap{max-width:980px;margin:auto;padding:24px}.hero{border:1px solid #1b2d46;background:radial-gradient(circle at 90% 0,#143a72 0,transparent 38%),#0c1624;border-radius:24px;padding:24px}.brand{font-size:12px;letter-spacing:.14em;color:#79a6ff;font-weight:800}.hero h1{font-size:34px;margin:10px 0 5px}.hero p{color:#9eb0c7;margin:0}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}.stat{border:1px solid #203149;border-radius:16px;padding:14px;background:#0a1320}.stat span{display:block;font-size:11px;color:#8396af}.stat b{display:block;font-size:22px;margin-top:5px}.section{margin-top:24px}.section h2{font-size:18px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.card{display:flex;gap:10px;border:1px solid #1b2d46;background:#0b1421;border-radius:16px;padding:10px}.card img,.noimg{width:76px;height:106px;object-fit:cover;border-radius:9px}.noimg{display:grid;place-items:center;background:#142338;color:#79a6ff;font-weight:900}.card b,.card span,.card small{display:block}.card b{font-size:13px}.card span,.card small{font-size:10px;color:#8fa1b8;margin-top:5px}ul{list-style:none;padding:0;margin:0}li{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #17283d;padding:10px 0}li span{font-size:11px;color:#8fa1b8}li div{width:100%}li i{display:block;width:100%;height:6px;background:#122034;border-radius:999px;margin-top:7px;overflow:hidden}li em{display:block;height:100%;background:#2f79ff}.foot{margin-top:30px;color:#637890;font-size:10px;text-align:center}@media(max-width:720px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}.hero h1{font-size:28px}}
+  </style></head><body><main class="wrap"><section class="hero"><div class="brand">2GEN VAULT • BY 2GEN RIPS</div><h1>${showcaseSafeText(p.collector.name)}</h1><p>${showcaseSafeText(p.collector.role)} • ${showcaseSafeText(p.bio||'')}</p><div class="stats"><div class="stat"><span>Cards</span><b>${p.stats.cards}</b></div><div class="stat"><span>Sealed</span><b>${p.stats.sealed}</b></div>${p.stats.value!==null?`<div class="stat"><span>Tracked value</span><b>${moneyHtml(p.stats.value)}</b></div>`:''}</div></section>
+  ${cards?`<section class="section"><h2>Featured Cards</h2><div class="grid">${cards}</div></section>`:''}
+  ${sealed?`<section class="section"><h2>Sealed Collection</h2><ul>${sealed}</ul></section>`:''}
+  ${wish?`<section class="section"><h2>Wishlist / Hunt List</h2><ul>${wish}</ul></section>`:''}
+  ${trade?`<section class="section"><h2>Available Duplicates</h2><ul>${trade}</ul></section>`:''}
+  ${sets?`<section class="section"><h2>Set Progress</h2><ul>${sets}</ul></section>`:''}
+  <div class="foot">Generated privately from 2GEN Vault. Cost basis, cert numbers, addresses, ZIP/postal code and private notes are not included.</div></main></body></html>`;
+}
+function downloadShowcaseHtml(){
+  const p=showcaseProfile();
+  const payload=publicShowcasePayload(p.uid);
+  const html=standaloneShowcaseHtml(payload);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([html],{type:'text/html'}));
+  a.download=`2gen-vault-showcase-${normalizeName(p.name).replace(/\s+/g,'-')||'collector'}.html`;
+  a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  toast('Standalone showcase exported');
+}
+function downloadShowcaseJson(){
+  const p=showcaseProfile();
+  const payload=publicShowcasePayload(p.uid);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));
+  a.download=`2gen-vault-showcase-${normalizeName(p.name).replace(/\s+/g,'-')||'collector'}.json`;
+  a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function showcaseShareText(){
+  const p=showcaseProfile(), data=publicShowcasePayload(p.uid);
+  const value=data.stats.value!==null?` • ${money(data.stats.value)} tracked value`:'';
+  const wish=data.wishlist.length?`\nHunting: ${data.wishlist.slice(0,5).map(x=>x.name).join(', ')}`:'';
+  const trade=data.tradeDuplicates.length?`\nFor trade: ${data.tradeDuplicates.slice(0,5).map(x=>`${x.name} (${x.extras} extra)`).join(', ')}`:'';
+  return `${data.title}\n${data.collector.name} • ${data.stats.cards} cards • ${data.stats.sealed} sealed${value}${wish}${trade}\n\nTwo Generations. One Collection.`;
+}
+async function shareShowcase(){
+  const text=showcaseShareText();
+  try{
+    if(navigator.share){
+      await navigator.share({title:state.showcaseSettings.title,text});
+    }else if(navigator.clipboard){
+      await navigator.clipboard.writeText(text);toast('Showcase summary copied');
+    }else prompt('Copy showcase summary:',text);
+  }catch(e){}
+}
+function renderShowcaseCard(i,selected){
+  return `<button class="showcase-pick ${selected?'selected':''}" onclick="toggleShowcaseFeatured('${i.uid}')">
+    ${cardArt(i.card)}
+    <span>${esc(i.card?.name||'Card')}</span>
+    <small>${selected?'✓ Featured':'Tap to feature'}</small>
+  </button>`;
+}
+function renderShowcaseStudio(){
+  ensureShowcaseSchema();ensureFamilySchema();
+  const p=showcaseProfile();
+  const data=publicShowcasePayload(p.uid);
+  const cards=showcaseCards(p.uid);
+  const selectedIds=new Set(state.showcaseSettings.featuredCardIds||[]);
+  const featured=showcaseFeatured(p.uid);
+
+  return `<div class="panel showcase-hero">
+    <div class="section-head"><div><div class="eyebrow">2GEN SHOWCASE STUDIO</div><h2>Collection Passport</h2><p>Create a clean, privacy-safe collector page from the collection you already track.</p></div><button class="btn" onclick="editShowcaseText()">Edit title & bio</button></div>
+
+    <div class="collector-tabs">${state.collectorProfiles.map(x=>`<button class="collector-tab ${x.uid===p.uid?'active':''}" onclick="setShowcaseProfile('${x.uid}')"><b>${esc(x.name)}</b><span>${esc(x.role||'Collector')}</span></button>`).join('')}</div>
+
+    <div class="showcase-passport">
+      <div><div class="eyebrow">COLLECTOR PASSPORT</div><h2>${esc(p.name)}</h2><p>${esc(state.showcaseSettings.bio||'')}</p></div>
+      <div class="passport-stats">
+        <span><b>${data.stats.cards}</b> cards</span>
+        <span><b>${data.stats.sealed}</b> sealed</span>
+        ${data.stats.value!==null?`<span><b>${money(data.stats.value)}</b> value</span>`:''}
+      </div>
+    </div>
+
+    <div class="showcase-actions">
+      <button class="btn primary" onclick="downloadShowcaseHtml()">⬇ Standalone page</button>
+      <button class="btn" onclick="shareShowcase()">Share summary</button>
+      <button class="btn" onclick="downloadShowcaseJson()">Export data</button>
+    </div>
+
+    <div class="notice" style="margin-top:10px"><span>✓</span><span>Public showcase exports intentionally exclude cost basis, grading cert numbers, addresses, ZIP/postal code, purchase history, private notes and account data.</span></div>
+  </div>
+
+  <div class="showcase-grid">
+    <div class="panel">
+      <div class="section-head"><div><h2>Featured cards</h2><p>Choose up to 9 cards. If none are selected, your highest tracked-value cards are used automatically.</p></div></div>
+      ${cards.length?`<div class="showcase-picker">${cards.slice(0,36).map(i=>renderShowcaseCard(i,selectedIds.has(i.uid))).join('')}</div>`:`<div class="empty">No cards assigned to ${esc(p.name)} yet.</div>`}
+    </div>
+
+    <div class="panel">
+      <div class="section-head"><div><h2>Privacy controls</h2><p>Choose what can appear in your exported public-facing page.</p></div></div>
+      <div class="showcase-toggle-list">
+        ${[
+          ['showCollectionValue','Tracked collection value'],
+          ['showWishlist','Wishlist / hunt list'],
+          ['showTradeDuplicates','Available duplicates'],
+          ['showSealed','Sealed collection'],
+          ['showSetProgress','Set completion progress']
+        ].map(([k,label])=>`<button class="showcase-toggle ${state.showcaseSettings[k]?'on':'off'}" onclick="toggleShowcaseSetting('${k}')"><b>${state.showcaseSettings[k]?'✓':'○'} ${esc(label)}</b><span>${state.showcaseSettings[k]?'Included':'Hidden'}</span></button>`).join('')}
+      </div>
+    </div>
+  </div>
+
+  <div class="panel showcase-preview-panel">
+    <div class="section-head"><div><div class="eyebrow">LIVE PREVIEW</div><h2>${esc(state.showcaseSettings.title)}</h2><p>This is the information that can appear in the export.</p></div></div>
+    <div class="showcase-preview-hero">
+      <div><strong>${esc(p.name)}</strong><span>${esc(p.role||'Collector')} • ${esc(state.showcaseSettings.bio||'')}</span></div>
+      <div><b>${data.stats.cards}</b><span>cards</span></div>
+      <div><b>${data.stats.sealed}</b><span>sealed</span></div>
+      ${data.stats.value!==null?`<div><b>${money(data.stats.value)}</b><span>tracked value</span></div>`:''}
+    </div>
+
+    ${featured.length?`<div class="eyebrow" style="margin-top:14px">FEATURED CARDS</div><div class="showcase-featured">${featured.map(i=>`<div>${cardArt(i.card)}<b>${esc(i.card?.name||'Card')}</b><span>${esc(i.card?.set||'')}</span></div>`).join('')}</div>`:''}
+
+    ${data.wishlist.length?`<div class="showcase-mini-section"><div class="eyebrow">HUNT LIST</div>${data.wishlist.slice(0,6).map(w=>`<span>${esc(w.name)} • ${esc(w.set)}</span>`).join('')}</div>`:''}
+    ${data.tradeDuplicates.length?`<div class="showcase-mini-section"><div class="eyebrow">AVAILABLE DUPLICATES</div>${data.tradeDuplicates.slice(0,6).map(d=>`<span>${esc(d.name)} • ${d.extras} extra</span>`).join('')}</div>`:''}
+    ${data.sets.length?`<div class="showcase-mini-section"><div class="eyebrow">SET PROGRESS</div>${data.sets.slice(0,5).map(s=>`<div class="kpi-line"><span>${esc(s.name)}</span><strong>${s.owned}/${s.total} • ${Number(s.pct).toFixed(1)}%</strong></div>`).join('')}</div>`:''}
+  </div>`;
+}
+
 function renderWatchtowerTool(){
   ensureWatchtowerSchema();
   evaluateWatchtower({notify:false});
@@ -4338,7 +4594,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,setShowcaseProfile,toggleShowcaseFeatured,editShowcaseText,toggleShowcaseSetting,downloadShowcaseHtml,downloadShowcaseJson,shareShowcase,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -4359,6 +4615,7 @@ if('serviceWorker' in navigator){
 ensureCollectionSchema();
 ensurePriceHistorySchema();
 ensureWatchtowerSchema();
+ensureShowcaseSchema();
 ensureActionSchema();
 ensureFamilySchema();
 ensureSalesSchema();

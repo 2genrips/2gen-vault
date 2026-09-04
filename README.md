@@ -1,4 +1,4 @@
-# 2GEN Vault — Watchtower v1.9 (GitHub Pages)
+# 2GEN Vault — Showcase Studio v2.0 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -816,3 +816,67 @@ Watchtower supports:
 ### Home badge
 
 Unread/high-priority Watchtower counts now appear on the Home screen.
+
+
+## New in v2.0 — Showcase Studio / Collection Passport
+
+2GEN Vault now reaches its first 2.0 milestone with a privacy-safe collector showcase system.
+
+### Collection Passport
+Each local collector profile can have a public-facing collector view containing:
+- collector name / role
+- card count
+- sealed count
+- optional tracked collection value
+- featured cards
+- wishlist / hunt list
+- available duplicate cards
+- sealed collection
+- set completion progress
+
+### Featured cards
+Choose up to 9 featured cards manually.
+
+If no cards are selected, 2GEN Vault automatically uses the collector's highest tracked-value cards.
+
+### Privacy controls
+The showcase can independently hide:
+- collection value
+- wishlist
+- trade duplicates
+- sealed products
+- set progress
+
+Public exports intentionally exclude:
+- cost basis
+- grading certification numbers
+- addresses
+- ZIP / postal code
+- purchase history
+- private notes
+- account data
+- cloud credentials
+
+### Standalone HTML export
+Showcase Studio can generate a complete standalone `.html` collector page.
+
+That file:
+- needs no backend
+- can be opened directly in a browser
+- can be uploaded later to a public profile host
+- uses only the public-facing showcase payload
+
+### Share summary
+On supported phones, Web Share can share a clean collector summary.
+Otherwise the summary can be copied.
+
+### Data export
+A matching privacy-filtered JSON export is also available.
+
+## Reliability fixes included in v2.0
+
+### Rip Session double-finish guard
+A finished Rip Session can no longer be added to the Vault again accidentally.
+
+### Sealed opening navigation
+Declining to start a new Rip Session no longer jumps back into a previously active Rip Session.
