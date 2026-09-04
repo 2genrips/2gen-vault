@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v1.6 Sell Lab
+## Current build: v1.7 Family + Creator Hub
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -194,3 +194,15 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Sold item -> automatic Vault inventory decrement
 - Sales / profit history
 - Dashboard Pro seller-performance panel
+
+
+## v1.7 completed
+- Multiple local collector profiles
+- Per-collector card/sealed ownership
+- Family inventory transfers
+- Duplicate transfers between collectors
+- Giveaway Locker
+- Giveaway inventory decrement on sent
+- 2GEN RIPS Content Queue
+- Rip Session -> Content Queue
+- Collector showcase export

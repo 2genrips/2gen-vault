@@ -1,4 +1,4 @@
-# 2GEN Vault — Sell Lab v1.6 (GitHub Pages)
+# 2GEN Vault — Family + Creator Hub v1.7 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -638,3 +638,58 @@ Sell Lab and Dashboard Pro can now show:
 - net proceeds
 - tracked profit
 - estimated fees
+
+
+## New in v1.7 — 2GEN Family + Creator Hub
+
+### Multiple collector profiles
+2GEN Vault can now keep one household app while separating ownership between collectors.
+
+Examples:
+- Household
+- Dad
+- Son
+- Trade Inventory
+- Personal Collection
+
+Each collector profile gets:
+- card count
+- sealed count
+- tracked value
+- duplicate count
+
+Cards and sealed products can be moved between collectors without changing the household total.
+
+### Family duplicate transfers
+If one collector owns multiple copies, a single extra copy can be transferred to another collector with one tap.
+
+This is deliberately different from Trade Lab because no sale/trade event is created.
+
+### Giveaway Locker
+Reserve cards or sealed products for creator/community giveaways.
+
+Statuses:
+- Reserved
+- Ready
+- Sent
+
+When a giveaway is marked Sent, the reserved quantity is removed from Vault inventory.
+
+### Creator Content Queue
+Turn collection activity into content planning.
+
+You can:
+- add manual content ideas
+- push a Rip Session directly into the queue
+- mark ideas Ready to edit
+- mark content Posted
+- save notes and planned dates
+
+### Collector showcase export
+Each family member can export a JSON showcase containing their assigned cards/sealed inventory.
+This is groundwork for a future public web showcase/share page.
+
+### Offline-first
+These features work locally and do not require Supabase.
+
+When cloud sync is available again, family memberships and shared household access can be moved into the cloud layer.

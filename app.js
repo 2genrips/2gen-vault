@@ -38,6 +38,9 @@ const seed = {
   trades: [],
   sales: [],
   saleQueue: [],
+  collectorProfiles: [{uid:'collector-household',name:'Household',role:'Shared',accent:'blue'}],
+  giveawayLocker: [],
+  contentQueue: [],
   grading: [],
   setGoals: [],
   productCatalog: [],
@@ -102,6 +105,7 @@ let tradeSearchResults = [];
 let tradeSearchBusy = false;
 let sellDraftSource = null;
 let sellMarketplace = 'Local / Cash';
+let activeCollectorProfileId = 'collector-household';
 let toastTimer;
 
 function $(id){ return document.getElementById(id); }
@@ -692,6 +696,7 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('market')"><span class="big-icon">↗</span><b>Market Pulse</b><span>Refresh live card pricing, track snapshots and watch price targets.</span></button>
         <button class="quick-card" onclick="openTool('trades')"><span class="big-icon">⇄</span><b>Trade Lab</b><span>Build deals from your Vault and wishlist with reference-value balancing.</span></button>
         <button class="quick-card" onclick="openTool('sell')"><span class="big-icon">$</span><b>Sell Lab</b><span>Estimate fees, protect cost basis, create listings and track profit.</span></button>
+        <button class="quick-card" onclick="openTool('family')"><span class="big-icon">2G</span><b>2GEN Hub</b><span>Family collections, giveaways and creator content in one place.</span></button>
       </div>
     </div>
 
@@ -1548,7 +1553,7 @@ function addCard(card){
   const location=binderNames()[0]||'Main Binder';
   const ex=state.collection.find(x=>x.card.id===card.id&&x.condition==='Near Mint'&&(x.format||'Raw')==='Raw'&&x.location===location);
   if(ex) ex.qty+=1;
-  else state.collection.unshift({uid:uid(),card,qty:1,condition:'Near Mint',cost:Number(card.market)||0,location,format:'Raw',grader:'',grade:'',cert:'',language:'English',variant:'Standard'});
+  else state.collection.unshift({uid:uid(),card,qty:1,condition:'Near Mint',cost:Number(card.market)||0,location,format:'Raw',grader:'',grade:'',cert:'',language:'English',variant:'Standard',ownerProfileId:activeCollectorProfileId});
   saveState(); toast('Raw copy added to vault'); renderDiscover();
 }
 function addGradedCard(card){
@@ -1558,7 +1563,7 @@ function addGradedCard(card){
   const cert=(prompt('Certification number (optional)','')||'').trim();
   const paid=Math.max(0,Number(prompt('Cost paid',card.market?String(card.market):'0'))||0);
   const location=binderNames()[0]||'Main Binder';
-  state.collection.unshift({uid:uid(),card,qty:1,condition:'Graded',cost:paid,location,format:'Graded',grader,grade,cert,language:'English',variant:'Standard'});
+  state.collection.unshift({uid:uid(),card,qty:1,condition:'Graded',cost:paid,location,format:'Graded',grader,grade,cert,language:'English',variant:'Standard',ownerProfileId:activeCollectorProfileId});
   saveState(); toast('Graded copy added'); renderDiscover();
 }
 function openCardDetail(card){
@@ -1725,7 +1730,7 @@ function addSealed(){
   const name=$('sealedName')?.value.trim(); if(!name){toast('Enter a product name');return;}
   const game=$('sealedGame')?.value||'Pokemon';
   const cat=addCatalogProduct({game,name,set:'',type:'Sealed',msrp:Number($('sealedCurrent')?.value)||0,target:Number($('sealedCost')?.value)||0});
-  state.sealed.unshift({uid:uid(),name,game,qty:Math.max(1,Number($('sealedQty')?.value)||1),cost:Number($('sealedCost')?.value)||0,current:Number($('sealedCurrent')?.value)||0,location:$('sealedLocation')?.value.trim()||'',productId:cat.uid,addedAt:new Date().toISOString()});
+  state.sealed.unshift({uid:uid(),name,game,qty:Math.max(1,Number($('sealedQty')?.value)||1),cost:Number($('sealedCost')?.value)||0,current:Number($('sealedCurrent')?.value)||0,location:$('sealedLocation')?.value.trim()||'',productId:cat.uid,ownerProfileId:activeCollectorProfileId,addedAt:new Date().toISOString()});
   saveState(); renderVault(); toast('Sealed product added');
 }
 function openOneSealed(id){
@@ -1790,6 +1795,7 @@ function renderTools(){
       ${toolButton('stockreport','◎','Stock report','Log store inventory')}
       ${toolButton('budget','$','Budget','Spending & purchases')}
       ${toolButton('grading','◇','Grading','Submission tracker')}
+      ${toolButton('family','2G','2GEN Hub','Family + creator tools')}
       ${toolButton('sell','$','Sell Lab','Profit & listing tools')}
       ${toolButton('trades','⇄','Trade Lab','Fair-trade builder')}
       ${toolButton('alerts','!','Alerts','Price targets')}
@@ -1801,6 +1807,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='family') return renderFamilyCreatorHub();
   if(toolsTab==='sell') return renderSellLabTool();
   if(toolsTab==='market') return renderMarketPulseTool();
   if(toolsTab==='analytics') return renderAnalyticsTool();
@@ -2365,7 +2372,7 @@ function addOwnedSealedFromProduct(id){
   const cost=Math.max(0,Number(prompt('Cost paid EACH',p.target?String(p.target):p.msrp?String(p.msrp):'0'))||0);
   const current=Math.max(0,Number(prompt('Current estimated value EACH',p.msrp?String(p.msrp):String(cost)))||0);
   const location=prompt('Storage location','Shelf / bin')||'';
-  state.sealed.unshift({uid:uid(),name:p.name,game:p.game,qty,cost,current,location,productId:p.uid,addedAt:new Date().toISOString()});
+  state.sealed.unshift({uid:uid(),name:p.name,game:p.game,qty,cost,current,location,productId:p.uid,ownerProfileId:activeCollectorProfileId,addedAt:new Date().toISOString()});
   saveState();renderTools();toast('Added to sealed vault');
 }
 function logOpeningFromProduct(id){
@@ -2719,7 +2726,7 @@ function commitScanQueue(){
       state.collection.unshift({
         uid:uid(),card:q.card,qty:Number(q.qty)||1,condition:q.condition||'Near Mint',
         cost:Number(q.cost)||0,location:q.binder||'Main Binder',format:'Raw',
-        grader:'',grade:'',cert:'',language:'English',variant:'Standard'
+        grader:'',grade:'',cert:'',language:'English',variant:'Standard',ownerProfileId:activeCollectorProfileId
       });
       added += Number(q.qty)||1;
     }
@@ -3107,7 +3114,7 @@ function applyTradeToVault(){
       state.collection.unshift({
         uid:uid(),card:item.card,qty:Number(item.qty)||1,condition:'Near Mint',
         cost:Number(item.valueEach)||0,location:binder,format:'Raw',
-        grader:'',grade:'',cert:'',language:'English',variant:'Standard'
+        grader:'',grade:'',cert:'',language:'English',variant:'Standard',ownerProfileId:activeCollectorProfileId
       });
     }
     state.wishlist=state.wishlist.filter(w=>w.card?.id!==item.card.id);
@@ -3364,6 +3371,251 @@ function removeSaleHistory(id){
 }
 
 
+
+function ensureFamilySchema(){
+  if(!Array.isArray(state.collectorProfiles) || !state.collectorProfiles.length){
+    state.collectorProfiles=[{uid:'collector-household',name:'Household',role:'Shared',accent:'blue'}];
+  }
+  if(!Array.isArray(state.giveawayLocker)) state.giveawayLocker=[];
+  if(!Array.isArray(state.contentQueue)) state.contentQueue=[];
+  const fallback=state.collectorProfiles[0].uid;
+  for(const i of state.collection||[]) if(!i.ownerProfileId) i.ownerProfileId=fallback;
+  for(const i of state.sealed||[]) if(!i.ownerProfileId) i.ownerProfileId=fallback;
+  for(const w of state.wishlist||[]) if(!w.ownerProfileId) w.ownerProfileId=fallback;
+  if(!state.collectorProfiles.some(p=>p.uid===activeCollectorProfileId)) activeCollectorProfileId=fallback;
+}
+function collectorById(id){
+  ensureFamilySchema();
+  return state.collectorProfiles.find(p=>p.uid===id)||state.collectorProfiles[0];
+}
+function collectorStats(profileId){
+  const cards=(state.collection||[]).filter(i=>i.ownerProfileId===profileId);
+  const sealed=(state.sealed||[]).filter(i=>i.ownerProfileId===profileId);
+  const cardQty=cards.reduce((n,i)=>n+(Number(i.qty)||0),0);
+  const cardValue=cards.reduce((n,i)=>n+(Number(i.card?.market)||0)*(Number(i.qty)||0),0);
+  const sealedQty=sealed.reduce((n,i)=>n+(Number(i.qty)||0),0);
+  const sealedValue=sealed.reduce((n,i)=>n+(Number(i.current)||0)*(Number(i.qty)||0),0);
+  return {cards:cardQty,sealed:sealedQty,value:cardValue+sealedValue,cardValue,sealedValue};
+}
+function addCollectorProfile(){
+  const name=(prompt('Collector name','')||'').trim();if(!name)return;
+  const role=(prompt('Role / label','Collector')||'Collector').trim();
+  const profile={uid:uid(),name,role,accent:'blue',createdAt:new Date().toISOString()};
+  state.collectorProfiles.push(profile);
+  activeCollectorProfileId=profile.uid;
+  saveState();renderTools();toast('Collector profile added');
+}
+function editCollectorProfile(id){
+  const p=collectorById(id);if(!p)return;
+  const name=prompt('Collector name',p.name);if(name!==null && name.trim())p.name=name.trim();
+  const role=prompt('Role / label',p.role||'Collector');if(role!==null)p.role=role.trim()||'Collector';
+  saveState();renderTools();
+}
+function deleteCollectorProfile(id){
+  ensureFamilySchema();
+  if(state.collectorProfiles.length<=1){toast('Keep at least one collector profile');return;}
+  const p=collectorById(id);
+  const fallback=state.collectorProfiles.find(x=>x.uid!==id);
+  if(!confirm(`Delete ${p.name}? Their items will move to ${fallback.name}.`))return;
+  for(const i of state.collection||[]) if(i.ownerProfileId===id)i.ownerProfileId=fallback.uid;
+  for(const i of state.sealed||[]) if(i.ownerProfileId===id)i.ownerProfileId=fallback.uid;
+  for(const w of state.wishlist||[]) if(w.ownerProfileId===id)w.ownerProfileId=fallback.uid;
+  state.collectorProfiles=state.collectorProfiles.filter(x=>x.uid!==id);
+  if(activeCollectorProfileId===id) activeCollectorProfileId=fallback.uid;
+  saveState();renderTools();
+}
+function setActiveCollector(id){
+  activeCollectorProfileId=id;
+  renderTools();
+}
+function moveCollectionOwner(itemId){
+  const item=state.collection.find(x=>x.uid===itemId);if(!item)return;
+  const opts=state.collectorProfiles.map(p=>p.name).join(', ');
+  const name=(prompt(`Move to which collector?\n${opts}`,collectorById(item.ownerProfileId).name)||'').trim();
+  const p=state.collectorProfiles.find(x=>x.name.toLowerCase()===name.toLowerCase());
+  if(!p){toast('Collector not found');return;}
+  item.ownerProfileId=p.uid;saveState();renderTools();toast('Card moved');
+}
+function moveSealedOwner(itemId){
+  const item=state.sealed.find(x=>x.uid===itemId);if(!item)return;
+  const opts=state.collectorProfiles.map(p=>p.name).join(', ');
+  const name=(prompt(`Move to which collector?\n${opts}`,collectorById(item.ownerProfileId).name)||'').trim();
+  const p=state.collectorProfiles.find(x=>x.name.toLowerCase()===name.toLowerCase());
+  if(!p){toast('Collector not found');return;}
+  item.ownerProfileId=p.uid;saveState();renderTools();toast('Sealed item moved');
+}
+function transferDuplicateToCollector(itemId,targetId){
+  const item=state.collection.find(x=>x.uid===itemId);if(!item || Number(item.qty)<2)return;
+  const target=collectorById(targetId);
+  item.qty-=1;
+  const existing=state.collection.find(x=>
+    x.card?.id===item.card?.id &&
+    x.ownerProfileId===targetId &&
+    (x.format||'Raw')===(item.format||'Raw') &&
+    x.condition===item.condition &&
+    x.location===item.location
+  );
+  if(existing) existing.qty+=1;
+  else state.collection.unshift({...item,uid:uid(),qty:1,ownerProfileId:targetId});
+  saveState();renderTools();toast(`Moved one copy to ${target.name}`);
+}
+function addGiveawayFromCollection(itemId){
+  const i=state.collection.find(x=>x.uid===itemId);if(!i)return;
+  const qty=Math.min(Number(i.qty)||1,Math.max(1,Number(prompt('How many copies for the giveaway?','1'))||1));
+  state.giveawayLocker.unshift({
+    uid:uid(),source:'collection',sourceId:i.uid,name:i.card?.name||'Card',
+    card:i.card,qty,valueEach:Number(i.card?.market)||0,status:'Reserved',
+    createdAt:new Date().toISOString(),notes:''
+  });
+  saveState();renderTools();toast('Added to Giveaway Locker');
+}
+function addGiveawayFromSealed(itemId){
+  const i=state.sealed.find(x=>x.uid===itemId);if(!i)return;
+  const qty=Math.min(Number(i.qty)||1,Math.max(1,Number(prompt('How many for the giveaway?','1'))||1));
+  state.giveawayLocker.unshift({
+    uid:uid(),source:'sealed',sourceId:i.uid,name:i.name,game:i.game,
+    qty,valueEach:Number(i.current)||0,status:'Reserved',
+    createdAt:new Date().toISOString(),notes:''
+  });
+  saveState();renderTools();toast('Added to Giveaway Locker');
+}
+function updateGiveawayStatus(id,status){
+  const g=state.giveawayLocker.find(x=>x.uid===id);if(!g)return;
+  if(status==='Sent'){
+    if(!confirm('Mark giveaway sent and remove the reserved quantity from Vault inventory?'))return;
+    if(g.source==='collection'){
+      const src=state.collection.find(x=>x.uid===g.sourceId);
+      if(src)src.qty=Math.max(0,(Number(src.qty)||0)-(Number(g.qty)||0));
+    }else if(g.source==='sealed'){
+      const src=state.sealed.find(x=>x.uid===g.sourceId);
+      if(src)src.qty=Math.max(0,(Number(src.qty)||0)-(Number(g.qty)||0));
+    }
+    state.collection=state.collection.filter(x=>(Number(x.qty)||0)>0);
+    state.sealed=state.sealed.filter(x=>(Number(x.qty)||0)>0);
+    g.sentAt=new Date().toISOString();
+  }
+  g.status=status;
+  saveState();renderTools();
+}
+function removeGiveaway(id){
+  state.giveawayLocker=state.giveawayLocker.filter(x=>x.uid!==id);saveState();renderTools();
+}
+function giveawayStats(){
+  const rows=state.giveawayLocker||[];
+  return {
+    reserved:rows.filter(x=>x.status==='Reserved').length,
+    ready:rows.filter(x=>x.status==='Ready').length,
+    sent:rows.filter(x=>x.status==='Sent').length,
+    value:rows.filter(x=>x.status!=='Sent').reduce((n,x)=>n+(Number(x.valueEach)||0)*(Number(x.qty)||0),0)
+  };
+}
+function addContentIdea(){
+  const title=(prompt('Video / content idea','')||'').trim();if(!title)return;
+  const platform=(prompt('Platform','YouTube / TikTok / Facebook')||'').trim();
+  const type=(prompt('Type','Pack opening')||'Pack opening').trim();
+  state.contentQueue.unshift({uid:uid(),title,platform,type,status:'Idea',date:'',notes:'',createdAt:new Date().toISOString()});
+  saveState();renderTools();
+}
+function addContentFromRip(id){
+  const s=ripSessionById(id);if(!s)return;
+  state.contentQueue.unshift({
+    uid:uid(),title:s.name,platform:'YouTube / TikTok / Facebook',type:'Rip Session',
+    status:'Ready to edit',date:s.date||todayInput(),
+    notes:`${s.packs||0} packs • ${money(ripSessionStats(s).totalValue)} pull value`,
+    ripSessionId:s.uid,createdAt:new Date().toISOString()
+  });
+  saveState();renderTools();toast('Rip added to Content Queue');
+}
+function updateContentStatus(id,status){
+  const c=state.contentQueue.find(x=>x.uid===id);if(!c)return;
+  c.status=status;saveState();renderTools();
+}
+function editContentIdea(id){
+  const c=state.contentQueue.find(x=>x.uid===id);if(!c)return;
+  const title=prompt('Title / idea',c.title);if(title!==null && title.trim())c.title=title.trim();
+  const notes=prompt('Notes',c.notes||'');if(notes!==null)c.notes=notes;
+  const date=prompt('Planned date YYYY-MM-DD',c.date||'');if(date!==null)c.date=date;
+  saveState();renderTools();
+}
+function removeContentIdea(id){
+  state.contentQueue=state.contentQueue.filter(x=>x.uid!==id);saveState();renderTools();
+}
+function buildShowcaseData(profileId){
+  const p=collectorById(profileId);
+  const cards=(state.collection||[]).filter(i=>i.ownerProfileId===profileId)
+    .map(i=>({name:i.card?.name,set:i.card?.set,number:i.card?.number,qty:i.qty,market:i.card?.market,image:i.card?.image,format:i.format||'Raw'}));
+  const sealed=(state.sealed||[]).filter(i=>i.ownerProfileId===profileId)
+    .map(i=>({name:i.name,game:i.game,qty:i.qty,current:i.current}));
+  return {brand:'2GEN Vault',collector:p.name,role:p.role,cards,sealed,generatedAt:new Date().toISOString()};
+}
+function exportCollectorShowcase(profileId){
+  const data=buildShowcaseData(profileId);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
+  a.download=`2gen-showcase-${normalizeName(data.collector).replace(/\s+/g,'-')||'collector'}.json`;
+  a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+
+function renderFamilyCreatorHub(){
+  ensureFamilySchema();
+  const p=collectorById(activeCollectorProfileId);
+  const stats=collectorStats(p.uid);
+  const cards=(state.collection||[]).filter(i=>i.ownerProfileId===p.uid);
+  const sealed=(state.sealed||[]).filter(i=>i.ownerProfileId===p.uid);
+  const dupes=cards.filter(i=>(Number(i.qty)||0)>1);
+  const gs=giveawayStats();
+
+  return `<div class="panel family-hub-hero">
+    <div class="section-head"><div><div class="eyebrow">2GEN FAMILY + CREATOR HUB</div><h2>One household. Separate collections.</h2><p>Track each collector, move cards between family members, reserve giveaways, and turn Rip Sessions into content.</p></div><button class="btn primary" onclick="addCollectorProfile()">＋ Collector</button></div>
+
+    <div class="collector-tabs">${state.collectorProfiles.map(x=>`<button class="collector-tab ${x.uid===p.uid?'active':''}" onclick="setActiveCollector('${x.uid}')"><b>${esc(x.name)}</b><span>${esc(x.role||'Collector')}</span></button>`).join('')}</div>
+
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>${esc(p.name)} cards</span><strong>${stats.cards}</strong><small>Tracked copies</small></div>
+      <div class="stat-card"><span>Sealed</span><strong>${stats.sealed}</strong><small>Tracked products</small></div>
+      <div class="stat-card"><span>Collection value</span><strong>${money(stats.value)}</strong><small>Current tracked fields</small></div>
+      <div class="stat-card"><span>Duplicates</span><strong>${dupes.length}</strong><small>Transfer/trade candidates</small></div>
+    </div>
+    <div class="action-row" style="margin-top:10px"><button class="btn" onclick="editCollectorProfile('${p.uid}')">Edit profile</button><button class="btn" onclick="exportCollectorShowcase('${p.uid}')">Export showcase</button>${state.collectorProfiles.length>1?`<button class="remove" onclick="deleteCollectorProfile('${p.uid}')">Delete profile</button>`:''}</div>
+  </div>
+
+  <div class="family-grid">
+    <div class="panel">
+      <div class="section-head"><div><h2>${esc(p.name)} cards</h2><p>Move ownership without changing the household total.</p></div></div>
+      ${cards.length?cards.slice(0,20).map(i=>`<div class="compact-row">${cardArt(i.card)}<div class="grow"><strong>${esc(i.card.name)}</strong><span>${esc(i.card.set)} • Qty ${i.qty} • ${money(Number(i.card.market))}</span></div><div class="right"><button class="link-btn" onclick="moveCollectionOwner('${i.uid}')">Move</button><button class="link-btn" onclick="addGiveawayFromCollection('${i.uid}')">Giveaway</button></div></div>`).join(''):`<div class="empty">No cards assigned to ${esc(p.name)}.</div>`}
+    </div>
+    <div class="panel">
+      <div class="section-head"><div><h2>${esc(p.name)} sealed</h2><p>Separate family sealed collections while keeping one app.</p></div></div>
+      ${sealed.length?sealed.slice(0,20).map(i=>`<div class="compact-row"><div class="thumb square"><b>◈</b></div><div class="grow"><strong>${esc(i.name)}</strong><span>${esc(i.game)} • Qty ${i.qty} • ${money(Number(i.current))}</span></div><div class="right"><button class="link-btn" onclick="moveSealedOwner('${i.uid}')">Move</button><button class="link-btn" onclick="addGiveawayFromSealed('${i.uid}')">Giveaway</button></div></div>`).join(''):`<div class="empty">No sealed products assigned to ${esc(p.name)}.</div>`}
+    </div>
+  </div>
+
+  ${dupes.length && state.collectorProfiles.length>1?`<div class="panel">
+    <div class="section-head"><div><h2>Family duplicate transfers</h2><p>Move one extra copy to another collector without treating it as a sale or trade.</p></div></div>
+    ${dupes.slice(0,12).map(i=>`<div class="compact-row">${cardArt(i.card)}<div class="grow"><strong>${esc(i.card.name)}</strong><span>${i.qty} owned by ${esc(p.name)} • ${esc(i.card.set)}</span></div><div class="action-row">${state.collectorProfiles.filter(x=>x.uid!==p.uid).map(x=>`<button class="btn" onclick="transferDuplicateToCollector('${i.uid}','${x.uid}')">→ ${esc(x.name)}</button>`).join('')}</div></div>`).join('')}
+  </div>`:''}
+
+  <div class="panel giveaway-panel">
+    <div class="section-head"><div><div class="eyebrow">GIVEAWAY LOCKER</div><h2>Reserved channel inventory</h2><p>Keep giveaway items separate from normal sell/trade decisions.</p></div></div>
+    <div class="meta-grid">
+      <div class="meta"><span>Reserved</span><strong>${gs.reserved}</strong></div>
+      <div class="meta"><span>Ready</span><strong>${gs.ready}</strong></div>
+      <div class="meta"><span>Sent</span><strong>${gs.sent}</strong></div>
+      <div class="meta"><span>Reserved value</span><strong>${money(gs.value)}</strong></div>
+    </div>
+    ${state.giveawayLocker.length?state.giveawayLocker.map(g=>`<div class="giveaway-row">${g.card?cardArt(g.card):`<div class="thumb square"><b>🎁</b></div>`}<div class="grow"><strong>${esc(g.name)}</strong><span>Qty ${g.qty} • ${money(Number(g.valueEach))} ea. • ${esc(g.status)}</span></div><div class="right">${g.status==='Reserved'?`<button class="btn" onclick="updateGiveawayStatus('${g.uid}','Ready')">Ready</button>`:''}${g.status!=='Sent'?`<button class="btn primary" onclick="updateGiveawayStatus('${g.uid}','Sent')">Sent ✓</button>`:''}<button class="remove" onclick="removeGiveaway('${g.uid}')">Delete</button></div></div>`).join(''):`<div class="empty">Reserve a card or sealed product from a collector panel above.</div>`}
+  </div>
+
+  <div class="panel creator-panel">
+    <div class="section-head"><div><div class="eyebrow">2GEN RIPS CREATOR HUB</div><h2>Content Queue</h2><p>Turn openings into videos without keeping a separate content spreadsheet.</p></div><button class="btn primary" onclick="addContentIdea()">＋ Idea</button></div>
+
+    ${(state.ripSessions||[]).length?`<div class="subpanel"><div class="section-head"><div><h2>Recent Rip Sessions</h2><p>Push an opening directly into the content queue.</p></div></div>${state.ripSessions.slice(0,5).map(s=>`<div class="compact-row"><div class="thumb square"><b>✦</b></div><div class="grow"><strong>${esc(s.name)}</strong><span>${esc(s.date||'')} • ${s.packs||0} packs • ${money(ripSessionStats(s).totalValue)} pull value</span></div><button class="btn" onclick="addContentFromRip('${s.uid}')">Add to content</button></div>`).join('')}</div>`:''}
+
+    ${state.contentQueue.length?state.contentQueue.map(c=>`<div class="content-row"><div class="content-status-icon">${c.status==='Posted'?'✓':c.status==='Ready to edit'?'✂':'✦'}</div><div class="grow"><strong>${esc(c.title)}</strong><span>${esc(c.platform||'')} • ${esc(c.type||'')} • ${esc(c.status||'Idea')}${c.date?' • '+esc(c.date):''}</span>${c.notes?`<span>${esc(c.notes)}</span>`:''}</div><div class="right"><button class="link-btn" onclick="editContentIdea('${c.uid}')">Edit</button>${c.status!=='Ready to edit'&&c.status!=='Posted'?`<button class="btn" onclick="updateContentStatus('${c.uid}','Ready to edit')">Ready</button>`:''}${c.status!=='Posted'?`<button class="btn primary" onclick="updateContentStatus('${c.uid}','Posted')">Posted ✓</button>`:''}<button class="remove" onclick="removeContentIdea('${c.uid}')">Delete</button></div></div>`).join(''):`<div class="empty">No content ideas yet.</div>`}
+  </div>`;
+}
+
 function renderSellLabTool(){
   ensureSalesSchema();
   const options=saleInventoryOptions();
@@ -3547,7 +3799,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -3567,6 +3819,7 @@ if('serviceWorker' in navigator){
 }
 ensureCollectionSchema();
 ensurePriceHistorySchema();
+ensureFamilySchema();
 ensureSalesSchema();
 ensureScannerSchema();
 ensureCatalogSeed();

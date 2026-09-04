@@ -563,3 +563,36 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   .sale-queue-row,.sale-history-row{grid-template-columns:44px 1fr}.sale-queue-row .thumb,.sale-history-row .thumb{width:44px}
   .sale-queue-row .right,.sale-history-row .right{grid-column:2;align-items:flex-start}
 }
+
+
+/* v1.7 — 2GEN Family + Creator Hub */
+.family-hub-hero{
+  background:
+    radial-gradient(circle at 92% 0%,rgba(21,101,255,.19),transparent 30%),
+    radial-gradient(circle at 4% 0%,rgba(255,45,45,.10),transparent 34%),
+    rgba(17,21,29,.97);
+}
+.collector-tabs{display:flex;gap:7px;overflow:auto;margin:10px 0}
+.collector-tab{min-width:120px;border:1px solid var(--line);border-radius:13px;padding:9px;background:#0c1219;color:var(--text);text-align:left}
+.collector-tab.active{border-color:rgba(21,101,255,.5);background:rgba(21,101,255,.08)}
+.collector-tab b{display:block;font-size:9px}.collector-tab span{display:block;font-size:7px;color:var(--muted);margin-top:3px}
+.family-grid{display:grid;grid-template-columns:1fr;gap:11px}
+.giveaway-panel{
+  background:radial-gradient(circle at 100% 0%,rgba(241,199,91,.09),transparent 28%),rgba(17,21,29,.96);
+}
+.giveaway-row,.content-row{display:grid;grid-template-columns:48px 1fr auto;gap:9px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line-soft)}
+.giveaway-row:last-child,.content-row:last-child{border-bottom:0}
+.giveaway-row .thumb{width:48px}
+.creator-panel{
+  background:radial-gradient(circle at 100% 0%,rgba(159,124,255,.11),transparent 30%),rgba(17,21,29,.96);
+}
+.content-status-icon{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;border:1px solid var(--line);background:linear-gradient(145deg,#1b1632,#12223f);color:#d4c1ff;font-size:17px}
+.content-row .grow>span{display:block;font-size:7.5px;color:var(--muted);margin-top:3px}
+@media(min-width:760px){
+  .family-grid{grid-template-columns:1fr 1fr}
+  .quick-grid{grid-template-columns:repeat(11,1fr)}
+}
+@media(max-width:520px){
+  .giveaway-row,.content-row{grid-template-columns:42px 1fr}.giveaway-row .thumb{width:42px}
+  .giveaway-row .right,.content-row .right{grid-column:2;align-items:flex-start}
+}
