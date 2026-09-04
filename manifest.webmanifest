@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault v5 \u2014 Collector OS with secure Real Inventory Engine, Product Command, VaultIQ, multi-TCG live card search, Watchtower, Market Pulse, Trade Lab and Sell Lab.",
+  "description": "2GEN Vault v5.0.1 \u2014 Real Inventory Engine hotfix with connected 2GEN Cloudflare inventory worker.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
