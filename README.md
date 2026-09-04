@@ -1575,3 +1575,30 @@ Live product inventory still requires authorized retailer inventory sources.
 ## v10.5 — Live Drops Alert Network
 
 VaultSignal now has an alert-first online product feed: new listings, restocks detected between refreshes, price drops, in-stock sealed products, watch matches, monitor health and direct buy links. A starter network of public specialty TCG storefront feeds runs in parallel without requiring a separate API key per store. This is online product intelligence; exact local shelf quantity remains limited to authorized retailer inventory sources.
+
+
+## v10.6 — Local Stock Broker
+
+VaultSignal now has a dedicated Local Stock Checker designed around the same user goal as premium TCG stock-check communities:
+
+`exact product → ZIP → nearby stores → retailer count / availability`
+
+### Connected local-stock sources
+The broker can combine:
+- Best Buy official near-real-time store availability
+- one licensed/partner local-inventory feed through a generic connector
+
+### Generic partner connector
+Cloudflare secrets:
+- `LOCAL_STOCK_PROVIDER_URL`
+- `LOCAL_STOCK_PROVIDER_TOKEN` (optional)
+
+Once a compatible inventory partner is connected, the app does not need another frontend rebuild. `/local-stock` and `/area-scan` automatically merge that provider with the existing official connectors.
+
+### Quantity handling
+- Exact quantity is shown only when a source actually provides it.
+- Availability-only sources are labeled as such.
+- Untracked inventory is never converted into a fake zero.
+
+### Why this architecture
+There is no single public shopper API that gives arbitrary Target/Walmart/GameStop shelf counts. A commercial product needs a provider/retailer adapter layer rather than hard-coding fragile private endpoints into the mobile app.

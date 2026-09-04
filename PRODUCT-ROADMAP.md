@@ -1,6 +1,6 @@
 # VaultSignal — Product Roadmap
 
-## Current build: v10.5 Live Drops Alert Network
+## Current build: v10.6 Local Stock Broker
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -417,3 +417,14 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - local new-listing/restock/price-drop classification
 - watch matching + direct buy links
 - 60-second foreground feed refresh
+
+
+## v10.6 completed
+- dedicated exact-product Local Stock Checker
+- grouped store-by-store local results
+- exact-count vs availability-only labeling
+- Best Buy official local-stock adapter
+- generic licensed/partner local-stock adapter
+- `/local-stock` Worker endpoint
+- partner inventory automatically merges into area scans
+- provider health surfaced to the app

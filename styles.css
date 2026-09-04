@@ -1441,3 +1441,64 @@ body{
 .drop-alert-feed{display:grid;gap:8px}.drop-alert-card{border:1px solid var(--line);border-left:4px solid #2ED39A;border-radius:13px;background:#09111D;overflow:hidden}.drop-alert-card.new{border-left-color:#0A6BFF}.drop-alert-card.price{border-left-color:#FFB800}.drop-alert-top,.drop-alert-foot{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:7px 9px;background:#08101A}.drop-alert-type{font-size:6px;font-weight:900;letter-spacing:.08em;color:#83E8C4}.drop-alert-card.new .drop-alert-type{color:#82B7FF}.drop-alert-card.price .drop-alert-type{color:#FFD66A}.drop-alert-age{font-size:5.5px;color:var(--muted)}
 .drop-alert-body{display:grid;grid-template-columns:54px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px}.drop-alert-body img,.drop-alert-fallback{width:54px;height:64px;object-fit:contain;border-radius:8px;background:#071019}.drop-alert-fallback{display:grid;place-items:center;color:#75839A}.drop-alert-body strong,.drop-alert-body span,.drop-alert-body small,.drop-watch-hit{display:block}.drop-alert-body .grow>strong{font-size:8px;margin:2px 0}.drop-alert-body .grow>span{font-size:6px;color:var(--muted)}.drop-watch-hit{margin-top:5px;color:#83E8C4;font-size:5.5px;border:1px solid rgba(46,211,154,.2);border-radius:999px;padding:3px 6px;width:max-content;max-width:100%}.drop-alert-price{text-align:right}.drop-alert-price>strong{font-size:11px}.drop-alert-price>small{font-size:5.5px;color:#FFD66A;margin-top:2px}.drop-alert-price>span{font-size:5.5px;color:#83E8C4;margin-top:4px}.drop-alert-foot>span,.drop-feed-note{font-size:5.5px;color:var(--muted)}.drop-feed-note{line-height:1.45;margin-top:9px}
 @media(max-width:720px){.drop-network-stats{grid-template-columns:repeat(2,1fr)}.drop-filter-row{grid-template-columns:1fr 1fr}}@media(max-width:520px){.drop-alert-body{grid-template-columns:46px 1fr}.drop-alert-body img,.drop-alert-fallback{width:46px;height:56px}.drop-alert-price{grid-column:2;text-align:left}}
+
+
+/* VaultSignal v10.6 — Local Stock Broker */
+.local-stock-panel{
+  background:
+    radial-gradient(circle at 100% 0%,rgba(10,107,255,.15),transparent 32%),
+    radial-gradient(circle at 0% 100%,rgba(46,211,154,.055),transparent 28%),
+    linear-gradient(145deg,#0F192B,#08111C);
+  border-color:rgba(56,160,255,.2)!important;
+}
+.local-provider-grid{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:10px 0;
+}
+.local-provider-grid>div{
+  padding:9px;border:1px solid var(--line);border-radius:11px;background:#09111D;
+}
+.local-provider-grid>div.on{border-color:rgba(46,211,154,.22)}
+.local-provider-grid span,.local-provider-grid strong,.local-provider-grid small{display:block}
+.local-provider-grid span{font-size:6px;color:var(--muted)}
+.local-provider-grid strong{font-size:8px;margin-top:4px}
+.local-provider-grid>div.on strong{color:#83E8C4}
+.local-provider-grid small{font-size:5.5px;color:var(--muted);line-height:1.35;margin-top:3px}
+.local-stock-panel .watch-query-strip button{
+  border:1px solid rgba(46,211,154,.18);background:rgba(46,211,154,.03);color:#83E8C4;
+  border-radius:999px;padding:5px 8px;font-size:5.8px;
+}
+.local-stock-meta{
+  display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:5.5px;margin:8px 0;
+}
+.local-stock-groups{display:grid;gap:10px}
+.local-stock-store-group{
+  border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#08101A;
+}
+.local-stock-store-head{
+  display:flex;justify-content:space-between;gap:8px;align-items:center;padding:9px 10px;border-bottom:1px solid var(--line);
+}
+.local-stock-store-head strong,.local-stock-store-head span{display:block}
+.local-stock-store-head strong{font-size:8px}.local-stock-store-head span{font-size:5.8px;color:var(--muted);margin-top:3px}
+.local-stock-store-head>b{font-size:5.5px;color:#83E8C4;white-space:nowrap}
+.local-stock-result-list{display:grid}
+.local-stock-result{padding:10px;border-bottom:1px solid var(--line-soft)}
+.local-stock-result:last-child{border-bottom:0}
+.local-stock-result-top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.local-stock-result-top strong,.local-stock-result-top span{display:block}
+.local-stock-result-top strong{font-size:7.5px}.local-stock-result-top .grow>span{font-size:5.8px;color:var(--muted);margin-top:2px}
+.local-stock-product{
+  display:grid;grid-template-columns:52px 1fr auto;gap:8px;align-items:center;margin:8px 0;
+}
+.local-stock-product img,.local-stock-product .product-image-fallback{width:52px;height:62px;object-fit:contain;border-radius:7px;background:#071019}
+.local-stock-product .grow strong,.local-stock-product .grow span,.local-stock-product .grow small{display:block}
+.local-stock-product .grow strong{font-size:7.5px}
+.local-stock-product .grow span,.local-stock-product .grow small{font-size:5.6px;color:var(--muted);margin-top:3px}
+.local-stock-values{text-align:right}
+.local-stock-values b,.local-stock-values span,.local-stock-values small{display:block}
+.local-stock-values b{font-size:10px}.local-stock-values span{font-size:6px;color:#83E8C4;margin-top:3px}.local-stock-values small{font-size:5.5px;color:var(--muted);margin-top:2px}
+@media(max-width:600px){
+  .local-provider-grid{grid-template-columns:1fr}
+  .local-stock-product{grid-template-columns:44px 1fr}
+  .local-stock-product img,.local-stock-product .product-image-fallback{width:44px;height:54px}
+  .local-stock-values{grid-column:2;text-align:left}
+}

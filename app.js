@@ -111,6 +111,9 @@ const seed = {
   inventorySearchHistory: [],
   areaInventoryResults: [],
   areaRetailerCheckResults: [],
+  localStockResults: [],
+  localStockMeta: {checkedAt:null,durationMs:0,providers:[],errors:[]},
+  localStockQuery: '',
   liveDropFeed: [],
   liveDropSnapshot: {},
   liveDropMeta: {checkedAt:null,durationMs:0,sourcesChecked:0,sourcesOk:0,errors:[]},
@@ -2029,6 +2032,10 @@ function editWatch(id){
 
 
 function ensureRealInventorySchema(){
+  if(!Array.isArray(state.localStockResults))state.localStockResults=[];
+  state.localStockMeta={checkedAt:null,durationMs:0,providers:[],errors:[],...(state.localStockMeta||{})};
+  if(typeof state.localStockQuery!=='string')state.localStockQuery='';
+
   if(!Array.isArray(state.inventoryResults))state.inventoryResults=[];
   if(!Array.isArray(state.inventorySearchHistory))state.inventorySearchHistory=[];
   if(!Array.isArray(state.areaInventoryResults))state.areaInventoryResults=[];
@@ -2608,6 +2615,166 @@ function renderLiveDropNetwork(){
   return `<div class="panel live-drops-panel"><div class="section-head"><div><div class="eyebrow">VAULTSIGNAL • LIVE DROPS</div><h2>Restock alert feed</h2><p>New listings, restocks, price drops and in-stock sealed products from connected online storefront monitors.</p></div><button class="btn primary" ${liveDropBusy?'disabled':''} onclick="refreshLiveDrops(false)">${liveDropBusy?'Checking…':'↻ Refresh feed'}</button></div><div class="drop-network-stats"><div><span>Live products</span><strong>${state.liveDropFeed.length}</strong></div><div><span>Watch hits</span><strong>${hits}</strong></div><div><span>Restocks</span><strong>${restocks}</strong></div><div><span>Sources online</span><strong>${meta.sourcesOk||0}/${meta.sourcesChecked||0}</strong></div><div><span>Feed speed</span><strong>${meta.durationMs?`${(meta.durationMs/1000).toFixed(1)}s`:'—'}</strong></div></div><div class="drop-filter-row"><select onchange="setLiveDropFilter('game',this.value)">${['All','Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece'].map(v=>`<option ${f.game===v?'selected':''}>${v}</option>`).join('')}</select><select onchange="setLiveDropFilter('store',this.value)"><option>All</option>${stores.map(v=>`<option ${f.store===v?'selected':''}>${esc(v)}</option>`).join('')}</select><label><input type="checkbox" ${f.inStockOnly?'checked':''} onchange="setLiveDropFilter('inStockOnly',this.checked)"> In stock only</label><label><input type="checkbox" ${f.watchOnly?'checked':''} onchange="setLiveDropFilter('watchOnly',this.checked)"> My watch hits</label></div><div class="drop-alert-feed">${rows.length?rows.slice(0,80).map(renderLiveDropCard).join(''):`<div class="empty">${liveDropBusy?'Checking storefront monitors…':'No products match these filters yet. Tap Refresh feed.'}</div>`}</div><div class="drop-feed-note">Live Drops is online-product intelligence. Local shelf quantity remains separate and is shown only when an authorized retailer source supplies it.</div></div>`;
 }
 
+
+let localStockBusy=false;
+
+function localStockProviderRows(){
+  const p=state.inventoryProviderStatus?.localStockProviders;
+  if(Array.isArray(p)&&p.length)return p;
+  return [
+    {id:'bestbuy',name:'Best Buy',mode:'official_api',configured:false,coverage:'availability'},
+    {id:'partner',name:'Local Stock Partner Feed',mode:'partner_feed',configured:false,coverage:'quantity_when_supplied'}
+  ];
+}
+function localStockCoverageBadge(row){
+  if(row.configured&&row.coverage==='exact_quantity')return 'EXACT COUNT';
+  if(row.configured)return 'LIVE AVAILABILITY';
+  return 'NOT CONNECTED';
+}
+function localStockQuantityText(x){
+  if(x.quantity!==null&&x.quantity!==undefined&&Number.isFinite(Number(x.quantity)))return String(Number(x.quantity));
+  if(x.quantityTracked===false)return 'Not tracked';
+  return 'Not supplied';
+}
+function localStockAccuracyText(x){
+  if(x.quantity!==null&&x.quantity!==undefined)return 'Retailer/provider count';
+  if(x.status==='in_stock'||x.status==='low_stock')return 'Availability only';
+  return 'Source status';
+}
+function localStockResultCard(x){
+  const qty=localStockQuantityText(x);
+  return `<div class="local-stock-result">
+    <div class="local-stock-result-top">
+      <div class="grow"><div class="eyebrow">${esc(x.retailer||x.provider||'RETAILER')} • ${esc(stockFreshnessLabel(x))}</div><strong>${esc(x.store||'Store')}</strong><span>${esc(x.address||'')}${typeof x.distanceMiles==='number'?` • ${x.distanceMiles.toFixed(1)} mi`:''}</span></div>
+      <span class="stock-pill ${inventoryStatusClass(x)}">${inventoryStatusLabel(x)}</span>
+    </div>
+    <div class="local-stock-product">
+      ${x.image?`<img src="${esc(x.image)}" alt="">`:`<div class="product-image-fallback">◈</div>`}
+      <div class="grow"><strong>${esc(x.product)}</strong><span>${x.retailerSku?`SKU ${esc(String(x.retailerSku))} • `:''}${x.upc?`UPC ${esc(x.upc)}`:''}</span><small>${esc(x.sourceAttribution||x.provider||'Inventory source')}</small></div>
+      <div class="local-stock-values"><b>${x.price?money(x.price):'—'}</b><span>QTY ${esc(qty)}</span><small>${esc(localStockAccuracyText(x))}</small></div>
+    </div>
+    <div class="action-row">${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Open retailer ↗</a>`:''}${x.addToCartUrl?`<a class="btn green" href="${esc(x.addToCartUrl)}" target="_blank" rel="noreferrer">Add to cart ↗</a>`:''}<button class="btn" onclick='saveInventoryResultAsReport(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Snapshot</button></div>
+  </div>`;
+}
+function localStockGroupedMarkup(){
+  const rows=(state.localStockResults||[]).map(normalizeInventoryResult);
+  if(!rows.length)return `<div class="empty">No local stock result yet. Enter an exact sealed product or use one of your watches.</div>`;
+  const groups=new Map();
+  for(const x of rows){
+    const key=`${x.retailer}|${x.storeId||x.store}`;
+    if(!groups.has(key))groups.set(key,{retailer:x.retailer,store:x.store,address:x.address,distanceMiles:x.distanceMiles,rows:[]});
+    groups.get(key).rows.push(x);
+  }
+  return [...groups.values()].sort((a,b)=>(a.distanceMiles??999)-(b.distanceMiles??999)).map(g=>`
+    <div class="local-stock-store-group">
+      <div class="local-stock-store-head"><div><div class="eyebrow">${esc(g.retailer)}</div><strong>${esc(g.store)}</strong><span>${esc(g.address||'')}${typeof g.distanceMiles==='number'?` • ${g.distanceMiles.toFixed(1)} mi`:''}</span></div><b>${g.rows.length} RESULT${g.rows.length===1?'':'S'}</b></div>
+      <div class="local-stock-result-list">${g.rows.map(localStockResultCard).join('')}</div>
+    </div>`).join('');
+}
+function localStockWatchChips(){
+  const watches=stockWatchQueriesForScan();
+  if(!watches.length)return '';
+  return `<div class="watch-query-strip">${watches.map(q=>`<button onclick='setLocalStockQuery(${JSON.stringify(q)})'>${esc(q)}</button>`).join('')}</div>`;
+}
+function setLocalStockQuery(q){
+  state.localStockQuery=q||'';
+  saveState();
+  renderStock();
+  setTimeout(()=>document.getElementById('localStockQuery')?.focus(),0);
+}
+async function runLocalStockCheck(){
+  if(!hasPremium()){
+    toolsTab='premium';renderTools();toast('Local Stock Checker is included with Premium');return;
+  }
+  if(localStockBusy)return;
+
+  const zip=($('stockZip')?.value||state.settings.zip||'').trim();
+  const radius=Number($('stockRadius')?.value||state.settings.radius)||25;
+  const query=($('localStockQuery')?.value||state.localStockQuery||'').trim();
+
+  if(!zip){toast('Enter your ZIP code first');return;}
+  if(!query){toast('Enter an exact product or tap a saved watch');return;}
+  if(!inventoryBackendConnected()){toast('Inventory service is not connected');return;}
+
+  state.localStockQuery=query;
+  state.settings.zip=zip;
+  state.settings.radius=radius;
+  localStockBusy=true;
+  renderStock();
+
+  try{
+    const params=new URLSearchParams({
+      zip,
+      radius:String(radius),
+      query,
+      retailers:[...selectedRetailers].join(',')
+    });
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),10000);
+    let r;
+    try{
+      r=await fetch(`${inventoryBackendBase()}/local-stock?${params}`,{headers:{Accept:'application/json'},signal:controller.signal});
+    }finally{clearTimeout(timer)}
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||`Local stock returned ${r.status}`);
+
+    state.localStockResults=(d.results||[]).map(normalizeInventoryResult);
+    state.localStockMeta={
+      checkedAt:d.checkedAt||new Date().toISOString(),
+      durationMs:Number(d.meta?.durationMs)||0,
+      providers:d.providers||[],
+      errors:d.meta?.errors||[]
+    };
+    if(Array.isArray(d.providers)){
+      state.inventoryProviderStatus={
+        ...(state.inventoryProviderStatus||{}),
+        connected:true,
+        localStockProviders:d.providers,
+        checkedAt:new Date().toISOString()
+      };
+    }
+    saveState();
+
+    const exact=state.localStockResults.filter(x=>x.quantity!==null&&x.quantity!==undefined).length;
+    toast(`${state.localStockResults.length} local result${state.localStockResults.length===1?'':'s'} • ${exact} exact count${exact===1?'':'s'} • ${state.localStockMeta.durationMs?`${(state.localStockMeta.durationMs/1000).toFixed(1)}s`:'done'}`);
+  }catch(e){
+    toast(e.name==='AbortError'?'Local stock check timed out after 10 seconds':(e.message||'Local stock check failed'));
+  }finally{
+    localStockBusy=false;
+    renderStock();
+  }
+}
+function renderLocalStockChecker(){
+  const providers=localStockProviderRows();
+  const tracked=providers.filter(p=>p.configured).length;
+  const meta=state.localStockMeta||{};
+  return `<div class="panel local-stock-panel">
+    <div class="section-head">
+      <div><div class="eyebrow">VAULTSIGNAL • LOCAL STOCK CHECKER</div><h2>What is actually on hand near me?</h2><p>Pick an exact product. VaultSignal asks every connected local-inventory source and returns store-by-store availability, price and quantity when the source supplies a count.</p></div>
+      <span class="badge ${tracked?'primary':'signal-gold'}">${tracked} LIVE SOURCE${tracked===1?'':'S'}</span>
+    </div>
+
+    <div class="local-provider-grid">
+      ${providers.map(p=>`<div class="${p.configured?'on':''}"><span>${esc(p.name)}</span><strong>${esc(localStockCoverageBadge(p))}</strong><small>${esc(p.description||p.coverage||'')}</small></div>`).join('')}
+    </div>
+
+    <div class="form-grid local-stock-form">
+      <label class="field full"><span>Exact product</span><input id="localStockQuery" value="${esc(state.localStockQuery||'')}" placeholder="Example: Prismatic Evolutions Elite Trainer Box"></label>
+    </div>
+    ${localStockWatchChips()}
+    <div class="action-row"><button class="btn primary" ${localStockBusy?'disabled':''} onclick="runLocalStockCheck()">${localStockBusy?'Checking local systems…':'◎ CHECK LOCAL STOCK'}</button></div>
+
+    <div class="local-stock-meta">
+      <span>${meta.checkedAt?`Last check ${humanAge(meta.checkedAt)}`:'No local stock check yet'}</span>
+      <span>${meta.durationMs?`${(meta.durationMs/1000).toFixed(1)}s`:''}</span>
+    </div>
+
+    <div class="local-stock-groups">${localStockGroupedMarkup()}</div>
+
+    <div class="notice warn"><span>!</span><span><b>Inventory counts are only as good as the retailer system.</b> A displayed count is the source's on-hand record, not a guarantee the item is physically on the shelf.</span></div>
+  </div>`;
+}
+
 function stockWatchQueriesForScan(){
   const q=[];
   for(const w of state.stockWatches||[]){
@@ -2921,6 +3088,7 @@ function renderStock(){
     <div class="page-title"><div><h1>Inventory Radar</h1><p>Verified live inventory when an authorized source is connected, plus nearby retailer checks everywhere else.</p></div><span class="badge ${connection.mode==='live'?'primary':connection.mode==='checks'?'signal-gold':''}">${backendOnline?'● INVENTORY SERVICE ONLINE':'○ SETUP REQUIRED'}</span></div>
     <div class="panel inventory-source-truth ${connection.mode}"><div class="inventory-source-icon">${connection.mode==='live'?'●':connection.mode==='checks'?'↗':'!'}</div><div class="grow"><div class="eyebrow">SOURCE MODE</div><strong>${esc(connection.title)}</strong><span>${esc(connection.detail)}</span></div><b>${esc(connection.badge)}</b></div>
     ${renderLiveDropNetwork()}
+    ${renderLocalStockChecker()}
     <div class="panel stock-command-panel">
       <div class="section-head">
         <div><div class="eyebrow">VAULTSIGNAL • STOCK COMMAND</div><h2>Inventory intelligence, not manual searching</h2><p>VaultSignal scans your area once, prioritizes watched products, groups live results by physical store and shows exactly where each result came from.</p></div>
@@ -7711,7 +7879,7 @@ function exportCollectionCSV(){
 }
 
 Object.assign(window,{
-  switchTab,openVault,openTool,premiumPurchaseAction,refreshLiveDrops,setLiveDropFilter,premiumRestorePurchases,setInventoryFilter,quickInventoryCount,inventoryAuditAll,exportUnifiedInventoryCsv,openProductFromInventory,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
+  switchTab,openVault,openTool,runLocalStockCheck,setLocalStockQuery,premiumPurchaseAction,refreshLiveDrops,setLiveDropFilter,premiumRestorePurchases,setInventoryFilter,quickInventoryCount,inventoryAuditAll,exportUnifiedInventoryCsv,openProductFromInventory,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,

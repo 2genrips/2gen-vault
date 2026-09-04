@@ -6,6 +6,8 @@
  *   BESTBUY_API_KEY          - Best Buy Developer API key
  *   PRICECHARTING_API_TOKEN   - PriceCharting API token
  *   GOOGLE_PLACES_API_KEY      - Optional Google Places API key for production-grade store discovery
+ *   LOCAL_STOCK_PROVIDER_URL    - Optional licensed/partner local-inventory feed base URL
+ *   LOCAL_STOCK_PROVIDER_TOKEN  - Optional bearer token for the partner feed
  *
  * Vars:
  *   ALLOWED_ORIGIN   - e.g. https://2genrips.github.io
@@ -18,7 +20,7 @@
  *   GET /drop-feed?games=Pokemon,One%20Piece&limit=120
  */
 
-const VERSION = "10.5.0";
+const VERSION = "10.6.0";
 const BESTBUY_BASE = "https://api.bestbuy.com/v1";
 const MAX_PRODUCT_MATCHES = 4;
 const CACHE_TTL_SECONDS = 120;
@@ -533,6 +535,15 @@ async function fastAreaScan(url,env){
   }
 
   const liveTasks=[];
+  if(env.LOCAL_STOCK_PROVIDER_URL){
+    for(const item of searchPairs.slice(0,8)){
+      liveTasks.push(
+        partnerLocalStock({q:item.q,zip,radius,retailers},env)
+          .then(rows=>rows.map(x=>({...x,scanKind:item.kind,scanQuery:item.q})))
+          .catch(e=>{errors.push({provider:"Local Stock Partner",query:item.q,error:e.message||"Partner stock lookup failed"});return [];})
+      );
+    }
+  }
   if(env.BESTBUY_API_KEY && bestBuySelected(retailers)){
     for(const item of searchPairs.slice(0,12)){
       const args={
@@ -580,6 +591,7 @@ async function fastAreaScan(url,env){
       results,
       retailerChecks:dedupe(retailerChecks),
       providers:providerStatus(env),
+      localStockProviders:localStockProviderStatus(env),
       meta:{
         zip,radius,games,
         watchQueryCount:watchQueries.length,
@@ -651,8 +663,143 @@ async function liveDropFeed(url){
   }));
   const seen=new Set();
   const results=settled.flatMap(x=>x.rows).filter(x=>{const k=x.url||x.id;if(seen.has(k))return false;seen.add(k);return true;})
-    .sort((a,b)=>(b.available===true)-(a.available===true)||Number(a.price||999999)-Number(b.price||999999)).slice(0,limit);
+    .sort((a,b)=>Number(b.available===true)-Number(a.available===true)||Number(a.price||999999)-Number(b.price||999999)).slice(0,limit);
   return {version:VERSION,results,checkedAt:new Date().toISOString(),meta:{sourcesChecked:settled.length,sourcesOk:settled.filter(x=>x.ok).length,errors:settled.filter(x=>!x.ok).map(x=>({source:x.source.name,error:x.error})),durationMs:Date.now()-started}};
+}
+
+
+function localStockProviderStatus(env){
+  return [
+    {
+      id:"bestbuy",
+      name:"Best Buy",
+      mode:"official_api",
+      configured:!!env.BESTBUY_API_KEY,
+      coverage:"availability",
+      description:env.BESTBUY_API_KEY
+        ?"Official near-real-time store availability is connected. Exact shelf quantity may not be supplied."
+        :"Official connector ready; BESTBUY_API_KEY is not configured."
+    },
+    {
+      id:"partner",
+      name:"Local Stock Partner Feed",
+      mode:"partner_feed",
+      configured:!!env.LOCAL_STOCK_PROVIDER_URL,
+      coverage:"quantity_when_supplied",
+      description:env.LOCAL_STOCK_PROVIDER_URL
+        ?"External licensed/partner local-inventory feed is connected."
+        :"No partner local-inventory feed is configured."
+    }
+  ];
+}
+function normalizePartnerStockRow(x,query){
+  const qty=(x.quantity===null||x.quantity===undefined||x.quantity==="")?null:Number(x.quantity);
+  return {
+    id:x.id||`partner:${x.retailer||"retailer"}:${x.storeId||x.store||"store"}:${x.sku||x.productId||query}`,
+    provider:x.provider||"Local Stock Partner",
+    retailer:x.retailer||x.provider||"Retailer",
+    store:x.store||x.storeName||x.retailer||"Store",
+    storeId:x.storeId||x.locationId||null,
+    address:x.address||"",
+    city:x.city||"",
+    state:x.state||"",
+    postalCode:x.postalCode||"",
+    distanceMiles:(x.distanceMiles===null||x.distanceMiles===undefined)?null:Number(x.distanceMiles),
+    product:x.product||x.name||query,
+    productId:x.productId||"",
+    retailerSku:x.retailerSku||x.sku||"",
+    upc:x.upc||"",
+    game:x.game||"Pokemon",
+    price:Number(x.price)||0,
+    regularPrice:Number(x.regularPrice)||0,
+    status:String(x.status||((qty&&qty>0)?"in_stock":"unknown")).toLowerCase(),
+    quantity:Number.isFinite(qty)?qty:null,
+    quantityTracked:x.quantityTracked!==false,
+    pickupEligible:x.pickupEligible===true,
+    lowStock:x.lowStock===true,
+    sourceType:"partner_api",
+    sourceAttribution:x.sourceAttribution||x.provider||"Local Stock Partner",
+    sourceAttributionUrl:x.sourceAttributionUrl||"",
+    updatedAt:x.updatedAt||x.checkedAt||new Date().toISOString(),
+    checkedAt:x.checkedAt||x.updatedAt||new Date().toISOString(),
+    url:x.url||"",
+    addToCartUrl:x.addToCartUrl||"",
+    image:x.image||"",
+    confidence:Number.isFinite(Number(x.confidence))?Number(x.confidence):95
+  };
+}
+async function partnerLocalStock(args,env){
+  if(!env.LOCAL_STOCK_PROVIDER_URL)return [];
+  const base=String(env.LOCAL_STOCK_PROVIDER_URL).trim();
+  if(!/^https:\/\//i.test(base))throw new Error("LOCAL_STOCK_PROVIDER_URL must use HTTPS");
+
+  const u=new URL(base);
+  u.searchParams.set("zip",args.zip);
+  u.searchParams.set("radius",String(args.radius));
+  u.searchParams.set("query",args.q);
+  if(args.retailers?.length)u.searchParams.set("retailers",args.retailers.join(","));
+
+  const headers={Accept:"application/json"};
+  if(env.LOCAL_STOCK_PROVIDER_TOKEN)headers.Authorization=`Bearer ${env.LOCAL_STOCK_PROVIDER_TOKEN}`;
+
+  const r=await withTimeout(u.toString(),{headers},7000);
+  if(!r.ok)throw new Error(`Local stock partner returned ${r.status}`);
+  const d=await r.json();
+  const rows=Array.isArray(d)?d:(d.results||d.inventory||[]);
+  return rows.map(x=>normalizePartnerStockRow(x,args.q));
+}
+async function localStockCheck(url,env){
+  const started=Date.now();
+  const zip=safeText(url.searchParams.get("zip"),10).replace(/\D/g,"").slice(0,5);
+  if(zip.length!==5)return {status:400,data:{error:"A 5-digit ZIP code is required"}};
+  const radius=boundedNumber(url.searchParams.get("radius"),1,100,25);
+  const q=safeText(url.searchParams.get("query"),140);
+  if(!q)return {status:400,data:{error:"A product query is required"}};
+  const retailers=selectedRetailers(url);
+  const cache=caches.default;
+  const errors=[];
+  const tasks=[];
+
+  if(env.BESTBUY_API_KEY && bestBuySelected(retailers)){
+    tasks.push(bestBuyResults({
+      q,zip,radius,game:"Pokemon",
+      sku:"",upc:"",bestBuySku:"",productId:"",retailers
+    },env,cache).catch(e=>{
+      errors.push({provider:"Best Buy",error:e.message||"Best Buy local stock failed"});
+      return [];
+    }));
+  }
+
+  if(env.LOCAL_STOCK_PROVIDER_URL){
+    tasks.push(partnerLocalStock({q,zip,radius,retailers},env).catch(e=>{
+      errors.push({provider:"Local Stock Partner",error:e.message||"Partner local stock failed"});
+      return [];
+    }));
+  }
+
+  const chunks=await Promise.all(tasks);
+  const results=dedupe(chunks.flat()).sort((a,b)=>{
+    const aq=(a.quantity===null||a.quantity===undefined)?-1:Number(a.quantity);
+    const bq=(b.quantity===null||b.quantity===undefined)?-1:Number(b.quantity);
+    return bq-aq || Number(a.distanceMiles??999)-Number(b.distanceMiles??999);
+  });
+
+  return {
+    status:200,
+    data:{
+      version:VERSION,
+      query:q,
+      zip,
+      radius,
+      results,
+      providers:localStockProviderStatus(env),
+      checkedAt:new Date().toISOString(),
+      meta:{
+        durationMs:Date.now()-started,
+        errors
+      }
+    }
+  };
 }
 
 export default {
@@ -672,10 +819,20 @@ export default {
         ok:true,version:VERSION,message:"VaultSignal Inventory Worker is online",
         providers:providerStatus(env),
         storeDiscovery:storeDiscoveryStatus(env),
+        localStockProviders:localStockProviderStatus(env),
         pricingProviders:[priceChartingStatus(env)],
         checkedAt:new Date().toISOString()
       },200,origin);
     }
+    if(url.pathname==="/local-stock"){
+      try{
+        const out=await localStockCheck(url,env);
+        return json(out.data,out.status,origin);
+      }catch(e){
+        return json({ok:false,error:e.message||"Local stock check failed",checkedAt:new Date().toISOString()},502,origin);
+      }
+    }
+
     if(url.pathname==="/drop-feed"){
       try{return json(await liveDropFeed(url),200,origin)}catch(e){return json({ok:false,error:e.message||"Drop feed failed",checkedAt:new Date().toISOString()},502,origin)}
     }

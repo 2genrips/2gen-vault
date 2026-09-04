@@ -1,7 +1,7 @@
 {
   "name": "VaultSignal",
   "short_name": "VaultSignal",
-  "description": "VaultSignal v10.5 \u2014 Live Drops alert network with real public storefront feeds, watch matching and direct buy links.",
+  "description": "VaultSignal v10.6 \u2014 Local Stock Broker with one exact product checker, Best Buy official inventory adapter and plug-in partner inventory feed support.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
