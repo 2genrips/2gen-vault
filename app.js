@@ -36,6 +36,8 @@ const seed = {
   stockReports: [],
   purchases: [],
   trades: [],
+  sales: [],
+  saleQueue: [],
   grading: [],
   setGoals: [],
   productCatalog: [],
@@ -98,6 +100,8 @@ let tradeGiveDraft = [];
 let tradeReceiveDraft = [];
 let tradeSearchResults = [];
 let tradeSearchBusy = false;
+let sellDraftSource = null;
+let sellMarketplace = 'Local / Cash';
 let toastTimer;
 
 function $(id){ return document.getElementById(id); }
@@ -687,6 +691,7 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('analytics')"><span class="big-icon">⌁</span><b>Dashboard Pro</b><span>Growth, spending, allocation, positions, sets and rip performance.</span></button>
         <button class="quick-card" onclick="openTool('market')"><span class="big-icon">↗</span><b>Market Pulse</b><span>Refresh live card pricing, track snapshots and watch price targets.</span></button>
         <button class="quick-card" onclick="openTool('trades')"><span class="big-icon">⇄</span><b>Trade Lab</b><span>Build deals from your Vault and wishlist with reference-value balancing.</span></button>
+        <button class="quick-card" onclick="openTool('sell')"><span class="big-icon">$</span><b>Sell Lab</b><span>Estimate fees, protect cost basis, create listings and track profit.</span></button>
       </div>
     </div>
 
@@ -1785,6 +1790,7 @@ function renderTools(){
       ${toolButton('stockreport','◎','Stock report','Log store inventory')}
       ${toolButton('budget','$','Budget','Spending & purchases')}
       ${toolButton('grading','◇','Grading','Submission tracker')}
+      ${toolButton('sell','$','Sell Lab','Profit & listing tools')}
       ${toolButton('trades','⇄','Trade Lab','Fair-trade builder')}
       ${toolButton('alerts','!','Alerts','Price targets')}
       ${toolButton('account','☁','Account','Cloud sync & profile')}
@@ -1795,6 +1801,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='sell') return renderSellLabTool();
   if(toolsTab==='market') return renderMarketPulseTool();
   if(toolsTab==='analytics') return renderAnalyticsTool();
   if(toolsTab==='rips') return renderRipSessionsTool();
@@ -1923,6 +1930,7 @@ function renderAnalyticsTool(){
   const sets=collectionSetAnalytics().slice(0,6);
   const rips=ripLeaderboard();
   const health=dataHealthScore();
+  const salesStats=soldAnalytics();
   const first=trend[0];
   const growth=first&&Number(first.market)?(t.market-Number(first.market))/Number(first.market)*100:0;
   const assetTotal=Math.max(1,t.market);
@@ -3148,6 +3156,296 @@ function renderTradeHistoryRow(t){
   </div>`;
 }
 
+
+const SELL_MARKETPLACES = {
+  'Local / Cash': {feePct:0, fixed:0, shipping:0, note:'No platform fee assumed.'},
+  'eBay': {feePct:13.25, fixed:.30, shipping:5.00, note:'Estimate only. Actual category, promoted-listing and shipping fees vary.'},
+  'TCGplayer': {feePct:12.75, fixed:.30, shipping:1.25, note:'Estimate only. Actual seller level, payment and shipping costs vary.'},
+  'Whatnot': {feePct:11, fixed:.30, shipping:0, note:'Estimate only. Actual platform/payment fees may differ.'},
+  'Card Show': {feePct:3, fixed:0, shipping:0, note:'Estimate for table/payment overhead; edit values before saving.'},
+  'Other': {feePct:10, fixed:.30, shipping:0, note:'Generic estimate; edit manually.'}
+};
+function ensureSalesSchema(){
+  if(!Array.isArray(state.sales)) state.sales=[];
+  if(!Array.isArray(state.saleQueue)) state.saleQueue=[];
+}
+function saleInventoryOptions(){
+  const rows=[];
+  for(const i of state.collection||[]){
+    rows.push({
+      type:'collection',id:i.uid,
+      label:`${i.card?.name} • ${i.card?.set||''} • ${i.format||'Raw'} • owned ${i.qty}`,
+      market:Number(i.card?.market)||0,cost:Number(i.cost)||0,qty:Number(i.qty)||0
+    });
+  }
+  for(const i of state.sealed||[]){
+    rows.push({
+      type:'sealed',id:i.uid,
+      label:`${i.name} • Sealed • owned ${i.qty}`,
+      market:Number(i.current)||0,cost:Number(i.cost)||0,qty:Number(i.qty)||0
+    });
+  }
+  return rows;
+}
+function currentSellSource(){
+  if(!sellDraftSource) return null;
+  const [type,id]=sellDraftSource.split('|');
+  if(type==='collection'){
+    const i=state.collection.find(x=>x.uid===id);
+    if(!i)return null;
+    return {
+      type,id,name:i.card?.name||'Card',subtitle:`${i.card?.set||''} • ${i.format||'Raw'} • ${i.condition||''}`,
+      market:Number(i.card?.market)||0,cost:Number(i.cost)||0,owned:Number(i.qty)||0,
+      card:i.card,format:i.format||'Raw',condition:i.condition||'Near Mint'
+    };
+  }
+  if(type==='sealed'){
+    const i=state.sealed.find(x=>x.uid===id);
+    if(!i)return null;
+    return {
+      type,id,name:i.name,subtitle:`${i.game||''} • Sealed`,
+      market:Number(i.current)||0,cost:Number(i.cost)||0,owned:Number(i.qty)||0,
+      game:i.game
+    };
+  }
+  return null;
+}
+function marketplaceDefaults(name){
+  return SELL_MARKETPLACES[name] || SELL_MARKETPLACES.Other;
+}
+function saleMath({price,qty=1,costEach=0,feePct=0,fixed=0,shipping=0,supplies=0}){
+  price=Number(price)||0;qty=Math.max(1,Number(qty)||1);
+  costEach=Number(costEach)||0;feePct=Number(feePct)||0;
+  fixed=Number(fixed)||0;shipping=Number(shipping)||0;supplies=Number(supplies)||0;
+  const gross=price*qty;
+  const fees=gross*(feePct/100)+fixed;
+  const totalCosts=costEach*qty+fees+shipping+supplies;
+  const net=gross-fees-shipping-supplies;
+  const profit=net-costEach*qty;
+  const roi=(costEach*qty)>0?profit/(costEach*qty)*100:0;
+  const breakEvenPer=(qty>0)?((costEach*qty+fixed+shipping+supplies)/(qty*(1-feePct/100||1))):0;
+  return {gross,fees,totalCosts,net,profit,roi,breakEvenPer};
+}
+function sellFormMath(){
+  const src=currentSellSource();
+  if(!src)return saleMath({});
+  return saleMath({
+    price:Number($('sellPrice')?.value)||src.market,
+    qty:Number($('sellQty')?.value)||1,
+    costEach:Number($('sellCost')?.value)||src.cost,
+    feePct:Number($('sellFeePct')?.value)||0,
+    fixed:Number($('sellFixedFee')?.value)||0,
+    shipping:Number($('sellShipping')?.value)||0,
+    supplies:Number($('sellSupplies')?.value)||0
+  });
+}
+function selectSellSource(v){
+  sellDraftSource=v||null;
+  renderTools();
+}
+function setSellMarketplace(name){
+  sellMarketplace=name;
+  renderTools();
+}
+function updateSellPreview(){
+  const m=sellFormMath();
+  const ids=['sellGrossPreview','sellFeesPreview','sellNetPreview','sellProfitPreview','sellBreakEvenPreview','sellRoiPreview'];
+  const vals=[money(m.gross),money(m.fees),money(m.net),money(m.profit),money(m.breakEvenPer),`${m.roi.toFixed(1)}%`];
+  ids.forEach((id,idx)=>{const el=$(id);if(el)el.textContent=vals[idx]});
+  const p=$('sellProfitPreview'); if(p) p.className=m.profit>=0?'good':'bad';
+  const r=$('sellRoiPreview'); if(r) r.className=m.roi>=0?'good':'bad';
+}
+function addSaleToQueue(){
+  ensureSalesSchema();
+  const src=currentSellSource();
+  if(!src){toast('Choose an item first');return;}
+  const qty=Math.min(src.owned,Math.max(1,Number($('sellQty')?.value)||1));
+  const price=Math.max(0,Number($('sellPrice')?.value)||0);
+  const feePct=Math.max(0,Number($('sellFeePct')?.value)||0);
+  const fixed=Math.max(0,Number($('sellFixedFee')?.value)||0);
+  const shipping=Math.max(0,Number($('sellShipping')?.value)||0);
+  const supplies=Math.max(0,Number($('sellSupplies')?.value)||0);
+  const costEach=Math.max(0,Number($('sellCost')?.value)||src.cost);
+  const m=saleMath({price,qty,costEach,feePct,fixed,shipping,supplies});
+  const row={
+    uid:uid(),source:src.type,sourceId:src.id,
+    name:src.name,subtitle:src.subtitle,card:src.card||null,game:src.game||src.card?.game||'',
+    qty,priceEach:price,costEach,marketEach:src.market,
+    marketplace:sellMarketplace,feePct,fixed,shipping,supplies,
+    gross:m.gross,fees:m.fees,net:m.net,profit:m.profit,roi:m.roi,
+    status:'Queued',createdAt:new Date().toISOString()
+  };
+  state.saleQueue.unshift(row);
+  saveState();renderTools();toast('Added to sale queue');
+}
+function removeSaleQueueItem(id){
+  state.saleQueue=state.saleQueue.filter(x=>x.uid!==id);saveState();renderTools();
+}
+function editSaleQueuePrice(id){
+  const s=state.saleQueue.find(x=>x.uid===id);if(!s)return;
+  const p=prompt('Sale price EACH',String(s.priceEach||0));if(p===null)return;
+  s.priceEach=Math.max(0,Number(p)||0);
+  const m=saleMath(s);
+  Object.assign(s,{gross:m.gross,fees:m.fees,net:m.net,profit:m.profit,roi:m.roi});
+  saveState();renderTools();
+}
+function completeSale(id){
+  ensureSalesSchema();
+  const q=state.saleQueue.find(x=>x.uid===id);if(!q)return;
+  if(!confirm(`Mark ${q.qty}x ${q.name} sold and reduce your Vault inventory?`))return;
+
+  if(q.source==='collection'){
+    const src=state.collection.find(x=>x.uid===q.sourceId);
+    if(src) src.qty=Math.max(0,(Number(src.qty)||0)-(Number(q.qty)||0));
+  }else if(q.source==='sealed'){
+    const src=state.sealed.find(x=>x.uid===q.sourceId);
+    if(src) src.qty=Math.max(0,(Number(src.qty)||0)-(Number(q.qty)||0));
+  }
+  state.collection=state.collection.filter(x=>(Number(x.qty)||0)>0);
+  state.sealed=state.sealed.filter(x=>(Number(x.qty)||0)>0);
+
+  const sold={...q,status:'Sold',soldAt:new Date().toISOString(),date:todayInput()};
+  state.sales.unshift(sold);
+  state.saleQueue=state.saleQueue.filter(x=>x.uid!==id);
+  state.purchases.unshift({
+    uid:uid(),merchant:q.marketplace,item:`Sale: ${q.name}`,category:'Sale income',
+    amount:-Math.max(0,Number(q.net)||0),qty:q.qty,date:todayInput(),
+    notes:`Net sale proceeds. Gross ${money(q.gross)} • fees ${money(q.fees)}`
+  });
+  saveState();ensureDailySnapshot();renderTools();toast('Sale completed and Vault updated');
+}
+function saleListingText(item){
+  const condition=item.condition||'';
+  const set=item.card?.set||'';
+  const number=item.card?.number||'';
+  const rarity=item.card?.rarity||'';
+  const title=[item.name,set,number,condition].filter(Boolean).join(' • ');
+  const body=[
+    `${item.name}${set?` from ${set}`:''}${number?` #${number}`:''}.`,
+    rarity?`Rarity: ${rarity}.`:'',
+    condition?`Condition: ${condition}.`:'',
+    `Quantity: ${item.qty}.`,
+    `Asking: ${money(Number(item.priceEach))} each.`,
+    `Please review photos/details before purchase.`
+  ].filter(Boolean).join(' ');
+  return {title,body};
+}
+async function copySaleListing(id){
+  const item=state.saleQueue.find(x=>x.uid===id)||state.sales.find(x=>x.uid===id);if(!item)return;
+  const t=saleListingText(item);
+  const text=`${t.title}\n\n${t.body}`;
+  try{await navigator.clipboard.writeText(text);toast('Listing copy copied')}
+  catch{prompt('Copy listing text:',text)}
+}
+function soldAnalytics(){
+  const rows=state.sales||[];
+  const gross=rows.reduce((n,x)=>n+(Number(x.gross)||0),0);
+  const net=rows.reduce((n,x)=>n+(Number(x.net)||0),0);
+  const profit=rows.reduce((n,x)=>n+(Number(x.profit)||0),0);
+  const fees=rows.reduce((n,x)=>n+(Number(x.fees)||0),0);
+  const units=rows.reduce((n,x)=>n+(Number(x.qty)||0),0);
+  return {gross,net,profit,fees,units,count:rows.length};
+}
+function duplicateSaleSuggestions(){
+  return state.collection
+    .filter(i=>(Number(i.qty)||0)>1)
+    .map(i=>({item:i,extras:(Number(i.qty)||0)-1,value:(Number(i.card?.market)||0)}))
+    .sort((a,b)=>b.value-a.value)
+    .slice(0,10);
+}
+function queueDuplicateForSale(id){
+  const i=state.collection.find(x=>x.uid===id);if(!i)return;
+  sellDraftSource=`collection|${id}`;
+  renderTools();
+  toast('Duplicate loaded into Sell Lab');
+}
+function removeSaleHistory(id){
+  state.sales=state.sales.filter(x=>x.uid!==id);saveState();renderTools();
+}
+
+
+function renderSellLabTool(){
+  ensureSalesSchema();
+  const options=saleInventoryOptions();
+  if(!sellDraftSource && options.length) sellDraftSource=`${options[0].type}|${options[0].id}`;
+  const src=currentSellSource();
+  const mp=marketplaceDefaults(sellMarketplace);
+  const analytics=soldAnalytics();
+  const dupes=duplicateSaleSuggestions();
+
+  const defaults=src? saleMath({
+    price:src.market,qty:1,costEach:src.cost,
+    feePct:mp.feePct,fixed:mp.fixed,shipping:mp.shipping,supplies:0
+  }) : saleMath({});
+
+  return `<div class="panel sell-lab-hero">
+    <div class="section-head"><div><div class="eyebrow">2GEN SELL LAB</div><h2>Sell smarter</h2><p>Turn Vault inventory into listings, estimate fees, protect your cost basis and update inventory when something sells.</p></div></div>
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Sales logged</span><strong>${analytics.count}</strong><small>${analytics.units} units sold</small></div>
+      <div class="stat-card"><span>Gross sales</span><strong>${money(analytics.gross)}</strong><small>Before estimated fees</small></div>
+      <div class="stat-card"><span>Net proceeds</span><strong>${money(analytics.net)}</strong><small>After entered fees/costs</small></div>
+      <div class="stat-card"><span>Tracked profit</span><strong class="${analytics.profit>=0?'good':'bad'}">${analytics.profit>=0?'+':''}${money(analytics.profit)}</strong><small>${money(analytics.fees)} estimated fees</small></div>
+    </div>
+    <div class="notice warn" style="margin-top:10px"><span>!</span><span>Fee presets are <b>planning estimates</b>, not guaranteed platform fee schedules. Review the actual marketplace terms before listing.</span></div>
+  </div>
+
+  <div class="sell-builder-grid">
+    <div class="panel">
+      <div class="section-head"><div><h2>Choose inventory</h2><p>Cards and sealed products already tracked in your Vault.</p></div></div>
+      ${options.length?`
+        <label class="field full"><span>Vault item</span><select onchange="selectSellSource(this.value)">${options.map(o=>`<option value="${esc(o.type+'|'+o.id)}" ${sellDraftSource===o.type+'|'+o.id?'selected':''}>${esc(o.label)} • ${money(o.market)}</option>`).join('')}</select></label>
+        ${src?`<div class="sell-selected">${src.card?cardArt(src.card):`<div class="trade-cash-icon">▣</div>`}<div class="grow"><strong>${esc(src.name)}</strong><span>${esc(src.subtitle)} • ${src.owned} owned</span></div><div class="right"><strong>${money(src.market)}</strong><small>market reference</small></div></div>`:''}
+      `:`<div class="empty">Add cards or sealed products to your Vault first.</div>`}
+
+      ${dupes.length?`<div class="subpanel" style="margin-top:10px"><div class="section-head"><div><h2>Sell duplicates</h2><p>Extra copies you may want to move.</p></div></div>${dupes.map(d=>`<div class="compact-row">${cardArt(d.item.card)}<div class="grow"><strong>${esc(d.item.card.name)}</strong><span>${d.extras} extra • ${esc(d.item.card.set)} • ${money(d.value)} ea.</span></div><button class="btn" onclick="queueDuplicateForSale('${d.item.uid}')">Load</button></div>`).join('')}</div>`:''}
+    </div>
+
+    <div class="panel">
+      <div class="section-head"><div><h2>Sale calculator</h2><p>Estimate what you actually keep after fees and selling costs.</p></div></div>
+      ${src?`
+        <div class="form-grid">
+          <label class="field"><span>Marketplace</span><select onchange="setSellMarketplace(this.value)">${Object.keys(SELL_MARKETPLACES).map(n=>`<option ${n===sellMarketplace?'selected':''}>${esc(n)}</option>`).join('')}</select></label>
+          <label class="field"><span>Qty</span><input id="sellQty" type="number" min="1" max="${src.owned}" value="1" oninput="updateSellPreview()"></label>
+          <label class="field"><span>Sale price EACH</span><input id="sellPrice" type="number" min="0" step=".01" value="${src.market.toFixed(2)}" oninput="updateSellPreview()"></label>
+          <label class="field"><span>Your cost EACH</span><input id="sellCost" type="number" min="0" step=".01" value="${src.cost.toFixed(2)}" oninput="updateSellPreview()"></label>
+          <label class="field"><span>Fee %</span><input id="sellFeePct" type="number" min="0" step=".01" value="${mp.feePct}" oninput="updateSellPreview()"></label>
+          <label class="field"><span>Fixed fee</span><input id="sellFixedFee" type="number" min="0" step=".01" value="${mp.fixed}" oninput="updateSellPreview()"></label>
+          <label class="field"><span>Shipping</span><input id="sellShipping" type="number" min="0" step=".01" value="${mp.shipping}" oninput="updateSellPreview()"></label>
+          <label class="field"><span>Supplies</span><input id="sellSupplies" type="number" min="0" step=".01" value="0" oninput="updateSellPreview()"></label>
+        </div>
+        <div class="sell-math-grid">
+          <div><span>Gross</span><strong id="sellGrossPreview">${money(defaults.gross)}</strong></div>
+          <div><span>Fees</span><strong id="sellFeesPreview">${money(defaults.fees)}</strong></div>
+          <div><span>Net proceeds</span><strong id="sellNetPreview">${money(defaults.net)}</strong></div>
+          <div><span>Profit</span><strong id="sellProfitPreview" class="${defaults.profit>=0?'good':'bad'}">${money(defaults.profit)}</strong></div>
+          <div><span>Break-even EACH</span><strong id="sellBreakEvenPreview">${money(defaults.breakEvenPer)}</strong></div>
+          <div><span>ROI</span><strong id="sellRoiPreview" class="${defaults.roi>=0?'good':'bad'}">${defaults.roi.toFixed(1)}%</strong></div>
+        </div>
+        <div class="notice" style="margin-top:10px"><span>ℹ</span><span>${esc(mp.note)}</span></div>
+        <button class="btn primary wide" style="margin-top:10px" onclick="addSaleToQueue()">＋ Add to Sale Queue</button>
+      `:`<div class="empty">Choose inventory to calculate a sale.</div>`}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>Sale Queue</h2><p>Draft listings. Nothing leaves your Vault until you mark it sold.</p></div></div>
+    ${state.saleQueue.length?state.saleQueue.map(s=>`<div class="sale-queue-row">
+      ${s.card?cardArt(s.card):`<div class="trade-cash-icon">▣</div>`}
+      <div class="grow"><strong>${esc(s.name)}</strong><span>${esc(s.marketplace)} • Qty ${s.qty} • ${money(Number(s.priceEach))} ea.</span><span>Net ${money(Number(s.net))} • Profit <b class="${Number(s.profit)>=0?'good':'bad'}">${Number(s.profit)>=0?'+':''}${money(Number(s.profit))}</b> • ROI ${Number(s.roi).toFixed(1)}%</span></div>
+      <div class="right"><button class="link-btn" onclick="editSaleQueuePrice('${s.uid}')">Price</button><button class="link-btn" onclick="copySaleListing('${s.uid}')">Copy listing</button><button class="btn primary" onclick="completeSale('${s.uid}')">Sold ✓</button><button class="remove" onclick="removeSaleQueueItem('${s.uid}')">Remove</button></div>
+    </div>`).join(''):`<div class="empty">No draft listings yet.</div>`}
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>Sales History</h2><p>Completed sales and tracked profit.</p></div></div>
+    ${state.sales.length?state.sales.map(s=>`<div class="sale-history-row">
+      ${s.card?cardArt(s.card):`<div class="trade-cash-icon">$</div>`}
+      <div class="grow"><strong>${esc(s.name)}</strong><span>${esc(s.marketplace)} • ${esc(s.date||'')} • Qty ${s.qty}</span><span>Gross ${money(Number(s.gross))} • Net ${money(Number(s.net))} • Profit <b class="${Number(s.profit)>=0?'good':'bad'}">${Number(s.profit)>=0?'+':''}${money(Number(s.profit))}</b></span></div>
+      <div class="right"><strong>${money(Number(s.priceEach))}</strong><small>sale price ea.</small><button class="link-btn" onclick="copySaleListing('${s.uid}')">Listing copy</button><button class="remove" onclick="removeSaleHistory('${s.uid}')">Delete</button></div>
+    </div>`).join(''):`<div class="empty">No completed sales yet.</div>`}
+  </div>`;
+}
+
 function renderTradesTool(){
   const a=tradeAnalysis();
   const owned=ownedTradeOptions();
@@ -3249,7 +3547,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -3269,6 +3567,7 @@ if('serviceWorker' in navigator){
 }
 ensureCollectionSchema();
 ensurePriceHistorySchema();
+ensureSalesSchema();
 ensureScannerSchema();
 ensureCatalogSeed();
 ensureDailySnapshot();

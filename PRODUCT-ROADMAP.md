@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v1.5 Trade Lab
+## Current build: v1.6 Sell Lab
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -179,3 +179,18 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Shareable trade summary
 - Proposed / Completed trade history
 - Completed trade -> automatic Vault inventory update
+
+
+## v1.6 completed
+- Sell Lab
+- Vault inventory selling workflow
+- Duplicate sale suggestions
+- Fee / shipping / supply calculator
+- Net-profit and ROI calculation
+- Break-even price calculator
+- Marketplace planning presets
+- Sale Queue
+- Listing-copy generator
+- Sold item -> automatic Vault inventory decrement
+- Sales / profit history
+- Dashboard Pro seller-performance panel

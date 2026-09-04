@@ -533,3 +533,33 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   .trade-draft-item{grid-template-columns:44px 1fr}.trade-draft-item .thumb{width:44px}.trade-draft-item .right{grid-column:2;flex-direction:row}
   .trade-history-row{grid-template-columns:42px 1fr}.trade-history-row .right{grid-column:2;align-items:flex-start}
 }
+
+
+/* v1.6 — Sell Lab */
+.sell-lab-hero{
+  background:
+    radial-gradient(circle at 92% 0%,rgba(46,211,154,.14),transparent 30%),
+    radial-gradient(circle at 4% 0%,rgba(21,101,255,.16),transparent 36%),
+    rgba(17,21,29,.97);
+}
+.sell-builder-grid{display:grid;grid-template-columns:1fr;gap:11px}
+.sell-selected{display:grid;grid-template-columns:58px 1fr auto;gap:9px;align-items:center;margin-top:10px;padding:9px;border:1px solid var(--line);border-radius:14px;background:#0c1219}
+.sell-selected .thumb{width:58px}
+.sell-math-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:10px}
+.sell-math-grid>div{border:1px solid var(--line);border-radius:12px;padding:9px;background:#0c1219}
+.sell-math-grid span{display:block;font-size:7px;color:var(--muted)}
+.sell-math-grid strong{display:block;font-size:13px;margin-top:4px}
+.sale-queue-row,.sale-history-row{display:grid;grid-template-columns:52px 1fr auto;gap:9px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.sale-queue-row:last-child,.sale-history-row:last-child{border-bottom:0}
+.sale-queue-row .thumb,.sale-history-row .thumb{width:52px}
+.sale-queue-row .grow>span,.sale-history-row .grow>span{display:block;font-size:7.5px;color:var(--muted);margin-top:3px}
+@media(min-width:760px){
+  .sell-builder-grid{grid-template-columns:1fr 1fr}
+  .quick-grid{grid-template-columns:repeat(10,1fr)}
+}
+@media(max-width:520px){
+  .sell-math-grid{grid-template-columns:1fr 1fr}
+  .sell-selected{grid-template-columns:48px 1fr}.sell-selected .thumb{width:48px}.sell-selected .right{grid-column:2;align-items:flex-start}
+  .sale-queue-row,.sale-history-row{grid-template-columns:44px 1fr}.sale-queue-row .thumb,.sale-history-row .thumb{width:44px}
+  .sale-queue-row .right,.sale-history-row .right{grid-column:2;align-items:flex-start}
+}

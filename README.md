@@ -1,4 +1,4 @@
-# 2GEN Vault — Trade Lab v1.5 (GitHub Pages)
+# 2GEN Vault — Sell Lab v1.6 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -572,3 +572,69 @@ When a trade is completed:
 
 ### Price freshness
 When local price-history data exists, Trade Lab shows how recently that item's price was captured.
+
+
+## New in v1.6 — 2GEN Sell Lab
+
+Sell Lab turns collection tracking into a complete sell-side workflow.
+
+### Pick inventory from your Vault
+Sell Lab can load:
+- raw cards
+- graded cards
+- sealed products
+- duplicate-card suggestions
+
+### Profit calculator
+Enter:
+- quantity
+- asking price
+- cost basis
+- marketplace fee %
+- fixed fee
+- shipping
+- supplies
+
+Sell Lab calculates:
+- gross sale amount
+- estimated fees
+- net proceeds
+- tracked profit
+- ROI
+- break-even price per item
+
+### Marketplace presets
+Included planning presets:
+- Local / Cash
+- eBay
+- TCGplayer
+- Whatnot
+- Card Show
+- Other
+
+These are deliberately labeled as estimates because actual marketplace fees can change and can vary by seller/category/options.
+
+### Sale Queue
+Draft an item before it sells.
+
+Nothing is removed from the Vault while an item is only queued.
+
+### Listing copy
+Queued items can generate simple listing text using the card/product details already stored in 2GEN Vault.
+
+### Complete sale
+When you mark a queued item as Sold:
+- linked Vault inventory is reduced
+- the sale is saved to history
+- gross / net / profit data is preserved
+- net proceeds are represented in the purchase/cash-flow log
+- portfolio analytics can update
+
+### Seller analytics
+Sell Lab and Dashboard Pro can now show:
+- sales count
+- units sold
+- gross sales
+- net proceeds
+- tracked profit
+- estimated fees
