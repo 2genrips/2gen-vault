@@ -72,6 +72,15 @@ const seed = {
   setGoals: [],
   productCatalog: [],
   productInventoryEvents: [],
+  inventoryLedger: [],
+  inventoryAudits: [],
+  inventoryCommandSettings: {
+    game:'All',
+    type:'All',
+    location:'All',
+    attention:'All',
+    sort:'Attention'
+  },
   productCommandSettings: {
     game:'All',
     need:'All',
@@ -899,6 +908,7 @@ function renderHome(){
       <div class="section-head"><div><h2>Collector command center</h2><p>Fast access to the things collectors actually use.</p></div></div>
       <div class="quick-grid">
         <button class="quick-card signal-quick" onclick="openTool('watchtower')"><span class="big-icon">◉</span><b>Signal Center</b><span>${homeWatchtowerUnread} unread • inventory changes, collector alerts and priorities in one feed.</span></button>
+        <button class="quick-card inventory-command-quick" onclick="openTool('inventory')"><span class="big-icon">▤</span><b>Inventory Command</b><span>Cards + sealed • cost basis • locations • replenishment • audits • movement ledger.</span></button>
         <button class="quick-card" onclick="switchTab('stock')"><span class="big-icon">◎</span><b>Find inventory</b><span>Nearby stores, live connector, watchlists and stock reports.</span></button>
         <button class="quick-card" onclick="switchTab('discover')"><span class="big-icon">⌕</span><b>Search cards</b><span>Universal live Pokémon, Lorcana, Magic and Yu-Gi-Oh! card network.</span></button>
         <button class="quick-card" onclick="openTool('products')"><span class="big-icon">◈</span><b>Product Command</b><span>UPC/SKU, retailer stock, sealed lots, goals, sightings, pricing and restock intelligence.</span></button>
@@ -967,6 +977,13 @@ function renderHome(){
 
 
 function ensureProductInventorySchema(){
+  if(!Array.isArray(state.inventoryLedger)) state.inventoryLedger=[];
+  if(!Array.isArray(state.inventoryAudits)) state.inventoryAudits=[];
+  state.inventoryCommandSettings={
+    game:'All',type:'All',location:'All',attention:'All',sort:'Attention',
+    ...(state.inventoryCommandSettings||{})
+  };
+
   if(!Array.isArray(state.productInventoryEvents)) state.productInventoryEvents=[];
   state.productCommandSettings={game:'All',need:'All',sort:'Priority',...(state.productCommandSettings||{})};
   ensureCatalogSeed();
@@ -1117,6 +1134,398 @@ function recordProductInventoryEvent(productId,type,title,detail=''){
   state.productInventoryEvents.unshift({uid:uid(),productId,type,title,detail,ts:new Date().toISOString()});
   state.productInventoryEvents=state.productInventoryEvents.slice(0,500);
 }
+
+function inventoryItemKey(kind,id){return `${kind}:${id}`}
+function recordInventoryLedger(kind,itemId,event,qtyDelta=0,detail='',meta={}){
+  if(!Array.isArray(state.inventoryLedger))state.inventoryLedger=[];
+  state.inventoryLedger.unshift({
+    uid:uid(),kind,itemId,event,
+    qtyDelta:Number(qtyDelta)||0,
+    detail:detail||'',
+    meta:meta||{},
+    ts:new Date().toISOString()
+  });
+  state.inventoryLedger=state.inventoryLedger.slice(0,1000);
+}
+function inventoryLocations(){
+  const set=new Set();
+  for(const x of state.collection||[])set.add((x.location||'Unassigned').trim()||'Unassigned');
+  for(const x of state.sealed||[])set.add((x.location||'Unassigned').trim()||'Unassigned');
+  return [...set].sort((a,b)=>a.localeCompare(b));
+}
+function inventoryRows(){
+  ensureProductInventorySchema();
+  const rows=[];
+
+  for(const i of state.collection||[]){
+    const qty=Math.max(0,Number(i.qty)||0);
+    const costEach=Math.max(0,Number(i.cost)||0);
+    const valueEach=Math.max(0,Number(i.card?.market)||0);
+    rows.push({
+      key:inventoryItemKey('card',i.uid),
+      kind:'Card',
+      uid:i.uid,
+      game:i.card?.game||'Other',
+      name:i.card?.name||'Unknown card',
+      set:i.card?.set||'',
+      number:i.card?.number||'',
+      qty,
+      costEach,
+      valueEach,
+      costTotal:qty*costEach,
+      valueTotal:qty*valueEach,
+      gain:qty*(valueEach-costEach),
+      location:i.location||'Unassigned',
+      identifier:i.card?.id||'',
+      format:i.format||'Raw',
+      productId:'',
+      upc:'',
+      sku:'',
+      desiredQty:0,
+      minOnHand:0,
+      attention:{
+        missingCost:costEach<=0,
+        missingValue:valueEach<=0,
+        missingLocation:!(i.location||'').trim(),
+        missingId:!(i.card?.id||'').trim(),
+        belowMin:false,
+        belowDesired:false
+      }
+    });
+  }
+
+  for(const s of state.sealed||[]){
+    const qty=Math.max(0,Number(s.qty)||0);
+    const costEach=Math.max(0,Number(s.cost)||0);
+    const valueEach=Math.max(0,Number(s.current)||0);
+    const product=s.productId?catalogProductById(s.productId):null;
+    const stats=product?productStats(product):null;
+    rows.push({
+      key:inventoryItemKey('sealed',s.uid),
+      kind:'Sealed',
+      uid:s.uid,
+      game:s.game||product?.game||'Other',
+      name:s.name||product?.name||'Sealed product',
+      set:product?.set||'',
+      number:'',
+      qty,
+      costEach,
+      valueEach,
+      costTotal:qty*costEach,
+      valueTotal:qty*valueEach,
+      gain:qty*(valueEach-costEach),
+      location:s.location||'Unassigned',
+      identifier:s.productId||'',
+      format:product?.type||'Sealed',
+      productId:s.productId||'',
+      upc:s.upc||product?.upc||'',
+      sku:s.sku||product?.sku||'',
+      desiredQty:Number(stats?.desiredQty)||Number(product?.desiredQty)||0,
+      minOnHand:Number(product?.minOnHand)||0,
+      retailer:s.retailer||'',
+      purchaseDate:s.purchaseDate||'',
+      attention:{
+        missingCost:costEach<=0,
+        missingValue:valueEach<=0,
+        missingLocation:!(s.location||'').trim(),
+        missingId:!(s.productId||s.upc||s.sku||'').trim(),
+        belowMin:false,
+        belowDesired:false
+      }
+    });
+  }
+
+  // Product-level replenishment conditions apply to all lots of that product.
+  const productTotals=new Map();
+  for(const r of rows.filter(x=>x.kind==='Sealed'&&x.productId)){
+    productTotals.set(r.productId,(productTotals.get(r.productId)||0)+r.qty);
+  }
+  for(const r of rows.filter(x=>x.kind==='Sealed')){
+    const owned=productTotals.get(r.productId)||r.qty;
+    r.attention.belowMin=!!r.minOnHand && owned<r.minOnHand;
+    r.attention.belowDesired=!!r.desiredQty && owned<r.desiredQty;
+  }
+  return rows;
+}
+function inventorySummary(){
+  const rows=inventoryRows();
+  const cards=rows.filter(x=>x.kind==='Card');
+  const sealed=rows.filter(x=>x.kind==='Sealed');
+  const units=rows.reduce((n,x)=>n+x.qty,0);
+  const cost=rows.reduce((n,x)=>n+x.costTotal,0);
+  const value=rows.reduce((n,x)=>n+x.valueTotal,0);
+  const locations=inventoryLocations();
+  const missingCost=rows.filter(x=>x.attention.missingCost).length;
+  const missingValue=rows.filter(x=>x.attention.missingValue).length;
+  const missingLocation=rows.filter(x=>x.attention.missingLocation).length;
+  const missingId=rows.filter(x=>x.attention.missingId).length;
+  const belowMin=rows.filter(x=>x.attention.belowMin).length;
+  const belowDesired=rows.filter(x=>x.attention.belowDesired).length;
+  const completeFields=rows.reduce((n,x)=>n+[
+    !x.attention.missingCost,
+    !x.attention.missingValue,
+    !x.attention.missingLocation,
+    !x.attention.missingId
+  ].filter(Boolean).length,0);
+  const possible=Math.max(1,rows.length*4);
+  const dataHealth=Math.round(completeFields/possible*100);
+  return {
+    rows,cards,sealed,units,cost,value,gain:value-cost,
+    locations,missingCost,missingValue,missingLocation,missingId,
+    belowMin,belowDesired,dataHealth
+  };
+}
+function inventoryAttentionRows(){
+  const s=inventorySummary();
+  const rows=[];
+  for(const x of s.rows){
+    const reasons=[];
+    if(x.attention.belowMin)reasons.push('below minimum');
+    else if(x.attention.belowDesired)reasons.push('below target');
+    if(x.attention.missingCost)reasons.push('missing cost');
+    if(x.attention.missingValue)reasons.push('missing value');
+    if(x.attention.missingLocation)reasons.push('missing location');
+    if(x.attention.missingId)reasons.push('missing identifier');
+    if(reasons.length)rows.push({...x,reasons});
+  }
+  return rows.sort((a,b)=>{
+    const ar=(a.attention.belowMin?6:0)+(a.attention.belowDesired?4:0)+(a.attention.missingLocation?3:0)+(a.attention.missingCost?2:0)+(a.attention.missingValue?2:0)+(a.attention.missingId?1:0);
+    const br=(b.attention.belowMin?6:0)+(b.attention.belowDesired?4:0)+(b.attention.missingLocation?3:0)+(b.attention.missingCost?2:0)+(b.attention.missingValue?2:0)+(b.attention.missingId?1:0);
+    return br-ar||b.valueTotal-a.valueTotal;
+  });
+}
+function inventoryByLocation(){
+  const map=new Map();
+  for(const x of inventoryRows()){
+    const loc=x.location||'Unassigned';
+    if(!map.has(loc))map.set(loc,{location:loc,entries:0,units:0,cost:0,value:0,cards:0,sealed:0});
+    const g=map.get(loc);
+    g.entries++;g.units+=x.qty;g.cost+=x.costTotal;g.value+=x.valueTotal;
+    if(x.kind==='Card')g.cards+=x.qty;else g.sealed+=x.qty;
+  }
+  return [...map.values()].sort((a,b)=>b.value-a.value||a.location.localeCompare(b.location));
+}
+function inventoryReorderProducts(){
+  ensureProductInventorySchema();
+  const out=[];
+  for(const p of state.productCatalog||[]){
+    const st=productStats(p);
+    const min=Math.max(0,Number(p.minOnHand)||0);
+    const desired=Math.max(min,Number(st.desiredQty)||Number(p.desiredQty)||0);
+    const owned=Number(st.ownedQty)||0;
+    if((min&&owned<min)||(desired&&owned<desired)){
+      out.push({
+        product:p,
+        owned,
+        min,
+        desired,
+        gapMin:Math.max(0,min-owned),
+        gapDesired:Math.max(0,desired-owned),
+        watch:st.watch,
+        bestObserved:st.bestObserved,
+        inventoryStatus:st.inventoryStatus
+      });
+    }
+  }
+  return out.sort((a,b)=>(b.gapMin-a.gapMin)||(b.gapDesired-a.gapDesired)||a.product.name.localeCompare(b.product.name));
+}
+function inventoryControlSignals(){
+  const s=inventorySummary();
+  const signals=[];
+  const reorder=inventoryReorderProducts();
+  for(const x of reorder.slice(0,8)){
+    signals.push({
+      priority:x.gapMin>0?'high':'medium',
+      title:`Replenish ${x.product.name}`,
+      detail:`Owned ${x.owned} • minimum ${x.min||'—'} • target ${x.desired||'—'}${x.bestObserved?` • best observed ${money(x.bestObserved)}`:''}`,
+      action:`openTool('inventory')`
+    });
+  }
+  if(s.missingLocation)signals.push({priority:'medium',title:'Inventory locations need cleanup',detail:`${s.missingLocation} inventory entr${s.missingLocation===1?'y':'ies'} have no storage location.`,action:`openTool('inventory')`});
+  if(s.missingCost)signals.push({priority:'low',title:'Cost basis incomplete',detail:`${s.missingCost} inventory entr${s.missingCost===1?'y':'ies'} have no cost basis.`,action:`openTool('inventory')`});
+  if(s.missingValue)signals.push({priority:'low',title:'Tracked values incomplete',detail:`${s.missingValue} inventory entr${s.missingValue===1?'y':'ies'} have no current reference value.`,action:`openTool('inventory')`});
+  return signals.slice(0,12);
+}
+function setInventoryFilter(key,value){
+  ensureProductInventorySchema();
+  state.inventoryCommandSettings[key]=value;
+  saveState();renderTools();
+}
+function inventoryFilteredRows(){
+  const cfg=state.inventoryCommandSettings||{};
+  let rows=inventoryRows();
+  if(cfg.game&&cfg.game!=='All')rows=rows.filter(x=>x.game===cfg.game);
+  if(cfg.type&&cfg.type!=='All')rows=rows.filter(x=>x.kind===cfg.type);
+  if(cfg.location&&cfg.location!=='All')rows=rows.filter(x=>x.location===cfg.location);
+  if(cfg.attention==='Needs Attention')rows=rows.filter(x=>Object.values(x.attention).some(Boolean));
+  if(cfg.attention==='Below Target')rows=rows.filter(x=>x.attention.belowMin||x.attention.belowDesired);
+  if(cfg.attention==='Missing Cost')rows=rows.filter(x=>x.attention.missingCost);
+  if(cfg.attention==='Missing Value')rows=rows.filter(x=>x.attention.missingValue);
+  if(cfg.attention==='Missing Location')rows=rows.filter(x=>x.attention.missingLocation);
+  const sort=cfg.sort||'Attention';
+  rows=rows.slice().sort((a,b)=>{
+    if(sort==='Name')return a.name.localeCompare(b.name);
+    if(sort==='Value')return b.valueTotal-a.valueTotal;
+    if(sort==='Quantity')return b.qty-a.qty;
+    if(sort==='Location')return a.location.localeCompare(b.location)||a.name.localeCompare(b.name);
+    const ar=Object.values(a.attention).filter(Boolean).length,br=Object.values(b.attention).filter(Boolean).length;
+    return br-ar||b.valueTotal-a.valueTotal;
+  });
+  return rows;
+}
+function inventoryRowMarkup(x){
+  const flags=[];
+  if(x.attention.belowMin)flags.push('<span class="inventory-flag danger">BELOW MIN</span>');
+  else if(x.attention.belowDesired)flags.push('<span class="inventory-flag warn">BELOW TARGET</span>');
+  if(x.attention.missingLocation)flags.push('<span class="inventory-flag">NO LOCATION</span>');
+  if(x.attention.missingCost)flags.push('<span class="inventory-flag">NO COST</span>');
+  if(x.attention.missingValue)flags.push('<span class="inventory-flag">NO VALUE</span>');
+  return `<div class="inventory-command-row">
+    <div class="inventory-kind">${x.kind==='Card'?'▤':'◈'}</div>
+    <div class="grow">
+      <div class="eyebrow">${esc(x.kind.toUpperCase())} • ${esc(x.game)}${x.set?` • ${esc(x.set)}`:''}</div>
+      <strong>${esc(x.name)}</strong>
+      <span>${x.kind==='Card'?(x.number?`#${esc(x.number)} • `:'')+esc(x.format||'Raw'):(x.upc?`UPC ${esc(x.upc)} • `:'')+(x.sku?`SKU ${esc(x.sku)} • `:'')+esc(x.format||'Sealed')}</span>
+      <div class="inventory-flags">${flags.join('')}</div>
+    </div>
+    <div class="inventory-command-qty"><span>QTY</span><strong>${x.qty}</strong><small>${esc(x.location||'Unassigned')}</small></div>
+    <div class="inventory-command-money"><span>VALUE</span><strong>${money(x.valueTotal)}</strong><small>${money(x.costTotal)} cost</small></div>
+    <div class="inventory-row-actions">
+      <button class="link-btn" onclick="quickInventoryCount('${x.kind.toLowerCase()}','${x.uid}')">Count</button>
+      ${x.kind==='Card'?`<button class="link-btn" onclick="openCollectionCardDetail('${x.uid}')">Open</button>`:`<button class="link-btn" onclick="openProductFromInventory('${x.uid}')">Product</button>`}
+    </div>
+  </div>`;
+}
+function quickInventoryCount(kind,id){
+  const isCard=kind==='card';
+  const item=isCard?state.collection.find(x=>x.uid===id):state.sealed.find(x=>x.uid===id);
+  if(!item)return;
+  const oldQty=Math.max(0,Number(item.qty)||0);
+  const name=isCard?(item.card?.name||'Card'):(item.name||'Sealed product');
+  const val=prompt(`Physical count for ${name}`,String(oldQty));
+  if(val===null)return;
+  const newQty=Math.max(0,Math.floor(Number(val)||0));
+  if(newQty===oldQty){toast('Count already matches');return;}
+  item.qty=newQty;
+  recordInventoryLedger(isCard?'Card':'Sealed',id,'AUDIT_ADJUSTMENT',newQty-oldQty,`${name}: ${oldQty} → ${newQty}`,{before:oldQty,after:newQty});
+  state.inventoryAudits.unshift({uid:uid(),kind:isCard?'Card':'Sealed',itemId:id,name,before:oldQty,after:newQty,delta:newQty-oldQty,ts:new Date().toISOString()});
+  state.inventoryAudits=state.inventoryAudits.slice(0,300);
+  saveState();renderTools();toast(`Count updated ${oldQty} → ${newQty}`);
+}
+function inventoryAuditAll(){
+  const location=prompt('Audit which storage location? Enter exact location name or ALL','ALL');
+  if(location===null)return;
+  const loc=location.trim();
+  const rows=inventoryRows().filter(x=>!loc||/^all$/i.test(loc)||x.location.toLowerCase()===loc.toLowerCase());
+  if(!rows.length){toast('No inventory found for that location');return;}
+  if(!confirm(`Start a guided count for ${rows.length} inventory entries? You can cancel any item to skip it.`))return;
+  let adjusted=0;
+  for(const x of rows){
+    const val=prompt(`${x.name}\n${x.location} • expected qty ${x.qty}`,String(x.qty));
+    if(val===null)continue;
+    const newQty=Math.max(0,Math.floor(Number(val)||0));
+    if(newQty!==x.qty){
+      const target=x.kind==='Card'?state.collection.find(i=>i.uid===x.uid):state.sealed.find(i=>i.uid===x.uid);
+      if(target){
+        const before=x.qty;target.qty=newQty;adjusted++;
+        recordInventoryLedger(x.kind,x.uid,'AUDIT_ADJUSTMENT',newQty-before,`${x.name}: ${before} → ${newQty}`,{before,after:newQty,location:x.location});
+        state.inventoryAudits.unshift({uid:uid(),kind:x.kind,itemId:x.uid,name:x.name,before,after:newQty,delta:newQty-before,location:x.location,ts:new Date().toISOString()});
+      }
+    }
+  }
+  state.inventoryAudits=state.inventoryAudits.slice(0,300);
+  saveState();renderTools();toast(`Audit complete • ${adjusted} adjustment${adjusted===1?'':'s'}`);
+}
+function exportUnifiedInventoryCsv(){
+  const rows=inventoryRows();
+  const headers=['Type','Game','Name','Set','Number','Format','Qty','Cost Each','Value Each','Cost Total','Value Total','Gain Loss','Location','UPC','SKU','Product ID'];
+  const escCsv=v=>`"${String(v??'').replace(/"/g,'""')}"`;
+  const csv=[headers,...rows.map(x=>[
+    x.kind,x.game,x.name,x.set,x.number,x.format,x.qty,x.costEach,x.valueEach,x.costTotal,x.valueTotal,x.gain,x.location,x.upc,x.sku,x.productId
+  ])].map(r=>r.map(escCsv).join(',')).join('\n');
+  downloadText(`vaultsignal-inventory-${new Date().toISOString().slice(0,10)}.csv`,csv,'text/csv');
+  toast('Unified inventory CSV exported');
+}
+function openProductFromInventory(sealedId){
+  const s=state.sealed.find(x=>x.uid===sealedId);
+  if(!s)return;
+  if(s.productId){
+    activeProductId=s.productId;
+    openTool('products');
+  }else{
+    toast('This sealed lot is not linked to a Product Command record yet');
+  }
+}
+function renderInventoryCommandTool(){
+  ensureProductInventorySchema();
+  const s=inventorySummary();
+  const rows=inventoryFilteredRows();
+  const cfg=state.inventoryCommandSettings||{};
+  const locations=['All',...inventoryLocations()];
+  const reorder=inventoryReorderProducts();
+  const attention=inventoryAttentionRows();
+  const ledger=(state.inventoryLedger||[]).slice(0,20);
+
+  return `<div class="panel inventory-command-hero">
+    <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL • INVENTORY COMMAND</div><h2>One inventory system for cards + sealed products</h2><p>Know exactly what you own, where it is, what it cost, its current tracked value, what needs replenishing, and where your inventory records need cleanup.</p></div>
+    <div class="action-row"><button class="btn primary" onclick="inventoryAuditAll()">✓ Start audit</button><button class="btn" onclick="exportUnifiedInventoryCsv()">CSV export</button></div></div>
+
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Total units</span><strong>${s.units}</strong><small>${s.cards.reduce((n,x)=>n+x.qty,0)} cards • ${s.sealed.reduce((n,x)=>n+x.qty,0)} sealed</small></div>
+      <div class="stat-card"><span>Cost basis</span><strong>${money(s.cost)}</strong><small>Across all inventory</small></div>
+      <div class="stat-card"><span>Tracked value</span><strong>${money(s.value)}</strong><small class="${s.gain>=0?'good':'bad'}">${s.gain>=0?'+':''}${money(s.gain)} vs cost</small></div>
+      <div class="stat-card"><span>Inventory data health</span><strong>${s.dataHealth}%</strong><small>${s.locations.length} storage location${s.locations.length===1?'':'s'}</small></div>
+    </div>
+  </div>
+
+  <div class="panel inventory-control-strip">
+    <div class="section-head"><div><div class="eyebrow">ATTENTION QUEUE</div><h2>Inventory that needs action</h2><p>Operational inventory issues, not investment recommendations.</p></div><span class="badge ${attention.length?'signal-gold':''}">${attention.length} ITEMS</span></div>
+    <div class="inventory-attention-grid">
+      <div><b>${s.belowMin}</b><span>below minimum</span></div>
+      <div><b>${s.belowDesired}</b><span>below target</span></div>
+      <div><b>${s.missingLocation}</b><span>missing location</span></div>
+      <div><b>${s.missingCost}</b><span>missing cost</span></div>
+      <div><b>${s.missingValue}</b><span>missing value</span></div>
+      <div><b>${s.missingId}</b><span>missing identifier</span></div>
+    </div>
+  </div>
+
+  ${reorder.length?`<div class="panel">
+    <div class="section-head"><div><div class="eyebrow">REPLENISHMENT</div><h2>Products below your inventory targets</h2><p>Uses your own desired quantity and minimum-on-hand settings.</p></div><button class="btn" onclick="openTool('products')">Product Command</button></div>
+    <div class="reorder-grid">${reorder.slice(0,12).map(x=>`
+      <button class="reorder-card" onclick="activeProductId='${x.product.uid}';openTool('products')">
+        <div class="eyebrow">${esc(x.product.game)} • ${esc(x.product.type||'Sealed')}</div>
+        <strong>${esc(x.product.name)}</strong>
+        <span>Owned ${x.owned} • Min ${x.min||'—'} • Target ${x.desired||'—'}</span>
+        <div><b>${x.gapMin?`${x.gapMin} BELOW MIN`:`${x.gapDesired} TO TARGET`}</b>${x.bestObserved?`<small>Best observed ${money(x.bestObserved)}</small>`:''}</div>
+      </button>`).join('')}</div>
+  </div>`:''}
+
+  <div class="panel">
+    <div class="section-head"><div><div class="eyebrow">INVENTORY BY LOCATION</div><h2>Where everything lives</h2><p>Cards and sealed products grouped by physical storage location.</p></div></div>
+    <div class="location-inventory-grid">${inventoryByLocation().map(x=>`
+      <div class="location-inventory-card"><strong>${esc(x.location)}</strong><span>${x.units} units • ${x.entries} entries</span><b>${money(x.value)}</b><small>${x.cards} cards • ${x.sealed} sealed</small></div>`).join('')||`<div class="empty">Add storage locations to cards and sealed inventory.</div>`}</div>
+  </div>
+
+  <div class="panel inventory-filter-panel">
+    <div class="section-head"><div><div class="eyebrow">MASTER INVENTORY</div><h2>Every owned item</h2><p>Cards and sealed lots in one operational table.</p></div><span class="badge">${rows.length} ENTRIES</span></div>
+    <div class="inventory-filter-grid">
+      <label class="field"><span>TCG</span><select onchange="setInventoryFilter('game',this.value)"><option>All</option>${games.map(g=>`<option ${cfg.game===g?'selected':''}>${esc(g)}</option>`).join('')}</select></label>
+      <label class="field"><span>Type</span><select onchange="setInventoryFilter('type',this.value)">${['All','Card','Sealed'].map(v=>`<option ${cfg.type===v?'selected':''}>${v}</option>`).join('')}</select></label>
+      <label class="field"><span>Location</span><select onchange="setInventoryFilter('location',this.value)">${locations.map(v=>`<option ${cfg.location===v?'selected':''}>${esc(v)}</option>`).join('')}</select></label>
+      <label class="field"><span>Attention</span><select onchange="setInventoryFilter('attention',this.value)">${['All','Needs Attention','Below Target','Missing Cost','Missing Value','Missing Location'].map(v=>`<option ${cfg.attention===v?'selected':''}>${v}</option>`).join('')}</select></label>
+      <label class="field"><span>Sort</span><select onchange="setInventoryFilter('sort',this.value)">${['Attention','Value','Quantity','Location','Name'].map(v=>`<option ${cfg.sort===v?'selected':''}>${v}</option>`).join('')}</select></label>
+    </div>
+    <div class="inventory-command-list">${rows.length?rows.slice(0,100).map(inventoryRowMarkup).join(''):`<div class="empty">No inventory matches the selected filters.</div>`}</div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><div class="eyebrow">MOVEMENT LEDGER</div><h2>Inventory adjustments</h2><p>Audit corrections and quantity changes are logged so counts are traceable.</p></div></div>
+    ${ledger.length?`<div class="inventory-ledger">${ledger.map(e=>`
+      <div class="ledger-row"><span class="${e.qtyDelta>0?'good':e.qtyDelta<0?'bad':''}">${e.qtyDelta>0?'+':''}${e.qtyDelta}</span><div class="grow"><strong>${esc(e.event)}</strong><small>${esc(e.detail||'')} • ${humanAge(e.ts)}</small></div></div>`).join('')}</div>`:`<div class="empty">No inventory adjustments logged yet. Use Count or Start audit.</div>`}
+  </div>`;
+}
+
 function productCommandSummary(){
   ensureProductInventorySchema();
   const products=state.productCatalog||[];
@@ -1187,7 +1596,9 @@ function editProductIdentifiers(id){
 }
 function editSealedLotFromProduct(id){
   const s=state.sealed.find(x=>x.uid===id);if(!s)return;
-  const qty=prompt('Quantity',String(s.qty||1));if(qty!==null)s.qty=Math.max(1,Number(qty)||1);
+  const beforeQty=Number(s.qty)||0;
+  const qty=prompt('Quantity',String(s.qty||1));if(qty!==null)s.qty=Math.max(0,Number(qty)||0);
+  if(Number(s.qty)!==beforeQty)recordInventoryLedger('Sealed',id,'QUANTITY_CHANGE',Number(s.qty)-beforeQty,`${s.name}: ${beforeQty} → ${s.qty}`);
   const cost=prompt('Cost EACH',String(s.cost||0));if(cost!==null)s.cost=Math.max(0,Number(cost)||0);
   const current=prompt('Current tracked value EACH',String(s.current||0));if(current!==null)s.current=Math.max(0,Number(current)||0);
   const retailer=prompt('Purchased from',s.retailer||'');if(retailer!==null)s.retailer=retailer.trim();
@@ -2708,8 +3119,12 @@ function openCollectionCardDetail(id){
 }
 function updateCollection(id,key,val){
   const i=state.collection.find(x=>x.uid===id); if(!i) return;
+  const beforeQty=Number(i.qty)||0;
   if(['condition','location','format','grader','grade','cert','language','variant'].includes(key)) i[key]=val;
   else i[key]=Math.max(key==='qty'?1:0,Number(val)||0);
+  if(key==='qty'&&Number(i.qty)!==beforeQty){
+    recordInventoryLedger('Card',id,'QUANTITY_CHANGE',Number(i.qty)-beforeQty,`${i.card?.name||'Card'}: ${beforeQty} → ${i.qty}`);
+  }
   saveState(); renderVault();
 }
 function removeCollection(id){ state.collection=state.collection.filter(x=>x.uid!==id); saveState(); renderVault(); }
@@ -2776,7 +3191,9 @@ function addSealed(){
   const name=$('sealedName')?.value.trim(); if(!name){toast('Enter a product name');return;}
   const game=$('sealedGame')?.value||'Pokemon';
   const cat=addCatalogProduct({game,name,set:'',type:'Sealed',msrp:Number($('sealedCurrent')?.value)||0,target:Number($('sealedCost')?.value)||0});
-  state.sealed.unshift({uid:uid(),name,game,qty:Math.max(1,Number($('sealedQty')?.value)||1),cost:Number($('sealedCost')?.value)||0,current:Number($('sealedCurrent')?.value)||0,location:$('sealedLocation')?.value.trim()||'',productId:cat.uid,ownerProfileId:activeCollectorProfileId,addedAt:new Date().toISOString()});
+  const lot={uid:uid(),name,game,qty:Math.max(1,Number($('sealedQty')?.value)||1),cost:Number($('sealedCost')?.value)||0,current:Number($('sealedCurrent')?.value)||0,location:$('sealedLocation')?.value.trim()||'',productId:cat.uid,ownerProfileId:activeCollectorProfileId,addedAt:new Date().toISOString()};
+  state.sealed.unshift(lot);
+  recordInventoryLedger('Sealed',lot.uid,'PURCHASE_OR_ADD',lot.qty,`${name} added to inventory`,{costEach:lot.cost,location:lot.location});
   saveState(); renderVault(); toast('Sealed product added');
 }
 function openOneSealed(id){
@@ -2832,6 +3249,7 @@ function renderTools(){
     <div class="page-title"><div><h1>Collector Tools</h1><p>The rest of your collecting workflow, all under one roof.</p></div></div>
     <div class="tool-menu">
       ${toolButton('watchtower','◉','Signal Center','Inventory, price & collector signals')}
+      ${toolButton('inventory','▤','Inventory Command','Cards + sealed + locations + audits')}
       ${toolButton('actions','✓','Action Center','Smart collector priorities')}
       ${toolButton('vaultiq','IQ','VaultIQ','Personal buy decisions')}
       ${toolButton('market','↗','Market Pulse','Live price tracking')}
@@ -2857,6 +3275,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='inventory') return renderInventoryCommandTool();
   if(toolsTab==='vaultiq') return renderVaultIQTool();
   if(toolsTab==='showcase') return renderShowcaseStudio();
   if(toolsTab==='watchtower') return renderWatchtowerTool();
@@ -3577,7 +3996,7 @@ function renderProductsTool(){
   const watched=state.productCatalog.filter(p=>productStats(p).watch).slice(0,12);
 
   return `<div class="panel product-command-hero">
-    <div class="section-head"><div><div class="eyebrow">2GEN PRODUCT COMMAND</div><h2>Retail + sealed inventory intelligence</h2><p>Track exactly what products exist, what you own, what stores have been seen with stock, what you still need, what you paid, and what to hunt next.</p></div><button class="btn primary" onclick="createCustomProduct()">＋ Product</button></div>
+    <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL • PRODUCT COMMAND</div><h2>Retail + sealed inventory intelligence</h2><p>Track exactly what products exist, what you own, what stores have been seen with stock, what you still need, what you paid, and what to hunt next.</p></div><button class="btn primary" onclick="createCustomProduct()">＋ Product</button></div>
     <div class="stat-grid compact-stats">
       <div class="stat-card"><span>Products tracked</span><strong>${sum.products}</strong><small>${sum.watched} active watches</small></div>
       <div class="stat-card"><span>Owned sealed units</span><strong>${sum.ownedQty}</strong><small>${money(sum.ownedCost)} cost basis</small></div>
@@ -6339,6 +6758,9 @@ function renderShowcaseStudio(){
 function vaultSignalFeed(){
   ensureWatchtowerSchema();
   const rows=[];
+  for(const s of inventoryControlSignals()){
+    rows.push({uid:`invctl:${s.title}`,type:'Inventory Control',priority:s.priority||'medium',title:s.title,detail:s.detail||'',ts:new Date().toISOString(),action:s.action||`openTool('inventory')`});
+  }
   for(const x of (state.inventoryPulseEvents||[]).slice(0,10)){
     rows.push({uid:`inv:${x.uid||x.ts||x.title}`,type:'Inventory',priority:x.priority||'medium',title:x.title||'Inventory changed',detail:x.detail||x.store||'',ts:x.ts||new Date().toISOString(),action:`switchTab('stock')`});
   }
@@ -6702,7 +7124,7 @@ function exportCollectionCSV(){
 }
 
 Object.assign(window,{
-  switchTab,openVault,openTool,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
+  switchTab,openVault,openTool,setInventoryFilter,quickInventoryCount,inventoryAuditAll,exportUnifiedInventoryCsv,openProductFromInventory,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,

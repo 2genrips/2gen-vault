@@ -1,6 +1,6 @@
 # VaultSignal — Product Roadmap
 
-## Current build: v8.0 VaultSignal Collector OS
+## Current build: v9.0 VaultSignal Inventory Command
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -344,3 +344,17 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - automatic old-label migration without data loss
 - Signal Center unified collector feed
 - inventory + alert + scanner + action signals
+
+
+## v9.0 completed
+- Inventory Command first-class tool
+- unified cards + sealed inventory
+- physical storage-location rollups
+- cost basis + tracked-value rollups
+- minimum on-hand and desired-quantity replenishment
+- inventory attention queue
+- physical count correction
+- guided inventory audits
+- movement / adjustment ledger
+- unified inventory CSV
+- Inventory Command signals fed into Signal Center

@@ -26,3 +26,7 @@ The mark combines signal/radar + secure vault + trading-card stack. It avoids fr
 - Rip Sessions
 - Trade Lab
 - Sell Lab
+
+
+## Product pillar: Inventory Command
+VaultSignal's inventory layer is a core product pillar alongside Scan, Signal, Hunt and Market. Cards and sealed inventory should remain connected to every workflow rather than becoming separate databases.

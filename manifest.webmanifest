@@ -1,7 +1,7 @@
 {
   "name": "VaultSignal",
   "short_name": "VaultSignal",
-  "description": "VaultSignal Collector OS v8.0 \u2014 scan, value, track and hunt TCG cards and sealed products.",
+  "description": "VaultSignal Collector OS v9.0 \u2014 all-in-one TCG collection, sealed-product and inventory command system with audits, locations, replenishment and movement tracking.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
