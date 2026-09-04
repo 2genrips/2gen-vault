@@ -1,6 +1,6 @@
-# 2GEN Vault — Product Roadmap
+# VaultSignal — Product Roadmap
 
-## Current build: v7.0 Inventory Pulse
+## Current build: v8.0 VaultSignal Collector OS
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -335,3 +335,12 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - smart refresh when Stock opens
 - exact product search preserved
 - retailer-check accuracy protections
+
+
+## v8.0 completed
+- VaultSignal master rebrand
+- original vector icon and manifest branding
+- faint brand watermark
+- automatic old-label migration without data loss
+- Signal Center unified collector feed
+- inventory + alert + scanner + action signals

@@ -1,5 +1,5 @@
 /*
-  2GEN Vault public configuration.
+  VaultSignal public configuration.
 
   CLOUD ACCOUNTS:
   supabaseUrl and supabaseAnonKey are PUBLIC client settings, not secret service-role keys.
@@ -44,5 +44,5 @@ window.TWOGEN_CONFIG = {
   inventoryApiBase: "https://2gen-vault-inventory.willingpaige.workers.dev",
   supabaseUrl: "",
   supabaseAnonKey: "",
-  appVersion: "7.5.1"
+  appVersion: "8.0.0"
 };

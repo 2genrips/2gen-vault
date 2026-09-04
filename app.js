@@ -49,7 +49,7 @@ const seed = {
     maxDuplicateCopies:2
   },
   showcaseSettings: {
-    title:'2GEN Vault Showcase',
+    title:'VaultSignal Showcase',
     bio:'Two Generations. One Collection.',
     featuredCardIds:[],
     showCollectionValue:true,
@@ -109,13 +109,15 @@ const seed = {
     lon:null,
     locationLabel:'',
     monthlyBudget:200,
-    brand:'2GEN Vault',
+    brand:'VaultSignal',
     tagline:'Two Generations. One Collection.',
     lastBackupAt:null
   }
 };
 
 let state = loadState();
+if(state?.settings?.brand==='2GEN Vault'||!state?.settings?.brand) state.settings.brand='VaultSignal';
+if(state?.showcaseSettings?.title==='2GEN Vault Showcase') state.showcaseSettings.title='VaultSignal Showcase';
 let currentTab = 'home';
 let vaultTab = 'cards';
 let toolsTab = 'scanner';
@@ -872,16 +874,16 @@ function renderHome(){
   const homeWatchtowerHigh = watchtowerHighUnread();
   $('home').innerHTML = `
     <div class="hero">
-      <div class="eyebrow">2GEN RIPS PRESENTS</div>
+      <div class="eyebrow">VAULTSIGNAL • BY 2GEN RIPS</div>
       <h1>${esc(state.settings.brand)}</h1>
       <p>${esc(state.settings.tagline)}</p>
-      <p class="sub">Search real stock • Scan cards • Track products • Decide smarter • Trade • Sell</p>
+      <p class="sub">Scan • Value • Track • Hunt • Trade • Sell — one collector operating system.</p>
       <div class="hero-badges">
         <span class="badge primary">◆ COLLECTOR OS</span>
         <span class="badge">◎ ${state.stockWatches.length} STOCK WATCHES</span>
         <span class="badge">◈ ${(state.productCatalog||[]).length} PRODUCTS</span>
         <span class="badge">⌖ ${state.huntRoute.filter(x=>!x.visited).length} HUNT STOPS</span>
-        <span class="badge red">2GEN RIPS</span>
+        <span class="badge signal-gold">BY 2GEN RIPS</span>
         <span class="badge">${signedIn()?'☁ SYNCED':'☁ GUEST'}</span>
       </div>
     </div>
@@ -896,6 +898,7 @@ function renderHome(){
     <div class="panel">
       <div class="section-head"><div><h2>Collector command center</h2><p>Fast access to the things collectors actually use.</p></div></div>
       <div class="quick-grid">
+        <button class="quick-card signal-quick" onclick="openTool('watchtower')"><span class="big-icon">◉</span><b>Signal Center</b><span>${homeWatchtowerUnread} unread • inventory changes, collector alerts and priorities in one feed.</span></button>
         <button class="quick-card" onclick="switchTab('stock')"><span class="big-icon">◎</span><b>Find inventory</b><span>Nearby stores, live connector, watchlists and stock reports.</span></button>
         <button class="quick-card" onclick="switchTab('discover')"><span class="big-icon">⌕</span><b>Search cards</b><span>Universal live Pokémon, Lorcana, Magic and Yu-Gi-Oh! card network.</span></button>
         <button class="quick-card" onclick="openTool('products')"><span class="big-icon">◈</span><b>Product Command</b><span>UPC/SKU, retailer stock, sealed lots, goals, sightings, pricing and restock intelligence.</span></button>
@@ -908,7 +911,7 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('sell')"><span class="big-icon">$</span><b>Sell Lab</b><span>Estimate fees, protect cost basis, create listings and track profit.</span></button>
         <button class="quick-card" onclick="openTool('family')"><span class="big-icon">2G</span><b>2GEN Hub</b><span>Family collections, giveaways and creator content in one place.</span></button>
         <button class="quick-card" onclick="openTool('actions')"><span class="big-icon">✓</span><b>Action Center</b><span>${homeActionCounts.total} priorities • ${homeActionCounts.high} high • know what to do next.</span></button>
-        <button class="quick-card" onclick="openTool('watchtower')"><span class="big-icon">◉</span><b>Watchtower</b><span>${homeWatchtowerUnread} unread alerts • ${homeWatchtowerHigh} high priority.</span></button>
+        <button class="quick-card" onclick="openTool('watchtower')"><span class="big-icon">◉</span><b>Signal Center</b><span>${homeWatchtowerUnread} unread signals • ${homeWatchtowerHigh} high priority.</span></button>
         <button class="quick-card" onclick="openTool('showcase')"><span class="big-icon">★</span><b>Showcase Studio</b><span>Build a privacy-safe Collection Passport and shareable collector page.</span></button>
         <button class="quick-card" onclick="openTool('vaultiq')"><span class="big-icon">IQ</span><b>VaultIQ</b><span>Rank what to buy next using your budget, wishlist, targets, sets and stock watches.</span></button>
       </div>
@@ -1987,12 +1990,12 @@ function renderStock(){
 
   $('stock').innerHTML=`
     <div class="page-title">
-      <div><h1>Inventory Radar</h1><p>Scan your ZIP and radius first. 2GEN Vault finds verified TCG inventory from connected live sources, then lets you drill into each store.</p></div>
+      <div><h1>Inventory Radar</h1><p>Scan your ZIP and radius first. VaultSignal finds verified TCG inventory from connected live sources, then lets you drill into each store.</p></div>
       <span class="badge ${hasBackend?'primary':''}">${hasBackend?'● INVENTORY CONNECTED':'○ SETUP REQUIRED'}</span>
     </div>
 
     <div class="panel area-radar-hero">
-      <div class="section-head"><div><div class="eyebrow">2GEN NEARBY INVENTORY RADAR</div><h2>Scan everything around me</h2><p>No product name required. Choose your area and TCGs, then scan connected live sources.</p></div><span class="badge primary">${areaScanBusy?'SCANNING…':'AREA FIRST'}</span></div>
+      <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL INVENTORY RADAR</div><h2>Scan everything around me</h2><p>No product name required. Choose your area and TCGs, then scan connected live sources.</p></div><span class="badge primary">${areaScanBusy?'SCANNING…':'AREA FIRST'}</span></div>
       <div class="form-grid">
         <label class="field"><span>ZIP code</span><input id="stockZip" inputmode="numeric" value="${esc(state.settings.zip||'')}" placeholder="28752"></label>
         <label class="field"><span>Radius</span><select id="stockRadius">${[5,10,15,25,50,75,100].map(v=>`<option value="${v}" ${v===radius?'selected':''}>${v} miles</option>`).join('')}</select></label>
@@ -2304,7 +2307,7 @@ function buildHuntRoute(){
 }
 function clearHuntRoute(){ state.huntRoute=[];saveState();renderStock(); }
 function renderHuntRoute(){
-  if(!state.huntRoute.length) return `<div class="empty">Find nearby stores, then build a hunt route. 2GEN Vault will prioritize nearby selected retailers.</div>`;
+  if(!state.huntRoute.length) return `<div class="empty">Find nearby stores, then build a hunt route. VaultSignal will prioritize nearby selected retailers.</div>`;
   const completed=state.huntRoute.filter(x=>x.visited).length;
   const furthest=Math.max(...state.huntRoute.map(x=>Number(x.distance)||0),0);
   return `<div class="hunt-summary"><strong>${completed}/${state.huntRoute.length} stops visited</strong><span>Furthest stop ${furthest.toFixed(1)} mi from your search point</span></div>`+
@@ -2828,7 +2831,7 @@ function renderTools(){
   $('tools').innerHTML = `
     <div class="page-title"><div><h1>Collector Tools</h1><p>The rest of your collecting workflow, all under one roof.</p></div></div>
     <div class="tool-menu">
-      ${toolButton('watchtower','◉','Watchtower','Collector alert inbox')}
+      ${toolButton('watchtower','◉','Signal Center','Inventory, price & collector signals')}
       ${toolButton('actions','✓','Action Center','Smart collector priorities')}
       ${toolButton('vaultiq','IQ','VaultIQ','Personal buy decisions')}
       ${toolButton('market','↗','Market Pulse','Live price tracking')}
@@ -3139,7 +3142,7 @@ function renderMarketPulseTool(){
       <div class="stat-card"><span>Last refresh</span><strong>${lastRefresh?humanAge(lastRefresh.finished):'—'}</strong><small>${lastRefresh?`${lastRefresh.updated} updated`:'Not run yet'}</small></div>
     </div>
     ${marketRefreshBusy?`<div class="notice"><span>↻</span><span id="marketRefreshStatus">Preparing price refresh…</span></div>`:''}
-    <div class="notice warn" style="margin-top:10px"><span>!</span><span>“Market movement” below means change between <b>your saved 2GEN Vault price snapshots</b>. It is not a complete exchange-wide historical chart and is not investment advice.</span></div>
+    <div class="notice warn" style="margin-top:10px"><span>!</span><span>“Market movement” below means change between <b>your saved VaultSignal price snapshots</b>. It is not a complete exchange-wide historical chart and is not investment advice.</span></div>
   </div>
 
   <div class="analytics-grid">
@@ -3973,9 +3976,9 @@ function scannerCameraPermissionHelp(){
     'Camera access is blocked.\n\n' +
     'On Android:\n' +
     '1. Open phone Settings.\n' +
-    '2. Apps → 2GEN Vault (or Chrome if you run it in Chrome).\n' +
+    '2. Apps → VaultSignal (or Chrome if you run it in Chrome).\n' +
     '3. Permissions → Camera → Allow.\n' +
-    '4. Return to 2GEN Vault and tap TAKE CARD PHOTO again.\n\n' +
+    '4. Return to VaultSignal and tap TAKE CARD PHOTO again.\n\n' +
     'You can also use the Gallery button as a fallback.'
   );
 }
@@ -4848,7 +4851,7 @@ function renderScannerTool(){
   ensureScannerSchema();
   const activeRip=activeRipSessionId?ripSessionById(activeRipSessionId):null,secure=location.protocol==='https:'||location.hostname==='localhost',provider=providerForGame(scannerGame);
   return `<div class="panel scanner-pro-panel scanner-v71">
-    <div class="section-head"><div><div class="eyebrow">2GEN LIVE VALUE SCANNER</div><h2>Take a photo → identify → live market reference</h2><p>Tap TAKE CARD PHOTO to open a live rear-camera view inside 2GEN Vault. Capture one card, then identification and live-provider value lookup start automatically.</p></div><button class="btn" onclick="reviewScannerSettings()">⚙ Rules</button></div>
+    <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL LIVE VALUE SCANNER</div><h2>Take a photo → identify → live market reference</h2><p>Tap TAKE CARD PHOTO to open a live rear-camera view inside VaultSignal. Capture one card, then identification and live-provider value lookup start automatically.</p></div><button class="btn" onclick="reviewScannerSettings()">⚙ Rules</button></div>
     <div class="scanner-status-strip"><span class="${secure?'good':'bad'}">${secure?'✓ Direct camera supported':'! Direct camera needs HTTPS'}</span><span>Game: <b>${esc(scannerGame)}</b></span><span>Recognition: <b>${esc(provider?.label||'PriceCharting')}</b></span><span>Pricing: <b>PriceCharting primary</b></span><span>${scannerLastMarketLookupAt?`Lookup ${humanAge(scannerLastMarketLookupAt)}`:'No lookup yet'}</span></div>
     <div class="scanner-game-tabs scanner-game-tabs-top">${SCANNER_GAME_OPTIONS.map(g=>`<button class="${scannerGame===g?'active':''}" onclick='setScannerGame(${JSON.stringify(g)})'>${esc(g)}</button>`).join('')}</div>
     ${activeRip?`<div class="notice good"><span>✦</span><span>Active Rip Session: <b>${esc(activeRip.name)}</b>.</span></div>`:''}
@@ -4858,7 +4861,7 @@ function renderScannerTool(){
       <div class="scanner-auto-note"><span>✓</span><span>A photo automatically starts identification. You still confirm the exact printing before adding it.</span></div>${scannerOcrBusy?`<div class="ocr-progress"><i></i><span id="ocrProgressText">Reading card…</span></div>`:''}
     </div><div>
       <form class="searchbar" onsubmit="scannerSearch(event)"><span>⌕</span><input id="scannerSearchQ" value="${esc(scannerLastQuery)}" placeholder="Manual fallback: card name or number"><button class="btn primary" ${scannerBusy?'disabled':''}>${scannerBusy?'Searching…':'Manual Identify'}</button></form>
-      <div class="scanner-accuracy-box"><b>What the value means</b><span>The camera identifies a likely printing; it does not value physical condition by itself.</span><span>2GEN Vault uses PriceCharting as the primary guide when its secure API connector is configured, then keeps ${esc(provider?.label||'the game-specific provider')} as a secondary reference.</span><span>Condition, exact variant, foil, language and grading can change actual sale value.</span></div>
+      <div class="scanner-accuracy-box"><b>What the value means</b><span>The camera identifies a likely printing; it does not value physical condition by itself.</span><span>VaultSignal uses PriceCharting as the primary guide when its secure API connector is configured, then keeps ${esc(provider?.label||'the game-specific provider')} as a secondary reference.</span><span>Condition, exact variant, foil, language and grading can change actual sale value.</span></div>
       ${scannerOcrText?`<div class="ocr-readout"><div class="kpi-line"><span>OCR confidence</span><strong>${scannerOcrConfidence!==null?scannerOcrConfidence.toFixed(0)+'%':'—'}</strong></div><p>${esc(scannerOcrText.slice(0,300))}${scannerOcrText.length>300?'…':''}</p></div>`:''}
     </div></div>
     ${scannerBestMatchMarkup()}
@@ -5153,7 +5156,7 @@ function tradeSummaryText(){
   const a=tradeAnalysis();
   const give=tradeGiveDraft.map(i=>`${i.qty}x ${tradeItemLabel(i)} (${money((Number(i.valueEach)||0)*(Number(i.qty)||0))})`).join(', ')||'Nothing';
   const receive=tradeReceiveDraft.map(i=>`${i.qty}x ${tradeItemLabel(i)} (${money((Number(i.valueEach)||0)*(Number(i.qty)||0))})`).join(', ')||'Nothing';
-  return `2GEN Vault Trade Check\nYou give: ${give}\nValue out: ${money(a.out)}\nYou receive: ${receive}\nValue in: ${money(a.incoming)}\nDifference: ${a.delta>=0?'+':''}${money(a.delta)}\nReference balance: ${a.label} (${a.fairness.toFixed(1)}%)\n\nValues are market references and may vary by condition, exact printing, grade and marketplace.`;
+  return `VaultSignal Trade Check\nYou give: ${give}\nValue out: ${money(a.out)}\nYou receive: ${receive}\nValue in: ${money(a.incoming)}\nDifference: ${a.delta>=0?'+':''}${money(a.delta)}\nReference balance: ${a.label} (${a.fairness.toFixed(1)}%)\n\nValues are market references and may vary by condition, exact printing, grade and marketplace.`;
 }
 async function copyTradeSummary(){
   const text=tradeSummaryText();
@@ -5625,7 +5628,7 @@ function buildShowcaseData(profileId){
     .map(i=>({name:i.card?.name,set:i.card?.set,number:i.card?.number,qty:i.qty,market:i.card?.market,image:i.card?.image,format:i.format||'Raw'}));
   const sealed=(state.sealed||[]).filter(i=>i.ownerProfileId===profileId)
     .map(i=>({name:i.name,game:i.game,qty:i.qty,current:i.current}));
-  return {brand:'2GEN Vault',collector:p.name,role:p.role,cards,sealed,generatedAt:new Date().toISOString()};
+  return {brand:'VaultSignal',collector:p.name,role:p.role,cards,sealed,generatedAt:new Date().toISOString()};
 }
 function exportCollectorShowcase(profileId){
   const data=buildShowcaseData(profileId);
@@ -5959,7 +5962,7 @@ async function showBrowserAlert(n){
   try{
     if('serviceWorker' in navigator){
       const reg=await navigator.serviceWorker.ready;
-      await reg.showNotification(`2GEN Vault • ${n.title}`,{
+      await reg.showNotification(`VaultSignal • ${n.title}`,{
         body:n.detail||n.category,
         icon:'./icon.svg',
         badge:'./icon.svg',
@@ -5967,7 +5970,7 @@ async function showBrowserAlert(n){
         data:{url:location.href}
       });
     }else{
-      new Notification(`2GEN Vault • ${n.title}`,{body:n.detail||n.category});
+      new Notification(`VaultSignal • ${n.title}`,{body:n.detail||n.category});
     }
   }catch{}
 }
@@ -6058,13 +6061,13 @@ async function enableBrowserNotifications(){
       toast('Browser notifications enabled while supported by the PWA');
       await showBrowserAlert({
         actionId:'test',title:'Watchtower enabled',
-        detail:'2GEN Vault can now surface supported alerts when the app is active/opened.'
+        detail:'VaultSignal can now surface supported alerts when the app is active/opened.'
       });
     }else toast('Notification permission was not granted');
   }catch(e){toast('Could not request notification permission')}
 }
 function disableBrowserNotifications(){
-  state.notificationPrefs.browserNotifications=false;saveState();renderTools();toast('Browser alerts disabled in 2GEN Vault');
+  state.notificationPrefs.browserNotifications=false;saveState();renderTools();toast('Browser alerts disabled in VaultSignal');
 }
 function toggleWatchtowerPref(key){
   if(key==='enabled') state.notificationPrefs.enabled=!state.notificationPrefs.enabled;
@@ -6093,7 +6096,7 @@ function watchtowerNotificationMarkup(n){
 
 function ensureShowcaseSchema(){
   state.showcaseSettings={
-    title:'2GEN Vault Showcase',
+    title:'VaultSignal Showcase',
     bio:'Two Generations. One Collection.',
     featuredCardIds:[],
     showCollectionValue:true,
@@ -6145,7 +6148,7 @@ function setShowcaseProfile(id){
 }
 function editShowcaseText(){
   ensureShowcaseSchema();
-  const title=prompt('Showcase title',state.showcaseSettings.title||'2GEN Vault Showcase');
+  const title=prompt('Showcase title',state.showcaseSettings.title||'VaultSignal Showcase');
   if(title!==null && title.trim()) state.showcaseSettings.title=title.trim();
   const bio=prompt('Short showcase bio',state.showcaseSettings.bio||'');
   if(bio!==null) state.showcaseSettings.bio=bio.trim();
@@ -6168,7 +6171,7 @@ function publicShowcasePayload(profileId){
   const stats=collectorStats(profileId);
 
   return {
-    brand:'2GEN Vault',
+    brand:'VaultSignal',
     title:state.showcaseSettings.title,
     bio:state.showcaseSettings.bio,
     collector:{name:p.name,role:p.role},
@@ -6220,7 +6223,7 @@ function standaloneShowcaseHtml(payload){
   ${wish?`<section class="section"><h2>Wishlist / Hunt List</h2><ul>${wish}</ul></section>`:''}
   ${trade?`<section class="section"><h2>Available Duplicates</h2><ul>${trade}</ul></section>`:''}
   ${sets?`<section class="section"><h2>Set Progress</h2><ul>${sets}</ul></section>`:''}
-  <div class="foot">Generated privately from 2GEN Vault. Cost basis, cert numbers, addresses, ZIP/postal code and private notes are not included.</div></main></body></html>`;
+  <div class="foot">Generated privately from VaultSignal. Cost basis, cert numbers, addresses, ZIP/postal code and private notes are not included.</div></main></body></html>`;
 }
 function downloadShowcaseHtml(){
   const p=showcaseProfile();
@@ -6332,6 +6335,45 @@ function renderShowcaseStudio(){
   </div>`;
 }
 
+
+function vaultSignalFeed(){
+  ensureWatchtowerSchema();
+  const rows=[];
+  for(const x of (state.inventoryPulseEvents||[]).slice(0,10)){
+    rows.push({uid:`inv:${x.uid||x.ts||x.title}`,type:'Inventory',priority:x.priority||'medium',title:x.title||'Inventory changed',detail:x.detail||x.store||'',ts:x.ts||new Date().toISOString(),action:`switchTab('stock')`});
+  }
+  for(const n of (state.notificationInbox||[]).filter(x=>!x.read).slice(0,10)){
+    rows.push({uid:`alert:${n.uid||n.signalKey||n.createdAt}`,type:n.category||'Alert',priority:n.priority||'medium',title:n.title||'Collector signal',detail:n.detail||'',ts:n.createdAt||n.ts||new Date().toISOString(),action:n.tool?`openTool('${n.tool}')`:`openTool('watchtower')`});
+  }
+  for(const s of (state.scannerRecentScans||[]).slice(0,5)){
+    rows.push({uid:`scan:${s.uid}`,type:'Scanner',priority:'low',title:`Scanned ${s.card?.name||'card'}`,detail:`${s.primarySource||'Pricing source'} • ${s.value?money(s.value):'value unavailable'}`,ts:s.checkedAt||new Date().toISOString(),action:`openTool('scanner')`});
+  }
+  for(const a of buildActionCenter().slice(0,8)){
+    rows.push({uid:`action:${a.id||a.title}`,type:'Action',priority:a.priority||'medium',title:a.title||'Collector action',detail:a.detail||a.description||'',ts:a.ts||new Date().toISOString(),action:a.tool?`openTool('${a.tool}')`:`openTool('actions')`});
+  }
+  const rank={high:3,medium:2,low:1};
+  return rows.sort((a,b)=>(rank[b.priority]||0)-(rank[a.priority]||0)||new Date(b.ts)-new Date(a.ts)).slice(0,24);
+}
+function vaultSignalStats(){
+  const feed=vaultSignalFeed();
+  return {
+    total:feed.length,
+    high:feed.filter(x=>x.priority==='high').length,
+    inventory:(state.inventoryPulseEvents||[]).length,
+    scans:(state.scannerRecentScans||[]).length
+  };
+}
+function vaultSignalFeedMarkup(){
+  const rows=vaultSignalFeed();
+  if(!rows.length)return `<div class="empty">No collector signals yet. Scan cards, save watches, run Inventory Radar or add price targets and this feed will populate.</div>`;
+  return `<div class="signal-feed">${rows.map(x=>`
+    <button class="signal-feed-row ${esc(x.priority)}" onclick="${x.action}">
+      <span class="signal-feed-pulse"></span>
+      <div class="grow"><div class="eyebrow">${esc(String(x.type).toUpperCase())} • ${esc(String(x.priority).toUpperCase())}</div><strong>${esc(x.title)}</strong><span>${esc(x.detail||'')}</span></div>
+      <small>${humanAge(x.ts)}</small>
+    </button>`).join('')}</div>`;
+}
+
 function renderWatchtowerTool(){
   ensureWatchtowerSchema();
   evaluateWatchtower({notify:false});
@@ -6339,8 +6381,20 @@ function renderWatchtowerTool(){
   const high=watchtowerHighUnread();
   const categories=Object.keys(state.notificationPrefs.categories||{});
 
-  return `<div class="panel watchtower-hero">
-    <div class="section-head"><div><div class="eyebrow">2GEN WATCHTOWER</div><h2>Collector alert inbox</h2><p>Turns Action Center conditions into a persistent alert feed so important collector events do not disappear the next time the app changes state.</p></div><button class="btn" onclick="evaluateWatchtower({notify:true});renderTools()">↻ Check now</button></div>
+  const vs=vaultSignalStats();
+  return `<div class="panel signal-center-hero">
+    <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL • SIGNAL CENTER</div><h2>Your collector radar</h2><p>Inventory changes, collector alerts, scanner activity and next actions in one prioritized feed. It surfaces what changed without pretending to predict the market.</p></div><button class="btn primary" onclick="evaluateWatchtower({notify:false});renderTools()">↻ Refresh</button></div>
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Active signals</span><strong>${vs.total}</strong><small>Combined feed</small></div>
+      <div class="stat-card"><span>High priority</span><strong class="${vs.high?'bad':''}">${vs.high}</strong><small>Review first</small></div>
+      <div class="stat-card"><span>Inventory changes</span><strong>${vs.inventory}</strong><small>Inventory Pulse</small></div>
+      <div class="stat-card"><span>Recent scans</span><strong>${vs.scans}</strong><small>Scanner history</small></div>
+    </div>
+    ${vaultSignalFeedMarkup()}
+  </div>
+
+  <div class="panel watchtower-hero">
+    <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL SIGNAL CENTER</div><h2>Signal inbox</h2><p>Turns Action Center conditions into a persistent alert feed so important collector events do not disappear the next time the app changes state.</p></div><button class="btn" onclick="evaluateWatchtower({notify:true});renderTools()">↻ Check now</button></div>
 
     <div class="stat-grid compact-stats">
       <div class="stat-card"><span>Unread alerts</span><strong>${unread}</strong><small>${state.notificationInbox.length} saved total</small></div>
@@ -6370,7 +6424,7 @@ function renderWatchtowerTool(){
 
   <div class="panel">
     <div class="section-head"><div><h2>Alert inbox</h2><p>Newest collector alerts first.</p></div><div class="action-row"><button class="btn" onclick="resetWatchtowerSignals()">Rebuild current alerts</button><button class="remove" onclick="clearWatchtowerInbox()">Clear inbox</button></div></div>
-    ${state.notificationInbox.length?state.notificationInbox.map(watchtowerNotificationMarkup).join(''):`<div class="empty">No Watchtower alerts yet. Use 2GEN Vault normally and this inbox will populate when tracked conditions become relevant.</div>`}
+    ${state.notificationInbox.length?state.notificationInbox.map(watchtowerNotificationMarkup).join(''):`<div class="empty">No Watchtower alerts yet. Use VaultSignal normally and this inbox will populate when tracked conditions become relevant.</div>`}
   </div>`;
 }
 
@@ -6382,7 +6436,7 @@ function renderActionCenterTool(){
   const low=actions.filter(a=>a.priority==='low');
 
   return `<div class="panel action-center-hero">
-    <div class="section-head"><div><div class="eyebrow">2GEN ACTION CENTER</div><h2>What needs your attention</h2><p>One prioritized feed built from your Vault, stock watches, prices, budget, grading, trades, sales and creator workflow.</p></div><button class="btn" onclick="clearAllActionSnoozes()">Restore hidden</button></div>
+    <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL ACTION CENTER</div><h2>What needs your attention</h2><p>One prioritized feed built from your Vault, stock watches, prices, budget, grading, trades, sales and creator workflow.</p></div><button class="btn" onclick="clearAllActionSnoozes()">Restore hidden</button></div>
 
     <div class="stat-grid compact-stats">
       <div class="stat-card"><span>Open actions</span><strong>${counts.total}</strong><small>Current local priorities</small></div>
@@ -6391,7 +6445,7 @@ function renderActionCenterTool(){
       <div class="stat-card"><span>Low</span><strong>${counts.low}</strong><small>Good housekeeping</small></div>
     </div>
 
-    <div class="notice" style="margin-top:10px"><span>ℹ</span><span>Action Center updates when you open/use 2GEN Vault. It does not claim to send background push alerts while the app is closed yet.</span></div>
+    <div class="notice" style="margin-top:10px"><span>ℹ</span><span>Action Center updates when you open/use VaultSignal. It does not claim to send background push alerts while the app is closed yet.</span></div>
   </div>
 
   <div class="panel daily-brief-panel">
@@ -6629,7 +6683,7 @@ function renderSettingsTool(){
   </div>
   <div class="panel"><h2>Backup & portability</h2><div class="action-row"><button class="btn" onclick="exportBackup()">Export full backup</button><button class="btn" onclick="$('hiddenImport').click()">Import backup</button><button class="btn red" onclick="resetApp()">Reset local data</button></div><p style="margin-top:9px">Version ${esc(String(cfg.appVersion||'0.4.0'))}. Data currently lives on this device until cloud accounts are added.</p></div>`;
 }
-function saveBrandSettings(){state.settings.brand=$('brandName')?.value.trim()||'2GEN Vault';state.settings.tagline=$('brandTagline')?.value.trim()||'Two Generations. One Collection.';saveState();renderTools();toast('Branding saved')}
+function saveBrandSettings(){state.settings.brand=$('brandName')?.value.trim()||'VaultSignal';state.settings.tagline=$('brandTagline')?.value.trim()||'Two Generations. One Collection.';saveState();renderTools();toast('Branding saved')}
 function exportBackup(){
   state.settings.lastBackupAt=new Date().toISOString();
   saveState();
@@ -6638,7 +6692,7 @@ function exportBackup(){
 $('hiddenImport').addEventListener('change',e=>{
   const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const next=JSON.parse(String(r.result));if(!next.collection||!next.settings)throw new Error('Invalid backup');state={...structuredClone(seed),...next,settings:{...seed.settings,...next.settings}};saveState();render(currentTab);toast('Backup imported')}catch{toast('Backup could not be imported')}};r.readAsText(f)
 });
-function resetApp(){if(confirm('Reset all local 2GEN Vault data on this device?')){localStorage.removeItem(STORAGE_KEY);state=structuredClone(seed);render(currentTab);toast('Local data reset')}}
+function resetApp(){if(confirm('Reset all local VaultSignal data on this device?')){localStorage.removeItem(STORAGE_KEY);state=structuredClone(seed);render(currentTab);toast('Local data reset')}}
 function exportCollectionCSV(){
   const rows=[['Type','Game','Name','Set','Number','Condition','Format','Grader','Grade','Cert','Qty','CostEach','MarketEach','Location']];
   state.collection.forEach(i=>rows.push(['Card',i.card.game,i.card.name,i.card.set,i.card.number||'',i.condition,i.format||'Raw',i.grader||'',i.grade||'',i.cert||'',i.qty,i.cost,i.card.market||'',i.location||'']));

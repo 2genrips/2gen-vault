@@ -26,7 +26,7 @@ STEP 1 — CREATE A FREE SUPABASE PROJECT
 3. Create a new project.
 
 Suggested:
-Project name: 2GEN Vault
+Project name: VaultSignal
 Database password: create a strong password and SAVE IT somewhere secure
 Region: choose the closest available US region to your main users
 
@@ -103,7 +103,7 @@ STEP 6 — WAIT FOR GITHUB PAGES TO UPDATE
 
 Usually this takes a short time.
 
-Fully close the installed 2GEN Vault app and reopen it.
+Fully close the installed VaultSignal app and reopen it.
 
 Go to:
 Tools > Account

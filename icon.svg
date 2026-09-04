@@ -1,18 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
 <defs>
-<linearGradient id="b" x1="0" x2="1"><stop stop-color="#0B47D1"/><stop offset="1" stop-color="#1565FF"/></linearGradient>
-<linearGradient id="r" x1="0" x2="1"><stop stop-color="#FF2D2D"/><stop offset="1" stop-color="#D8162A"/></linearGradient>
+<linearGradient id="b" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#38A0FF"/><stop offset=".55" stop-color="#0A6BFF"/><stop offset="1" stop-color="#0848C7"/></linearGradient>
+<linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFF"/><stop offset=".58" stop-color="#D9DEE8"/><stop offset="1" stop-color="#8992A6"/></linearGradient>
+<linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#FFE08A"/><stop offset="1" stop-color="#FFB800"/></linearGradient>
 </defs>
-<rect width="512" height="512" rx="116" fill="#0D0D0F"/>
-<circle cx="256" cy="236" r="175" fill="#090A0D" stroke="#FFFFFF" stroke-width="17"/>
-<path d="M111 213a152 152 0 0 1 111-112" fill="none" stroke="url(#b)" stroke-width="30" stroke-linecap="round"/>
-<path d="M290 101a152 152 0 0 1 111 112" fill="none" stroke="url(#r)" stroke-width="30" stroke-linecap="round"/>
-<text x="126" y="299" font-family="Arial Black,Arial" font-size="180" font-weight="900" fill="url(#b)">2</text>
-<text x="287" y="299" font-family="Arial Black,Arial" font-size="180" font-weight="900" fill="url(#r)">G</text>
-<g transform="translate(207 148)">
-<rect x="18" y="18" width="94" height="134" rx="12" fill="#111820" stroke="#FFFFFF" stroke-width="10"/>
-<rect x="2" y="2" width="94" height="134" rx="12" fill="#0D0D0F" stroke="#FFFFFF" stroke-width="10"/>
-<path d="M49 35l10 27 27 10-27 10-10 27-10-27-27-10 27-10z" fill="#FFFFFF"/>
+<rect x="10" y="10" width="492" height="492" rx="112" fill="#0B1020" stroke="#1C3156" stroke-width="8"/>
+<path d="M105 222a153 153 0 0 1 302 0" fill="none" stroke="url(#b)" stroke-width="20" stroke-linecap="round"/>
+<path d="M140 222a118 118 0 0 1 232 0" fill="none" stroke="#166DFF" stroke-width="11" stroke-linecap="round" opacity=".86"/>
+<path d="M177 222a81 81 0 0 1 158 0" fill="none" stroke="#54B2FF" stroke-width="7" stroke-linecap="round" opacity=".72"/>
+<circle cx="256" cy="137" r="9" fill="#70C4FF"/>
+<path d="M103 245a162 162 0 0 0 80 169" fill="none" stroke="url(#s)" stroke-width="22" stroke-linecap="round"/>
+<path d="M409 245a162 162 0 0 1-81 170" fill="none" stroke="url(#s)" stroke-width="22" stroke-linecap="round"/>
+<path d="M389 304a133 133 0 0 0 15-58" fill="none" stroke="url(#g)" stroke-width="13" stroke-linecap="round"/>
+<g transform="translate(165 190)">
+<rect x="2" y="34" width="112" height="148" rx="15" fill="#08111F" stroke="#416DAA" stroke-width="8" transform="rotate(-9 58 108)"/>
+<rect x="46" y="31" width="112" height="148" rx="15" fill="#08111F" stroke="#274D8A" stroke-width="8" transform="rotate(9 102 105)"/>
+<rect x="28" y="17" width="132" height="170" rx="18" fill="#0A1322" stroke="url(#s)" stroke-width="9"/>
+<path d="M142 17h18v18z" fill="url(#g)"/>
 </g>
-<text x="256" y="455" text-anchor="middle" font-family="Arial Black,Arial" font-size="48" font-weight="900" fill="#FFFFFF" letter-spacing="3">VAULT</text>
+<path d="M197 253l42 108h32l45-108h-35l-26 69-25-69z" fill="url(#s)"/>
+<circle cx="256" cy="390" r="33" fill="#0B1320" stroke="url(#s)" stroke-width="10"/>
+<circle cx="256" cy="382" r="10" fill="#0A6BFF"/>
+<path d="M250 391h12l7 22h-26z" fill="#0A6BFF"/>
+<circle cx="383" cy="276" r="9" fill="url(#g)"/>
 </svg>

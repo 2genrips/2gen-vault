@@ -1,4 +1,4 @@
-2GEN Vault v5.0.1 hotfix
+VaultSignal v5.0.1 hotfix
 
 This build already contains:
 inventoryApiBase: https://2gen-vault-inventory.willingpaige.workers.dev

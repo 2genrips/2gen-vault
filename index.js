@@ -1,5 +1,5 @@
 /**
- * 2GEN Vault Real Inventory Worker v5
+ * VaultSignal Real Inventory Worker v5
  * Cloudflare Workers backend.
  *
  * Secrets:

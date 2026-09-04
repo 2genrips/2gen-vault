@@ -1,4 +1,4 @@
-# 2GEN Vault Real Inventory Worker v5
+# VaultSignal Real Inventory Worker v5
 
 This is the secure backend for automatic retailer inventory searches.
 
@@ -6,7 +6,7 @@ This is the secure backend for automatic retailer inventory searches.
 
 GitHub Pages is public. A retailer API key placed in `config.js` or `app.js` can be copied by anyone.
 
-This Worker keeps private retailer credentials on the server side. 2GEN Vault receives only normalized inventory results.
+This Worker keeps private retailer credentials on the server side. VaultSignal receives only normalized inventory results.
 
 ## Connected in v5
 
@@ -56,7 +56,7 @@ You can deploy this without installing software:
 10. In the main app's `config.js`, set:
    - `inventoryApiBase: "YOUR WORKER URL"`
 11. Commit `config.js` to GitHub Pages.
-12. Open 2GEN Vault → Tools → Settings → **Test connection**.
+12. Open VaultSignal → Tools → Settings → **Test connection**.
 
 ## Endpoints
 
@@ -92,7 +92,7 @@ If a Product Command entry has a saved Best Buy SKU, exact-SKU availability is p
 
 Inventory changes quickly. A result means the provider reported that availability at the time shown.
 
-2GEN Vault always displays:
+VaultSignal always displays:
 - provider/source
 - checked time
 - low-stock flag when supplied
