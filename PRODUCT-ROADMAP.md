@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v1.7 Family + Creator Hub
+## Current build: v1.8 Action Center
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -206,3 +206,19 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - 2GEN RIPS Content Queue
 - Rip Session -> Content Queue
 - Collector showcase export
+
+
+## v1.8 completed
+- Prioritized Action Center
+- Daily collector brief
+- Home action preview
+- Price-target-hit actions
+- Restock Radar actions
+- Budget actions
+- Backup / market-refresh freshness actions
+- Near-complete-set actions
+- Grading follow-up actions
+- Sale / trade follow-up actions
+- Giveaway / creator-content actions
+- Direct routing to the correct tool
+- 7-day action snooze

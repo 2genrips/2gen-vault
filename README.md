@@ -1,4 +1,4 @@
-# 2GEN Vault — Family + Creator Hub v1.7 (GitHub Pages)
+# 2GEN Vault — Action Center v1.8 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -693,3 +693,66 @@ This is groundwork for a future public web showcase/share page.
 These features work locally and do not require Supabase.
 
 When cloud sync is available again, family memberships and shared household access can be moved into the cloud layer.
+
+
+## New in v1.8 — 2GEN Action Center
+
+2GEN Vault now has one place that answers:
+
+**“What should I do next?”**
+
+Action Center builds a prioritized feed from the data already inside the app.
+
+### High / medium / low priorities
+
+It can surface:
+
+- card price targets that are currently hit
+- hot Restock Radar watches
+- hobby budget overages / low remaining budget
+- stale Vault backups
+- stale Vault price refreshes
+- sets close to completion
+- grading submissions that may need follow-up
+- queued sale drafts with negative projected profit
+- older sale drafts
+- saved trade proposals
+- giveaways that are Ready
+- long-reserved giveaway items
+- creator content whose planned date has passed
+- content marked Ready to edit
+- high-priority stock watches that have no sightings yet
+
+### Daily Brief
+
+The top four current actions appear as a Daily Brief.
+
+The Home screen also shows the top three actions, so the user does not have to search through every tool to know what matters.
+
+### Smart routing
+
+Each action can jump directly to the relevant area:
+
+- Market Pulse
+- Stock Finder
+- Budget
+- Settings / Backup
+- Set Explorer
+- Grading
+- Sell Lab
+- Trade Lab
+- 2GEN Family + Creator Hub
+
+### Hide for 7 days
+
+Actions are computed from live local state, so instead of permanently deleting them the user can hide an action for seven days.
+
+The Action Center can restore all hidden actions at any time.
+
+### Important limitation
+
+This version is an **in-app action system**.
+
+It refreshes when 2GEN Vault is opened/used.
+
+It does not pretend to deliver true background push notifications while the browser/PWA is closed. True push alerts will require a backend notification service / service-worker push architecture.

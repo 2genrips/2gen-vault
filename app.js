@@ -41,6 +41,7 @@ const seed = {
   collectorProfiles: [{uid:'collector-household',name:'Household',role:'Shared',accent:'blue'}],
   giveawayLocker: [],
   contentQueue: [],
+  actionSnoozes: {},
   grading: [],
   setGoals: [],
   productCatalog: [],
@@ -661,6 +662,8 @@ function renderHome(){
   const recentStock = [...state.stockReports].sort((a,b)=>new Date(b.ts)-new Date(a.ts)).slice(0,3);
   const trend = portfolioTrend();
   const health = dataHealthScore();
+  const homeActions = buildActionCenter();
+  const homeActionCounts = actionCounts(homeActions);
   $('home').innerHTML = `
     <div class="hero">
       <div class="eyebrow">2GEN RIPS PRESENTS</div>
@@ -697,7 +700,14 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('trades')"><span class="big-icon">⇄</span><b>Trade Lab</b><span>Build deals from your Vault and wishlist with reference-value balancing.</span></button>
         <button class="quick-card" onclick="openTool('sell')"><span class="big-icon">$</span><b>Sell Lab</b><span>Estimate fees, protect cost basis, create listings and track profit.</span></button>
         <button class="quick-card" onclick="openTool('family')"><span class="big-icon">2G</span><b>2GEN Hub</b><span>Family collections, giveaways and creator content in one place.</span></button>
+        <button class="quick-card" onclick="openTool('actions')"><span class="big-icon">✓</span><b>Action Center</b><span>${homeActionCounts.total} priorities • ${homeActionCounts.high} high • know what to do next.</span></button>
       </div>
+    </div>
+
+
+    <div class="panel action-home-preview">
+      <div class="section-head"><div><div class="eyebrow">ACTION CENTER</div><h2>${homeActionCounts.total?`${homeActionCounts.total} collector priorities`:'All caught up'}</h2><p>${homeActionCounts.high?`${homeActionCounts.high} high-priority item${homeActionCounts.high===1?'':'s'} need attention.`:'No high-priority collector actions right now.'}</p></div><button class="btn" onclick="openTool('actions')">Open Action Center</button></div>
+      ${homeActions.length?homeActions.slice(0,3).map(a=>actionCardMarkup(a,true)).join(''):`<div class="empty">Your price targets, stock watches, budget, trades, grading and creator workflow are all clear.</div>`}
     </div>
 
     <div class="panel">
@@ -1785,6 +1795,7 @@ function renderTools(){
   $('tools').innerHTML = `
     <div class="page-title"><div><h1>Collector Tools</h1><p>The rest of your collecting workflow, all under one roof.</p></div></div>
     <div class="tool-menu">
+      ${toolButton('actions','✓','Action Center','Smart collector priorities')}
       ${toolButton('market','↗','Market Pulse','Live price tracking')}
       ${toolButton('analytics','⌁','Dashboard Pro','Collection analytics')}
       ${toolButton('rips','✦','Rip Sessions','Openings & pull analytics')}
@@ -1807,6 +1818,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='actions') return renderActionCenterTool();
   if(toolsTab==='family') return renderFamilyCreatorHub();
   if(toolsTab==='sell') return renderSellLabTool();
   if(toolsTab==='market') return renderMarketPulseTool();
@@ -2895,7 +2907,7 @@ function renderGradingTool(){
 }
 function addGrading(){
   const card=$('gradeCard')?.value.trim();if(!card){toast('Enter the card name');return;}
-  state.grading.unshift({uid:uid(),card,company:$('gradeCompany')?.value||'PSA',status:$('gradeStatus')?.value||'Preparing',fee:Number($('gradeFee')?.value)||0,date:todayInput()});saveState();renderTools()
+  state.grading.unshift({uid:uid(),card,company:$('gradeCompany')?.value||'PSA',status:$('gradeStatus')?.value||'Preparing',fee:Number($('gradeFee')?.value)||0,date:todayInput(),createdAt:new Date().toISOString()});saveState();renderTools()
 }
 function advanceGrading(id){
   const g=state.grading.find(x=>x.uid===id);if(!g)return;const statuses=['Preparing','Submitted','Received','Grading','Shipped back','Complete'];const v=prompt('Status:',g.status);if(v===null)return;g.status=v;saveState();renderTools()
@@ -3557,6 +3569,284 @@ function exportCollectorShowcase(profileId){
 }
 
 
+
+function ensureActionSchema(){
+  if(!state.actionSnoozes || typeof state.actionSnoozes!=='object') state.actionSnoozes={};
+}
+function daysSince(value){
+  if(!value) return null;
+  const t=new Date(value).getTime();
+  if(!Number.isFinite(t)) return null;
+  return Math.max(0,(Date.now()-t)/86400000);
+}
+function actionIsSnoozed(id){
+  ensureActionSchema();
+  const until=state.actionSnoozes[id];
+  if(!until) return false;
+  if(new Date(until).getTime()<=Date.now()){
+    delete state.actionSnoozes[id];
+    return false;
+  }
+  return true;
+}
+function snoozeAction(id,days=7){
+  ensureActionSchema();
+  const d=new Date();
+  d.setDate(d.getDate()+Math.max(1,Number(days)||7));
+  state.actionSnoozes[id]=d.toISOString();
+  saveState();renderTools();renderHome();toast(`Hidden for ${days} days`);
+}
+function clearAllActionSnoozes(){
+  state.actionSnoozes={};
+  saveState();renderTools();renderHome();toast('Hidden actions restored');
+}
+function actionPriorityRank(priority){
+  return priority==='high'?3:priority==='medium'?2:1;
+}
+function buildActionCenter(includeSnoozed=false){
+  ensureActionSchema();
+  const actions=[];
+  const push=a=>{
+    if(!a?.id)return;
+    if(!includeSnoozed && actionIsSnoozed(a.id))return;
+    actions.push(a);
+  };
+
+  // Price targets reached.
+  for(const a of state.priceAlerts||[]){
+    const s=priceTargetStatus(a);
+    if(s.hit){
+      push({
+        id:`price-hit-${a.uid}`,priority:'high',icon:'↘',category:'Market',
+        title:`Price target hit: ${a.card?.name||'Card'}`,
+        detail:`Current ${money(Number(a.card?.market))} • target ${money(Number(a.target))}`,
+        tool:'market',cta:'Open Market Pulse'
+      });
+    }
+  }
+
+  // Restock Radar heat / high-priority quiet watch.
+  for(const w of state.stockWatches||[]){
+    const r=watchRadar(w);
+    if(r.score>=75){
+      push({
+        id:`stock-hot-${w.uid}`,priority:'high',icon:'◎',category:'Stock',
+        title:`Hot watch: ${w.product}`,
+        detail:`Radar ${r.score} • ${r.sightings} sightings • ${r.bestPrice!==null?money(r.bestPrice):'no price yet'}`,
+        tab:'stock',watchId:w.uid,cta:'Open Stock Finder'
+      });
+    }else if((w.priority||'High')==='High' && r.sightings===0){
+      push({
+        id:`stock-quiet-${w.uid}`,priority:'low',icon:'⌖',category:'Stock',
+        title:`No sightings yet: ${w.product}`,
+        detail:`High-priority watch • ${w.radius} mi • ${w.retailers?.length||0} retailers`,
+        tab:'stock',watchId:w.uid,cta:'Check Hunt Mode'
+      });
+    }
+  }
+
+  // Budget.
+  const budget=Number(state.settings.monthlyBudget)||0;
+  const spent=monthSpend();
+  const left=budget-spent;
+  if(budget>0 && left<0){
+    push({
+      id:'budget-over',priority:'high',icon:'$',category:'Budget',
+      title:'Monthly hobby budget exceeded',
+      detail:`${money(spent)} spent • ${money(Math.abs(left))} over budget`,
+      tool:'budget',cta:'Review spending'
+    });
+  }else if(budget>0 && left<=budget*.2){
+    push({
+      id:'budget-low',priority:'medium',icon:'$',category:'Budget',
+      title:'Hobby budget is running low',
+      detail:`${money(left)} remaining of ${money(budget)}`,
+      tool:'budget',cta:'Review budget'
+    });
+  }
+
+  // Backup freshness.
+  const backupDays=daysSince(state.settings?.lastBackupAt);
+  if(backupDays===null || backupDays>14){
+    push({
+      id:'backup-stale',priority:backupDays===null?'medium':'low',icon:'☁',category:'Safety',
+      title:backupDays===null?'Create your first Vault backup':'Vault backup is getting old',
+      detail:backupDays===null?'Protect your collection data with a local or cloud backup.':`Last backup ${Math.floor(backupDays)} days ago.`,
+      tool:'settings',cta:'Backup Vault'
+    });
+  }
+
+  // Price-refresh freshness.
+  const liveCards=uniqueCollectionCards().filter(c=>c.game==='Pokemon'&&c.provider==='pokemontcg');
+  const lastRefresh=state.priceRefreshLog?.[0]?.finished;
+  const refreshDays=daysSince(lastRefresh);
+  if(liveCards.length && (refreshDays===null || refreshDays>7)){
+    push({
+      id:'market-refresh',priority:'medium',icon:'↗',category:'Market',
+      title:'Refresh your Vault prices',
+      detail:refreshDays===null?`${liveCards.length} supported cards can begin price tracking.`:`Last bulk refresh ${Math.floor(refreshDays)} days ago.`,
+      tool:'market',cta:'Refresh prices'
+    });
+  }
+
+  // Near-complete sets.
+  for(const s of collectionSetAnalytics().filter(x=>x.total&&x.pct>=80&&x.pct<100).slice(0,5)){
+    push({
+      id:`set-near-${normalizeName(s.name)}`,priority:s.pct>=95?'high':'medium',icon:'▦',category:'Sets',
+      title:`${s.name} is ${s.pct.toFixed(1)}% complete`,
+      detail:`${s.owned}/${s.total} unique cards • ${Math.max(0,s.total-s.owned)} remaining`,
+      tool:'sets',cta:'Open Set Explorer'
+    });
+  }
+
+  // Grading follow-up.
+  for(const g of state.grading||[]){
+    if(String(g.status||'').toLowerCase()==='complete')continue;
+    const age=daysSince(g.date);
+    if(age!==null && age>=30){
+      push({
+        id:`grading-${g.uid}`,priority:age>=60?'medium':'low',icon:'◇',category:'Grading',
+        title:`Check grading: ${g.card}`,
+        detail:`${g.company} • ${g.status} • tracked ${Math.floor(age)} days`,
+        tool:'grading',cta:'Open grading tracker'
+      });
+    }
+  }
+
+  // Sale queue.
+  for(const s of state.saleQueue||[]){
+    const age=daysSince(s.createdAt);
+    if(Number(s.profit)<0){
+      push({
+        id:`sale-loss-${s.uid}`,priority:'medium',icon:'$',category:'Selling',
+        title:`Sale draft loses money: ${s.name}`,
+        detail:`Projected profit ${money(Number(s.profit))} • ${s.marketplace}`,
+        tool:'sell',cta:'Review Sell Lab'
+      });
+    }else if(age!==null && age>=7){
+      push({
+        id:`sale-stale-${s.uid}`,priority:'low',icon:'$',category:'Selling',
+        title:`Sale draft waiting: ${s.name}`,
+        detail:`Queued ${Math.floor(age)} days • asking ${money(Number(s.priceEach))}`,
+        tool:'sell',cta:'Open Sale Queue'
+      });
+    }
+  }
+
+  // Trade proposals.
+  for(const t of (state.trades||[]).filter(x=>(x.status||'Completed')==='Proposed')){
+    const age=daysSince(t.createdAt||t.date);
+    push({
+      id:`trade-proposal-${t.uid}`,priority:age!==null&&age>=7?'medium':'low',icon:'⇄',category:'Trading',
+      title:`Trade proposal${t.partner?` with ${t.partner}`:''}`,
+      detail:`Give ${money(Number(t.valueOut))} • receive ${money(Number(t.valueIn))}${age!==null?` • ${Math.floor(age)} days old`:''}`,
+      tool:'trades',cta:'Review Trade Lab'
+    });
+  }
+
+  // Giveaway locker.
+  for(const g of state.giveawayLocker||[]){
+    const age=daysSince(g.createdAt);
+    if(g.status==='Ready'){
+      push({
+        id:`giveaway-ready-${g.uid}`,priority:'medium',icon:'🎁',category:'Creator',
+        title:`Giveaway ready: ${g.name}`,
+        detail:`Qty ${g.qty} • reserved value ${money((Number(g.valueEach)||0)*(Number(g.qty)||0))}`,
+        tool:'family',cta:'Open Giveaway Locker'
+      });
+    }else if(g.status==='Reserved' && age!==null && age>=14){
+      push({
+        id:`giveaway-old-${g.uid}`,priority:'low',icon:'🎁',category:'Creator',
+        title:`Giveaway still reserved: ${g.name}`,
+        detail:`Reserved ${Math.floor(age)} days • decide whether to ready or release it`,
+        tool:'family',cta:'Review giveaway'
+      });
+    }
+  }
+
+  // Creator content queue.
+  for(const c of state.contentQueue||[]){
+    const planned=c.date?new Date(`${c.date}T23:59:59`).getTime():null;
+    const overdue=planned && planned<Date.now() && c.status!=='Posted';
+    if(overdue){
+      push({
+        id:`content-overdue-${c.uid}`,priority:'medium',icon:'✦',category:'Creator',
+        title:`Content date passed: ${c.title}`,
+        detail:`${c.platform||'Content'} • ${c.status||'Idea'} • planned ${c.date}`,
+        tool:'family',cta:'Open Content Queue'
+      });
+    }else if(c.status==='Ready to edit'){
+      push({
+        id:`content-ready-${c.uid}`,priority:'low',icon:'✂',category:'Creator',
+        title:`Ready to edit: ${c.title}`,
+        detail:`${c.platform||'Content'}${c.date?` • ${c.date}`:''}`,
+        tool:'family',cta:'Open Creator Hub'
+      });
+    }
+  }
+
+  actions.sort((a,b)=>actionPriorityRank(b.priority)-actionPriorityRank(a.priority) || a.category.localeCompare(b.category));
+  return actions;
+}
+function actionCounts(actions=buildActionCenter()){
+  return {
+    total:actions.length,
+    high:actions.filter(a=>a.priority==='high').length,
+    medium:actions.filter(a=>a.priority==='medium').length,
+    low:actions.filter(a=>a.priority==='low').length
+  };
+}
+function openActionItem(id){
+  const a=buildActionCenter(true).find(x=>x.id===id);
+  if(!a)return;
+  if(a.watchId) selectedWatchId=a.watchId;
+  if(a.tab){ switchTab(a.tab); return; }
+  if(a.tool){ openTool(a.tool); return; }
+}
+function actionCardMarkup(a,compact=false){
+  return `<div class="action-card priority-${a.priority} ${compact?'compact-action':''}">
+    <div class="action-icon">${a.icon||'!'}</div>
+    <div class="grow">
+      <div class="action-meta"><span>${esc(a.category)}</span><b>${esc(a.priority.toUpperCase())}</b></div>
+      <strong>${esc(a.title)}</strong>
+      <p>${esc(a.detail||'')}</p>
+    </div>
+    <div class="action-buttons">
+      <button class="btn primary" onclick="openActionItem('${a.id}')">${esc(a.cta||'Open')}</button>
+      <button class="link-btn" onclick="snoozeAction('${a.id}',7)">Hide 7d</button>
+    </div>
+  </div>`;
+}
+function renderActionCenterTool(){
+  const actions=buildActionCenter();
+  const counts=actionCounts(actions);
+  const high=actions.filter(a=>a.priority==='high');
+  const medium=actions.filter(a=>a.priority==='medium');
+  const low=actions.filter(a=>a.priority==='low');
+
+  return `<div class="panel action-center-hero">
+    <div class="section-head"><div><div class="eyebrow">2GEN ACTION CENTER</div><h2>What needs your attention</h2><p>One prioritized feed built from your Vault, stock watches, prices, budget, grading, trades, sales and creator workflow.</p></div><button class="btn" onclick="clearAllActionSnoozes()">Restore hidden</button></div>
+
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Open actions</span><strong>${counts.total}</strong><small>Current local priorities</small></div>
+      <div class="stat-card"><span>High</span><strong class="${counts.high?'bad':''}">${counts.high}</strong><small>Worth checking first</small></div>
+      <div class="stat-card"><span>Medium</span><strong>${counts.medium}</strong><small>Follow-up items</small></div>
+      <div class="stat-card"><span>Low</span><strong>${counts.low}</strong><small>Good housekeeping</small></div>
+    </div>
+
+    <div class="notice" style="margin-top:10px"><span>ℹ</span><span>Action Center updates when you open/use 2GEN Vault. It does not claim to send background push alerts while the app is closed yet.</span></div>
+  </div>
+
+  <div class="panel daily-brief-panel">
+    <div class="section-head"><div><div class="eyebrow">DAILY BRIEF</div><h2>${counts.total?`${counts.total} things to know`:'You are caught up'}</h2><p>${counts.high?`${counts.high} high-priority item${counts.high===1?'':'s'} should be reviewed first.`:'No high-priority actions right now.'}</p></div></div>
+    ${actions.length?actions.slice(0,4).map(a=>actionCardMarkup(a,true)).join(''):`<div class="empty">Nothing needs attention right now. Keep collecting.</div>`}
+  </div>
+
+  ${high.length?`<div class="panel"><div class="section-head"><div><h2>High priority</h2><p>Time-sensitive or financially important collector actions.</p></div></div>${high.map(a=>actionCardMarkup(a)).join('')}</div>`:''}
+  ${medium.length?`<div class="panel"><div class="section-head"><div><h2>Medium priority</h2><p>Useful follow-ups that can improve your next collecting decision.</p></div></div>${medium.map(a=>actionCardMarkup(a)).join('')}</div>`:''}
+  ${low.length?`<div class="panel"><div class="section-head"><div><h2>Low priority</h2><p>Maintenance and workflow reminders.</p></div></div>${low.map(a=>actionCardMarkup(a)).join('')}</div>`:''}`;
+}
+
 function renderFamilyCreatorHub(){
   ensureFamilySchema();
   const p=collectorById(activeCollectorProfileId);
@@ -3799,7 +4089,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -3819,6 +4109,7 @@ if('serviceWorker' in navigator){
 }
 ensureCollectionSchema();
 ensurePriceHistorySchema();
+ensureActionSchema();
 ensureFamilySchema();
 ensureSalesSchema();
 ensureScannerSchema();

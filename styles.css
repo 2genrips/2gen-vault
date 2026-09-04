@@ -596,3 +596,41 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   .giveaway-row,.content-row{grid-template-columns:42px 1fr}.giveaway-row .thumb{width:42px}
   .giveaway-row .right,.content-row .right{grid-column:2;align-items:flex-start}
 }
+
+
+/* v1.8 — Action Center / Collector Assistant */
+.action-center-hero{
+  background:
+    radial-gradient(circle at 92% 0%,rgba(46,211,154,.13),transparent 30%),
+    radial-gradient(circle at 4% 0%,rgba(21,101,255,.18),transparent 36%),
+    rgba(17,21,29,.97);
+}
+.daily-brief-panel{
+  background:radial-gradient(circle at 100% 0%,rgba(159,124,255,.09),transparent 30%),rgba(17,21,29,.96);
+}
+.action-home-preview{
+  background:radial-gradient(circle at 100% 0%,rgba(46,211,154,.07),transparent 28%),rgba(17,21,29,.95);
+}
+.action-card{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.action-card:last-child{border-bottom:0}
+.action-card.compact-action{padding:8px 0}
+.action-icon{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;border:1px solid var(--line);background:#0c1219;font-size:17px}
+.action-card.priority-high .action-icon{background:rgba(255,45,45,.07);border-color:rgba(255,45,45,.24);color:#ff9ba3}
+.action-card.priority-medium .action-icon{background:rgba(241,199,91,.06);border-color:rgba(241,199,91,.23);color:#efd47d}
+.action-card.priority-low .action-icon{background:rgba(21,101,255,.06);border-color:rgba(21,101,255,.22);color:#8eafff}
+.action-meta{display:flex;gap:6px;align-items:center;margin-bottom:4px}
+.action-meta span,.action-meta b{font-size:6.5px;text-transform:uppercase;letter-spacing:.08em}
+.action-meta span{color:var(--muted)}
+.action-card.priority-high .action-meta b{color:#ff9ba3}
+.action-card.priority-medium .action-meta b{color:#efd47d}
+.action-card.priority-low .action-meta b{color:#8eafff}
+.action-card .grow>strong{display:block;font-size:10px}
+.action-card .grow>p{font-size:7.5px;line-height:1.4;color:var(--muted);margin:4px 0 0}
+.action-buttons{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+@media(min-width:760px){
+  .quick-grid{grid-template-columns:repeat(12,1fr)}
+}
+@media(max-width:520px){
+  .action-card{grid-template-columns:40px 1fr}.action-icon{width:40px;height:40px}
+  .action-buttons{grid-column:2;flex-direction:row;align-items:center}
+}
