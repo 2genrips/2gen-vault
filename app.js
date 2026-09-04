@@ -24,9 +24,10 @@ const demoCards = [
 ];
 
 const seed = {
+  binders: [{uid:'binder-default',name:'Main Binder',game:'All',notes:'Default collection binder'}],
   collection: [
-    {uid:uid(),card:demoCards[0],qty:1,condition:'Near Mint',cost:92,location:'Binder 1'},
-    {uid:uid(),card:demoCards[1],qty:2,condition:'Near Mint',cost:51,location:'Binder 1'}
+    {uid:uid(),card:demoCards[0],qty:1,condition:'Near Mint',cost:92,location:'Main Binder'},
+    {uid:uid(),card:demoCards[1],qty:2,condition:'Near Mint',cost:51,location:'Main Binder'}
   ],
   sealed: [],
   wishlist: [],
@@ -44,6 +45,7 @@ const seed = {
   huntRoute: [],
   communityReports: [],
   communityConfirmationCounts: {},
+  setExplorerCache: {},
   settings: {
     zip:'',
     radius:25,
@@ -62,6 +64,11 @@ let vaultTab = 'cards';
 let toolsTab = 'scanner';
 let discoverMode = 'live';
 let discoverResults = [];
+let activeCardDetail = null;
+let setExplorerResults = [];
+let activeSet = null;
+let activeSetCards = [];
+let setExplorerBusy = false;
 let selectedRetailers = new Set(['Walmart','Target','Best Buy','GameStop','Local Card Shop']);
 let stockGame = 'Pokemon';
 let stockQuery = '';
@@ -86,6 +93,50 @@ function loadState(){
 function saveState(){
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
+
+function ensureCollectionSchema(){
+  if(!Array.isArray(state.binders) || !state.binders.length){
+    state.binders=[{uid:'binder-default',name:'Main Binder',game:'All',notes:'Default collection binder'}];
+  }
+  for(const item of state.collection||[]){
+    if(!item.location || item.location==='Binder' || item.location==='Binder 1') item.location='Main Binder';
+    if(!item.format) item.format='Raw';
+    if(!item.grader) item.grader='';
+    if(!item.grade) item.grade='';
+    if(!item.cert) item.cert='';
+    if(!item.language) item.language='English';
+    if(!item.variant) item.variant='Standard';
+  }
+}
+function binderNames(){
+  ensureCollectionSchema();
+  return state.binders.map(b=>b.name);
+}
+function collectionCopiesForCard(cardId){
+  return (state.collection||[]).filter(i=>i.card?.id===cardId);
+}
+function totalOwnedForCard(cardId){
+  return collectionCopiesForCard(cardId).reduce((n,i)=>n+(Number(i.qty)||0),0);
+}
+function collectionValueForCard(cardId){
+  return collectionCopiesForCard(cardId).reduce((n,i)=>n+(Number(i.card?.market)||0)*(Number(i.qty)||0),0);
+}
+function averageCostForCard(cardId){
+  const items=collectionCopiesForCard(cardId);
+  const qty=items.reduce((n,i)=>n+(Number(i.qty)||0),0);
+  if(!qty)return 0;
+  return items.reduce((n,i)=>n+(Number(i.cost)||0)*(Number(i.qty)||0),0)/qty;
+}
+function duplicateSummary(){
+  const map=new Map();
+  for(const i of state.collection||[]){
+    const id=i.card?.id||`${i.card?.name}|${i.card?.set}|${i.card?.number}`;
+    if(!map.has(id)) map.set(id,{card:i.card,qty:0,entries:0});
+    const g=map.get(id);g.qty+=Number(i.qty)||0;g.entries++;
+  }
+  return [...map.values()].filter(x=>x.qty>1).sort((a,b)=>b.qty-a.qty);
+}
+
 function esc(v=''){
   return String(v).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }
@@ -253,6 +304,7 @@ function renderHome(){
         <button class="quick-card" onclick="switchTab('discover')"><span class="big-icon">⌕</span><b>Search cards</b><span>Live Pokémon lookup plus the multi-TCG catalog foundation.</span></button>
         <button class="quick-card" onclick="openTool('products')"><span class="big-icon">◈</span><b>Smart products</b><span>Sealed product pages, targets, sightings, ownership and opening history.</span></button>
         <button class="quick-card" onclick="openTool('scanner')"><span class="big-icon">◉</span><b>Scan a card</b><span>Camera capture now; smart matching is ready for the backend phase.</span></button>
+        <button class="quick-card" onclick="openTool('sets')"><span class="big-icon">▦</span><b>Master sets</b><span>Live set checklists, owned progress and missing-card tracking.</span></button>
       </div>
     </div>
 
@@ -1043,13 +1095,15 @@ async function restoreVaultFromCloud(){
 
 function renderDiscover(){
   $('discover').innerHTML = `
-    <div class="page-title"><div><h1>Card Search</h1><p>Discover cards, compare market data and add them straight to your vault.</p></div></div>
+    <div class="page-title"><div><h1>Card Search</h1><p>Discover cards, open full card pages, track raw/graded copies and jump into set checklists.</p></div></div>
+    ${activeCardDetail?`<div class="panel card-detail-panel">${renderCardDetail(activeCardDetail)}</div>`:''}
     <div class="segmented">
       <button class="${discoverMode==='live'?'active':''}" onclick="setDiscoverMode('live')">Live Pokémon</button>
       <button class="${discoverMode==='demo'?'active':''}" onclick="setDiscoverMode('demo')">Multi-TCG demo</button>
+      <button onclick="openTool('sets')">Set Explorer</button>
     </div>
     <form class="searchbar" onsubmit="doCardSearch(event)"><span>⌕</span><input id="cardSearchQ" placeholder="${discoverMode==='live'?'Charizard, Pikachu, Mew...':'Search game, card, set...'}"><button class="btn primary">Search</button></form>
-    <div class="notice" style="margin-top:9px"><span>ℹ</span><span>${discoverMode==='live'?'This uses the public Pokémon TCG data source when available. Other TCG providers can plug into the same normalized card model later.':'Demo data is clearly labeled and exists only to test the multi-TCG experience.'}</span></div>
+    <div class="notice" style="margin-top:9px"><span>ℹ</span><span>${discoverMode==='live'?'Live Pokémon search uses the public Pokémon TCG data source when available. Card and set pages are normalized so more TCG providers can be added later.':'Demo data is clearly labeled and exists only to test the multi-TCG experience.'}</span></div>
     <div class="result-grid">${discoverResults.map(cardResultMarkup).join('')}</div>`;
 }
 function setDiscoverMode(m){ discoverMode=m; discoverResults=m==='demo'?demoCards:[]; renderDiscover(); }
@@ -1073,19 +1127,73 @@ async function doCardSearch(e){
       const ps=Object.values(c.tcgplayer?.prices||{});
       const market=ps.find(p=>typeof p.market==='number')?.market;
       const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
-      return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',number:c.number||'',rarity:c.rarity||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
+      return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',supertype:c.supertype||'',subtypes:c.subtypes||[],image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
     });
     renderDiscover(); toast(`${discoverResults.length} cards found`);
   }catch(e){ discoverResults=[]; renderDiscover(); toast(e.message||'Card search failed'); }
 }
 function cardResultMarkup(c){
-  return `<article class="card-result">${cardArt(c)}<div><div class="eyebrow">${esc(c.game)} • ${esc(c.set)}</div><h3>${esc(c.name)}</h3><div class="tiny">${esc(c.number||'—')} ${c.rarity?'• '+esc(c.rarity):''}</div><div class="price-row"><strong>${money(Number(c.market))}</strong>${typeof c.low==='number'?`<span>Low ${money(c.low)}</span>`:''}</div><div class="action-row"><button class="btn primary" onclick='addCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>＋ Add</button><button class="btn" onclick='addWishlist(${JSON.stringify(c).replace(/'/g,"&#39;")})'>♡ Watch</button><button class="btn" onclick='addPriceAlert(${JSON.stringify(c).replace(/'/g,"&#39;")})'>◎ Price alert</button>${c.url?`<a class="btn" href="${esc(c.url)}" target="_blank" rel="noreferrer">Market ↗</a>`:''}</div></div></article>`;
+  const owned=totalOwnedForCard(c.id);
+  return `<article class="card-result">${cardArt(c)}<div><div class="eyebrow">${esc(c.game)} • ${esc(c.set)}</div><h3>${esc(c.name)}</h3><div class="tiny">${esc(c.number||'—')} ${c.rarity?'• '+esc(c.rarity):''}${owned?` • <span class="good">${owned} owned</span>`:''}</div><div class="price-row"><strong>${money(Number(c.market))}</strong>${typeof c.low==='number'?`<span>Low ${money(c.low)}</span>`:''}</div><div class="action-row"><button class="btn primary" onclick='openCardDetail(${JSON.stringify(c).replace(/'/g,"&#39;")})'>Details</button><button class="btn" onclick='addCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>＋ Raw</button><button class="btn" onclick='addGradedCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>◇ Graded</button><button class="btn" onclick='addWishlist(${JSON.stringify(c).replace(/'/g,"&#39;")})'>♡</button>${c.url?`<a class="btn" href="${esc(c.url)}" target="_blank" rel="noreferrer">Market ↗</a>`:''}</div></div></article>`;
 }
 function addCard(card){
-  const ex=state.collection.find(x=>x.card.id===card.id&&x.condition==='Near Mint');
+  ensureCollectionSchema();
+  const location=binderNames()[0]||'Main Binder';
+  const ex=state.collection.find(x=>x.card.id===card.id&&x.condition==='Near Mint'&&(x.format||'Raw')==='Raw'&&x.location===location);
   if(ex) ex.qty+=1;
-  else state.collection.unshift({uid:uid(),card,qty:1,condition:'Near Mint',cost:Number(card.market)||0,location:'Binder'});
-  saveState(); toast('Added to vault');
+  else state.collection.unshift({uid:uid(),card,qty:1,condition:'Near Mint',cost:Number(card.market)||0,location,format:'Raw',grader:'',grade:'',cert:'',language:'English',variant:'Standard'});
+  saveState(); toast('Raw copy added to vault'); renderDiscover();
+}
+function addGradedCard(card){
+  ensureCollectionSchema();
+  const grader=(prompt('Grading company','PSA')||'PSA').trim();
+  const grade=(prompt('Grade','10')||'').trim();
+  const cert=(prompt('Certification number (optional)','')||'').trim();
+  const paid=Math.max(0,Number(prompt('Cost paid',card.market?String(card.market):'0'))||0);
+  const location=binderNames()[0]||'Main Binder';
+  state.collection.unshift({uid:uid(),card,qty:1,condition:'Graded',cost:paid,location,format:'Graded',grader,grade,cert,language:'English',variant:'Standard'});
+  saveState(); toast('Graded copy added'); renderDiscover();
+}
+function openCardDetail(card){
+  activeCardDetail=card;
+  renderDiscover();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function closeCardDetail(){ activeCardDetail=null; renderDiscover(); }
+function renderCardDetail(card){
+  ensureCollectionSchema();
+  const copies=collectionCopiesForCard(card.id);
+  const rawQty=copies.filter(x=>(x.format||'Raw')==='Raw').reduce((n,x)=>n+(Number(x.qty)||0),0);
+  const gradedQty=copies.filter(x=>x.format==='Graded').reduce((n,x)=>n+(Number(x.qty)||0),0);
+  const total=rawQty+gradedQty;
+  const avg=averageCostForCard(card.id);
+  const market=Number(card.market)||0;
+  const gain=total ? collectionValueForCard(card.id)-avg*total : 0;
+  return `<div class="card-detail">
+    <div class="card-detail-hero">
+      ${cardArt(card)}
+      <div class="grow"><div class="eyebrow">${esc(card.game)} • ${esc(card.set)}</div><h2>${esc(card.name)}</h2><p>${esc(card.number||'—')} ${card.rarity?'• '+esc(card.rarity):''}${card.artist?' • Artist '+esc(card.artist):''}</p></div>
+      <button class="btn" onclick="closeCardDetail()">Close</button>
+    </div>
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Market</span><strong>${money(market)}</strong><small>${typeof card.low==='number'?'Low '+money(card.low):'Market reference'}</small></div>
+      <div class="stat-card"><span>Owned</span><strong>${total}</strong><small>${rawQty} raw • ${gradedQty} graded</small></div>
+      <div class="stat-card"><span>Avg cost</span><strong>${total?money(avg):'—'}</strong><small>Your copies</small></div>
+      <div class="stat-card"><span>Unrealized</span><strong class="${gain>=0?'good':'bad'}">${total?money(gain):'—'}</strong><small>Using card market</small></div>
+    </div>
+    <div class="action-row">
+      <button class="btn primary" onclick='addCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>＋ Add raw</button>
+      <button class="btn" onclick='addGradedCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>◇ Add graded</button>
+      <button class="btn" onclick='addWishlist(${JSON.stringify(card).replace(/'/g,"&#39;")})'>♡ Wishlist</button>
+      <button class="btn" onclick='addPriceAlert(${JSON.stringify(card).replace(/'/g,"&#39;")})'>◎ Alert</button>
+      ${card.setId?`<button class="btn" onclick='openSetByCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>▦ Open set</button>`:''}
+      ${card.url?`<a class="btn" href="${esc(card.url)}" target="_blank" rel="noreferrer">Market ↗</a>`:''}
+    </div>
+    <div class="subpanel" style="margin-top:10px">
+      <div class="section-head"><div><h2>Your copies</h2><p>Raw and graded copies are tracked separately.</p></div></div>
+      ${copies.length?copies.map(i=>`<div class="compact-row"><div class="grow"><strong>${esc(i.format||'Raw')}${i.format==='Graded'?` • ${esc(i.grader)} ${esc(i.grade)}`:''}</strong><span>${esc(i.location||'Main Binder')} • Qty ${i.qty} • cost ${money(Number(i.cost))}${i.cert?' • cert '+esc(i.cert):''}</span></div><div class="right"><strong>${money((Number(card.market)||0)*(Number(i.qty)||0))}</strong></div></div>`).join(''):`<div class="empty">No copies owned yet.</div>`}
+    </div>
+  </div>`;
 }
 function addWishlist(card){
   if(!state.wishlist.some(x=>x.card.id===card.id)) state.wishlist.unshift({uid:uid(),card,target:null,createdAt:new Date().toISOString()});
@@ -1109,26 +1217,84 @@ function renderVault(){
       <div class="stat-card"><span>Total cost</span><strong>${money(t.cost)}</strong><small>Cards + sealed</small></div>
       <div class="stat-card"><span>Gain / loss</span><strong class="${t.gain>=0?'good':'bad'}">${money(t.gain)}</strong><small>${t.pct.toFixed(1)}%</small></div>
     </div>
-    <div class="segmented"><button class="${vaultTab==='cards'?'active':''}" onclick="setVaultTab('cards')">Cards</button><button class="${vaultTab==='sealed'?'active':''}" onclick="setVaultTab('sealed')">Sealed</button><button class="${vaultTab==='sets'?'active':''}" onclick="setVaultTab('sets')">Set goals</button></div>
-    <div id="vaultBody">${vaultTab==='cards'?renderCardVault():vaultTab==='sealed'?renderSealedVault():renderSetGoals()}</div>`;
+    <div class="segmented wrap"><button class="${vaultTab==='cards'?'active':''}" onclick="setVaultTab('cards')">Cards</button><button class="${vaultTab==='sealed'?'active':''}" onclick="setVaultTab('sealed')">Sealed</button><button class="${vaultTab==='binders'?'active':''}" onclick="setVaultTab('binders')">Binders</button><button class="${vaultTab==='duplicates'?'active':''}" onclick="setVaultTab('duplicates')">Duplicates</button><button class="${vaultTab==='sets'?'active':''}" onclick="setVaultTab('sets')">Set goals</button></div>
+    <div id="vaultBody">${vaultTab==='cards'?renderCardVault():vaultTab==='sealed'?renderSealedVault():vaultTab==='binders'?renderBinders():vaultTab==='duplicates'?renderDuplicates():renderSetGoals()}</div>`;
 }
 function setVaultTab(t){ vaultTab=t; renderVault(); }
 function renderCardVault(){
+  ensureCollectionSchema();
   if(!state.collection.length) return `<div class="panel"><div class="empty">Your card vault is empty. Add cards from Search.</div></div>`;
-  return `<div class="panel">${state.collection.map(i=>{
-    const val=(Number(i.card.market)||0)*(Number(i.qty)||0), gain=(Number(i.card.market)||0-Number(i.cost)||0)*(Number(i.qty)||0);
-    return `<div class="vault-item">${cardArt(i.card)}<div><div class="eyebrow">${esc(i.card.game)} • ${esc(i.card.set)}</div><h3>${esc(i.card.name)}</h3><div class="mini-grid">
-      <label class="field"><span>Qty</span><input type="number" min="1" value="${i.qty}" onchange="updateCollection('${i.uid}','qty',this.value)"></label>
-      <label class="field"><span>Cost ea.</span><input type="number" min="0" step=".01" value="${i.cost}" onchange="updateCollection('${i.uid}','cost',this.value)"></label>
-      <label class="field"><span>Condition</span><select onchange="updateCollection('${i.uid}','condition',this.value)">${['Near Mint','Lightly Played','Moderately Played','Heavily Played'].map(c=>`<option ${c===i.condition?'selected':''}>${c}</option>`).join('')}</select></label>
-    </div></div><div class="right"><strong>${money(val)}</strong><small class="${gain>=0?'good':'bad'}">${gain>=0?'+':''}${money(gain)}</small><button class="remove" onclick="removeCollection('${i.uid}')">Remove</button></div></div>`;
-  }).join('')}</div>`;
+  const raw=state.collection.filter(i=>(i.format||'Raw')==='Raw').reduce((n,i)=>n+(Number(i.qty)||0),0);
+  const graded=state.collection.filter(i=>i.format==='Graded').reduce((n,i)=>n+(Number(i.qty)||0),0);
+  return `<div class="panel">
+    <div class="section-head"><div><h2>Card collection</h2><p>${raw} raw • ${graded} graded • ${duplicateSummary().length} duplicate card types</p></div><button class="btn" onclick="openTool('sets')">Set Explorer</button></div>
+    ${state.collection.map(i=>{
+      const val=(Number(i.card.market)||0)*(Number(i.qty)||0), gain=((Number(i.card.market)||0)-Number(i.cost||0))*(Number(i.qty)||0);
+      return `<div class="vault-item">${cardArt(i.card)}<div><div class="eyebrow">${esc(i.card.game)} • ${esc(i.card.set)}</div><h3><button class="card-name-link" onclick='openCollectionCardDetail("${i.uid}")'>${esc(i.card.name)}</button></h3>
+      <div class="collection-badges"><span>${esc(i.format||'Raw')}</span>${i.format==='Graded'?`<span>${esc(i.grader||'Graded')} ${esc(i.grade||'')}</span>`:''}<span>${esc(i.location||'Main Binder')}</span></div>
+      <div class="mini-grid four">
+        <label class="field"><span>Qty</span><input type="number" min="1" value="${i.qty}" onchange="updateCollection('${i.uid}','qty',this.value)"></label>
+        <label class="field"><span>Cost ea.</span><input type="number" min="0" step=".01" value="${i.cost}" onchange="updateCollection('${i.uid}','cost',this.value)"></label>
+        <label class="field"><span>Condition</span><select onchange="updateCollection('${i.uid}','condition',this.value)">${['Near Mint','Lightly Played','Moderately Played','Heavily Played','Graded'].map(c=>`<option ${c===i.condition?'selected':''}>${c}</option>`).join('')}</select></label>
+        <label class="field"><span>Binder</span><select onchange="updateCollection('${i.uid}','location',this.value)">${binderNames().map(b=>`<option ${b===i.location?'selected':''}>${esc(b)}</option>`).join('')}</select></label>
+      </div></div>
+      <div class="right"><strong>${money(val)}</strong><small class="${gain>=0?'good':'bad'}">${gain>=0?'+':''}${money(gain)}</small><button class="remove" onclick="removeCollection('${i.uid}')">Remove</button></div></div>`;
+    }).join('')}
+  </div>`;
+}
+function openCollectionCardDetail(id){
+  const i=state.collection.find(x=>x.uid===id);if(!i)return;
+  activeCardDetail=i.card;switchTab('discover');
 }
 function updateCollection(id,key,val){
   const i=state.collection.find(x=>x.uid===id); if(!i) return;
-  i[key]=key==='condition'?val:Math.max(key==='qty'?1:0,Number(val)||0); saveState(); renderVault();
+  if(['condition','location','format','grader','grade','cert','language','variant'].includes(key)) i[key]=val;
+  else i[key]=Math.max(key==='qty'?1:0,Number(val)||0);
+  saveState(); renderVault();
 }
 function removeCollection(id){ state.collection=state.collection.filter(x=>x.uid!==id); saveState(); renderVault(); }
+function renderBinders(){
+  ensureCollectionSchema();
+  return `<div class="panel">
+    <div class="section-head"><div><h2>Binder manager</h2><p>Organize cards by physical binder, box or storage location.</p></div><button class="btn primary" onclick="addBinder()">＋ Binder</button></div>
+    ${state.binders.map(b=>{
+      const items=state.collection.filter(i=>i.location===b.name);
+      const qty=items.reduce((n,i)=>n+(Number(i.qty)||0),0);
+      const value=items.reduce((n,i)=>n+(Number(i.card.market)||0)*(Number(i.qty)||0),0);
+      return `<div class="binder-card"><div class="binder-icon">▣</div><div class="grow"><strong>${esc(b.name)}</strong><span>${esc(b.game||'All')} • ${qty} cards • ${money(value)}${b.notes?' • '+esc(b.notes):''}</span></div><div class="right"><button class="btn" onclick="renameBinder('${b.uid}')">Edit</button>${state.binders.length>1?`<button class="remove" onclick="deleteBinder('${b.uid}')">Delete</button>`:''}</div></div>`;
+    }).join('')}
+  </div>`;
+}
+function addBinder(){
+  ensureCollectionSchema();
+  const name=(prompt('Binder / storage name','Binder 2')||'').trim();if(!name)return;
+  if(state.binders.some(b=>b.name.toLowerCase()===name.toLowerCase())){toast('That binder already exists');return;}
+  const game=(prompt('Game / category','All')||'All').trim();
+  const notes=(prompt('Notes (optional)','')||'').trim();
+  state.binders.push({uid:uid(),name,game,notes});saveState();renderVault();toast('Binder added');
+}
+function renameBinder(id){
+  const b=state.binders.find(x=>x.uid===id);if(!b)return;
+  const old=b.name,newName=(prompt('Binder name',b.name)||'').trim();if(!newName)return;
+  b.name=newName;
+  b.game=(prompt('Game / category',b.game||'All')||b.game||'All').trim();
+  b.notes=(prompt('Notes',b.notes||'')||'').trim();
+  state.collection.forEach(i=>{if(i.location===old)i.location=newName});
+  saveState();renderVault();
+}
+function deleteBinder(id){
+  const b=state.binders.find(x=>x.uid===id);if(!b)return;
+  const fallback=state.binders.find(x=>x.uid!==id);if(!fallback)return;
+  if(!confirm(`Delete ${b.name}? Its cards will move to ${fallback.name}.`))return;
+  state.collection.forEach(i=>{if(i.location===b.name)i.location=fallback.name});
+  state.binders=state.binders.filter(x=>x.uid!==id);saveState();renderVault();
+}
+function renderDuplicates(){
+  const d=duplicateSummary();
+  return `<div class="panel"><div class="section-head"><div><h2>Duplicate Center</h2><p>Quickly see extra copies that may be useful for trades, sales or another binder.</p></div></div>
+    ${d.length?d.map(x=>`<div class="duplicate-row">${cardArt(x.card)}<div class="grow"><strong>${esc(x.card.name)}</strong><span>${esc(x.card.set)} • ${esc(x.card.number||'')} • ${x.qty} total copies</span></div><div class="right"><strong>${money((Number(x.card.market)||0)*x.qty)}</strong><button class="btn" onclick='openCardDetail(${JSON.stringify(x.card).replace(/'/g,"&#39;")});switchTab("discover")'>Details</button></div></div>`).join(''):`<div class="empty">No duplicate cards yet.</div>`}
+  </div>`;
+}
 function renderSealedVault(){
   return `
     <div class="panel">
@@ -1197,6 +1363,7 @@ function renderTools(){
   $('tools').innerHTML = `
     <div class="page-title"><div><h1>Collector Tools</h1><p>The rest of your collecting workflow, all under one roof.</p></div></div>
     <div class="tool-menu">
+      ${toolButton('sets','▦','Sets','Master-set explorer')}
       ${toolButton('products','◈','Products','Smart sealed pages')}
       ${toolButton('scanner','◉','Scanner','Capture cards')}
       ${toolButton('wishlist','♡','Wishlist','Cards you want')}
@@ -1213,6 +1380,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='sets') return renderSetExplorerTool();
   if(toolsTab==='products') return renderProductsTool();
   if(toolsTab==='scanner') return renderScannerTool();
   if(toolsTab==='wishlist') return renderWishlistTool();
@@ -1224,6 +1392,90 @@ function renderToolBody(){
   if(toolsTab==='account') return renderAccountTool();
   return renderSettingsTool();
 }
+
+
+function renderSetExplorerTool(){
+  const ownedSets=new Map();
+  for(const i of state.collection||[]){
+    const key=i.card?.setId||i.card?.set||'Unknown';
+    if(!ownedSets.has(key))ownedSets.set(key,{name:i.card?.set||'Unknown',id:i.card?.setId||'',owned:new Set(),qty:0,total:i.card?.setTotal||i.card?.setPrintedTotal||0});
+    const g=ownedSets.get(key);g.owned.add(i.card?.id||`${i.card?.number}`);g.qty+=Number(i.qty)||0;
+  }
+  return `<div class="panel set-explorer-panel">
+    <div class="section-head"><div><div class="eyebrow">MASTER SET LAB</div><h2>Set Explorer</h2><p>Search Pokémon sets, open a live checklist, see what you own and add missing cards directly to the vault.</p></div></div>
+    <form class="searchbar" onsubmit="searchPokemonSets(event)"><span>▦</span><input id="setSearchQ" placeholder="Search set name, e.g. Journey Together"><button class="btn primary" ${setExplorerBusy?'disabled':''}>${setExplorerBusy?'Searching…':'Search sets'}</button></form>
+    <div class="set-owned-summary">
+      ${ownedSets.size?[...ownedSets.values()].slice(0,8).map(s=>`<button class="set-chip" onclick='openSetByInfo(${JSON.stringify({id:s.id,name:s.name,total:s.total}).replace(/'/g,"&#39;")})'><b>${esc(s.name)}</b><span>${s.owned.size} unique owned${s.total?' / '+s.total:''}</span></button>`).join(''):`<span class="tiny">Your owned sets will appear here as your collection grows.</span>`}
+    </div>
+    <div class="set-search-results">${setExplorerResults.length?setExplorerResults.map(setResultMarkup).join(''):`<div class="empty">Search for a Pokémon set to load its checklist.</div>`}</div>
+  </div>
+  ${activeSet?`<div class="panel">${renderActiveSet()}</div>`:''}`;
+}
+async function searchPokemonSets(e){
+  e.preventDefault();
+  const q=$('setSearchQ')?.value.trim()||'';if(!q){toast('Enter a set name');return;}
+  setExplorerBusy=true;renderTools();
+  try{
+    const safe=q.replace(/"/g,'');
+    const r=await fetch(`https://api.pokemontcg.io/v2/sets?q=name:%22${encodeURIComponent(safe)}%22&orderBy=-releaseDate&pageSize=20`);
+    if(!r.ok)throw new Error(`Set API returned ${r.status}`);
+    const d=await r.json();
+    setExplorerResults=(d.data||[]).map(s=>({id:s.id,name:s.name,series:s.series||'',printedTotal:s.printedTotal||0,total:s.total||0,releaseDate:s.releaseDate||'',images:s.images||{}}));
+    toast(`${setExplorerResults.length} sets found`);
+  }catch(e){setExplorerResults=[];toast(e.message||'Set search failed')}
+  finally{setExplorerBusy=false;renderTools()}
+}
+function setResultMarkup(s){
+  const owned=new Set(state.collection.filter(i=>(i.card?.setId&&i.card.setId===s.id)||(!i.card?.setId&&i.card?.set===s.name)).map(i=>i.card?.id||i.card?.number));
+  return `<button class="set-result" onclick='openSetByInfo(${JSON.stringify(s).replace(/'/g,"&#39;")})'>
+    <div class="set-symbol">${s.images?.symbol?`<img src="${esc(s.images.symbol)}" alt="">`:'▦'}</div>
+    <div class="grow"><strong>${esc(s.name)}</strong><span>${esc(s.series)} • ${esc(s.releaseDate||'')} • ${s.printedTotal||s.total||0} cards</span></div>
+    <div class="right"><strong>${owned.size}</strong><small>owned</small></div>
+  </button>`;
+}
+async function openSetByInfo(s){
+  if(!s?.id){
+    activeSet={id:'',name:s?.name||'Set',series:'',printedTotal:s?.total||0,total:s?.total||0,releaseDate:''};
+    activeSetCards=state.collection.filter(i=>i.card?.set===activeSet.name).map(i=>i.card);
+    renderTools();return;
+  }
+  activeSet=s;activeSetCards=[];setExplorerBusy=true;renderTools();
+  try{
+    const r=await fetch(`https://api.pokemontcg.io/v2/cards?q=set.id:${encodeURIComponent(s.id)}&pageSize=250&orderBy=number`);
+    if(!r.ok)throw new Error(`Set cards API returned ${r.status}`);
+    const d=await r.json();
+    activeSetCards=(d.data||[]).map(c=>{
+      const ps=Object.values(c.tcgplayer?.prices||{});
+      const market=ps.find(p=>typeof p.market==='number')?.market;
+      const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
+      return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||s.name,setId:c.set?.id||s.id,setSeries:c.set?.series||s.series||'',setPrintedTotal:c.set?.printedTotal||s.printedTotal||0,setTotal:c.set?.total||s.total||0,releaseDate:c.set?.releaseDate||s.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
+    });
+  }catch(e){toast(e.message||'Could not load set checklist')}
+  finally{setExplorerBusy=false;renderTools()}
+}
+function openSetByCard(card){
+  const s={id:card.setId||'',name:card.set||'Set',series:card.setSeries||'',printedTotal:card.setPrintedTotal||0,total:card.setTotal||0,releaseDate:card.releaseDate||''};
+  toolsTab='sets';switchTab('tools');
+  setTimeout(()=>openSetByInfo(s),0);
+}
+function renderActiveSet(){
+  const uniqueOwned=new Set(state.collection.filter(i=>(activeSet.id&&i.card?.setId===activeSet.id)||(!activeSet.id&&i.card?.set===activeSet.name)).map(i=>i.card?.id||i.card?.number));
+  const total=activeSetCards.length||activeSet.printedTotal||activeSet.total||0;
+  const pct=total?Math.min(100,uniqueOwned.size/total*100):0;
+  const missing=activeSetCards.filter(c=>!uniqueOwned.has(c.id)).length;
+  return `<div class="active-set">
+    <div class="set-hero"><div><div class="eyebrow">${esc(activeSet.series||'POKÉMON SET')}</div><h2>${esc(activeSet.name)}</h2><p>${esc(activeSet.releaseDate||'')} • ${total} checklist cards</p></div><div class="set-percent"><b>${pct.toFixed(1)}%</b><span>complete</span></div></div>
+    <div class="progress"><div style="width:${pct}%"></div></div>
+    <div class="meta-grid"><div class="meta"><span>Unique owned</span><strong>${uniqueOwned.size}</strong></div><div class="meta"><span>Missing</span><strong>${missing||Math.max(0,total-uniqueOwned.size)}</strong></div><div class="meta"><span>Total checklist</span><strong>${total}</strong></div></div>
+    <div class="set-checklist">
+      ${activeSetCards.length?activeSetCards.map(c=>{
+        const owned=uniqueOwned.has(c.id);
+        return `<div class="check-card ${owned?'owned':''}">${cardArt(c)}<div class="grow"><strong>${esc(c.number||'')} • ${esc(c.name)}</strong><span>${esc(c.rarity||'')} • ${money(Number(c.market))}</span></div><div class="right">${owned?`<span class="owned-mark">✓ OWNED</span>`:`<button class="btn primary" onclick='addCard(${JSON.stringify(c).replace(/'/g,"&#39;")});renderTools()'>＋ Add</button>`}<button class="link-btn" onclick='openCardFromSet(${JSON.stringify(c).replace(/'/g,"&#39;")})'>Details</button></div></div>`;
+      }).join(''):`<div class="empty">No live checklist loaded for this set.</div>`}
+    </div>
+  </div>`;
+}
+function openCardFromSet(card){activeCardDetail=card;switchTab('discover')}
 
 let activeProductId = null;
 
@@ -1466,9 +1718,9 @@ $('hiddenImport').addEventListener('change',e=>{
 });
 function resetApp(){if(confirm('Reset all local 2GEN Vault data on this device?')){localStorage.removeItem(STORAGE_KEY);state=structuredClone(seed);render(currentTab);toast('Local data reset')}}
 function exportCollectionCSV(){
-  const rows=[['Type','Game','Name','Set','Number','Condition','Qty','CostEach','MarketEach','Location']];
-  state.collection.forEach(i=>rows.push(['Card',i.card.game,i.card.name,i.card.set,i.card.number||'',i.condition,i.qty,i.cost,i.card.market||'',i.location||'']));
-  state.sealed.forEach(i=>rows.push(['Sealed',i.game,i.name,'','','',i.qty,i.cost,i.current,i.location||'']));
+  const rows=[['Type','Game','Name','Set','Number','Condition','Format','Grader','Grade','Cert','Qty','CostEach','MarketEach','Location']];
+  state.collection.forEach(i=>rows.push(['Card',i.card.game,i.card.name,i.card.set,i.card.number||'',i.condition,i.format||'Raw',i.grader||'',i.grade||'',i.cert||'',i.qty,i.cost,i.card.market||'',i.location||'']));
+  state.sealed.forEach(i=>rows.push(['Sealed',i.game,i.name,'','','','','','','',i.qty,i.cost,i.current,i.location||'']));
   const csv=rows.map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='2gen-vault-collection.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)
 }
@@ -1478,8 +1730,8 @@ Object.assign(window,{
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
-  setDiscoverMode,doCardSearch,addCard,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
+  setToolTab,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -1497,6 +1749,7 @@ window.addEventListener('twogen-auth-changed',()=>{
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(reg=>reg.update()).catch(()=>{}));
 }
+ensureCollectionSchema();
 ensureCatalogSeed();
 render('home');
 })();

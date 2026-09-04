@@ -278,3 +278,56 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   .product-action-grid{grid-template-columns:1fr}
   .product-row{grid-template-columns:42px 1fr auto}.product-icon{width:42px;height:42px}
 }
+
+
+/* v0.9 — Master Set Lab, Card Detail, Binders, Raw/Graded */
+.card-detail-panel{
+  background:
+    radial-gradient(circle at 95% 0%,rgba(21,101,255,.17),transparent 32%),
+    rgba(17,21,29,.96);
+}
+.card-detail{display:grid;gap:11px}
+.card-detail-hero{display:grid;grid-template-columns:82px 1fr auto;gap:11px;align-items:center}
+.card-detail-hero .thumb{width:82px}
+.card-detail-hero h2{margin:3px 0 5px;font-size:22px}
+.card-detail-hero p{font-size:9px;color:var(--muted)}
+.collection-badges{display:flex;gap:5px;flex-wrap:wrap;margin:5px 0}
+.collection-badges span{font-size:7px;padding:4px 6px;border:1px solid var(--line);border-radius:999px;color:#b7c2d0;background:#0c1118}
+.card-name-link{border:0;background:transparent;color:var(--text);padding:0;font-weight:850;text-align:left}
+.mini-grid.four{grid-template-columns:52px 78px 1fr 1fr}
+.binder-card,.duplicate-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.binder-card:last-child,.duplicate-row:last-child{border-bottom:0}
+.binder-icon{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;border:1px solid var(--line);background:linear-gradient(145deg,#13213b,#17111e);font-size:20px;color:#7ca3ff}
+.duplicate-row .thumb{width:48px}
+
+.set-explorer-panel{
+  background:
+    radial-gradient(circle at 92% 0%,rgba(159,124,255,.12),transparent 28%),
+    radial-gradient(circle at 6% 0%,rgba(21,101,255,.18),transparent 36%),
+    rgba(17,21,29,.96);
+}
+.set-owned-summary{display:flex;gap:6px;overflow:auto;margin:10px 0}
+.set-chip{min-width:145px;text-align:left;border:1px solid var(--line);border-radius:12px;padding:9px;background:#0c1219;color:var(--text)}
+.set-chip b{display:block;font-size:9px}.set-chip span{display:block;font-size:7px;color:var(--muted);margin-top:4px}
+.set-search-results{display:grid;gap:7px;margin-top:10px}
+.set-result{display:grid;grid-template-columns:46px 1fr auto;gap:9px;align-items:center;width:100%;border:1px solid var(--line);border-radius:13px;padding:9px;background:#0d131a;color:var(--text);text-align:left}
+.set-symbol{width:46px;height:46px;border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;overflow:hidden;font-size:20px}
+.set-symbol img{max-width:80%;max-height:80%;object-fit:contain}
+.set-hero{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.set-hero h2{margin:3px 0 4px;font-size:23px}
+.set-percent{width:66px;height:66px;border-radius:18px;display:flex;flex-direction:column;justify-content:center;align-items:center;background:rgba(21,101,255,.09);border:1px solid rgba(21,101,255,.3)}
+.set-percent b{font-size:17px}.set-percent span{font-size:7px;color:var(--muted)}
+.set-checklist{display:grid;gap:6px;margin-top:11px}
+.check-card{display:grid;grid-template-columns:44px 1fr auto;gap:8px;align-items:center;border:1px solid var(--line-soft);border-radius:12px;padding:7px;background:#0b1118}
+.check-card .thumb{width:44px}
+.check-card.owned{border-color:rgba(46,211,154,.24);background:rgba(46,211,154,.035)}
+.owned-mark{display:inline-flex;font-size:7px;font-weight:900;padding:5px 6px;border-radius:999px;background:rgba(46,211,154,.09);border:1px solid rgba(46,211,154,.27);color:#86e7c5}
+@media(min-width:760px){
+  .quick-grid{grid-template-columns:repeat(5,1fr)}
+  .set-checklist{grid-template-columns:1fr 1fr}
+}
+@media(max-width:520px){
+  .card-detail-hero{grid-template-columns:68px 1fr}.card-detail-hero .thumb{width:68px}.card-detail-hero>.btn{grid-column:2;justify-self:start}
+  .mini-grid.four{grid-template-columns:48px 72px 1fr}.mini-grid.four .field:last-child{grid-column:1/-1}
+  .set-hero{align-items:flex-start}
+}

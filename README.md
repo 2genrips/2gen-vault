@@ -1,4 +1,4 @@
-# 2GEN Vault — Smart Products v0.8 (GitHub Pages)
+# 2GEN Vault — Master Set Lab v0.9 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -201,3 +201,52 @@ Inventory results and community reports can now open/create the matching smart p
 Your sealed vault can also jump back into a product page.
 
 Opening a sealed item records it in Opening History so you can track how much sealed inventory you actually open over time.
+
+
+## New in v0.9 — Master Set Lab + serious collection organization
+
+### Card detail pages
+Search results now open a full card page with:
+- market / low price
+- owned quantity
+- raw vs graded count
+- average cost
+- unrealized collection value
+- your individual copies
+- wishlist / alert actions
+- direct set-page access when the provider supplies a set ID
+
+### Raw + graded copies
+Copies can now be tracked separately:
+- Raw
+- Grader
+- Grade
+- Certification number
+- Condition
+- Cost basis
+- Binder / storage location
+
+### Binder manager
+Create physical collection locations such as:
+- Main Binder
+- Trade Binder
+- Son's Binder
+- Toploader Box
+- Graded Slab Case
+
+Moving or renaming a binder keeps its card assignments.
+
+### Duplicate Center
+The Vault now finds cards with multiple owned copies and surfaces them for trade/sell decisions.
+
+### Master Set Lab
+For Pokémon sets, Set Explorer can:
+- search live sets
+- load the live card checklist
+- calculate unique owned cards
+- calculate completion percentage
+- show missing cards
+- add missing cards directly
+- open individual card details
+
+Other TCGs can use the same set/checklist UI when their providers are connected.

@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v0.8 Smart Product Pages
+## Current build: v0.9 Master Set Lab
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -95,3 +95,15 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Opening log/history
 - Inventory/community report -> product page
 - Custom product creation
+
+
+## v0.9 completed
+- Full card detail pages
+- Raw vs graded copy tracking
+- Grader / grade / cert tracking
+- Physical binder manager
+- Duplicate Center
+- Live Pokémon set search
+- Live Pokémon master-set checklist
+- Unique owned / missing / completion %
+- Set-to-card detail workflow
