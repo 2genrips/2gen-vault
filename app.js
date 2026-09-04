@@ -143,6 +143,11 @@ let scannerBusy = false;
 let scannerLastQuery = '';
 let scannerGame = 'Pokemon';
 let scannerOcrBusy = false;
+let scannerPhotoBusy = false;
+let scannerAutoRunAfterCapture = true;
+let scannerBestMatch = null;
+let scannerLiveStream = null;
+let scannerLiveCameraOpen = false;
 let scannerOcrText = '';
 let scannerOcrConfidence = null;
 let scannerAutoCandidates = [];
@@ -3820,17 +3825,19 @@ function logOpeningFromProduct(id){
 
 
 async function loadTesseract(){
-  if(window.Tesseract?.recognize) return window.Tesseract;
-  await new Promise((resolve,reject)=>{
-    const s=document.createElement('script');
-    s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
-    s.async=true;
-    s.onload=resolve;
-    s.onerror=()=>reject(new Error('Could not load the on-device text reader.'));
-    document.head.appendChild(s);
-  });
-  if(!window.Tesseract?.recognize) throw new Error('Text reader did not initialize.');
-  return window.Tesseract;
+  if(window.Tesseract?.recognize)return window.Tesseract;
+  const urls=['https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js','https://unpkg.com/tesseract.js@5/dist/tesseract.min.js'];
+  let lastError=null;
+  for(const url of urls){
+    try{
+      await new Promise((resolve,reject)=>{
+        const s=document.createElement('script');s.src=url;s.async=true;s.crossOrigin='anonymous';
+        s.onload=resolve;s.onerror=()=>reject(new Error('OCR library failed to load'));document.head.appendChild(s);
+      });
+      if(window.Tesseract?.recognize)return window.Tesseract;
+    }catch(e){lastError=e}
+  }
+  throw lastError||new Error('The on-device text reader could not load. Check your internet connection.');
 }
 function normalizeOcrText(text=''){
   return String(text)
@@ -3877,72 +3884,230 @@ function candidateScore(card,ocrText,numberHint){
   if(card.rarity && hay.includes(String(card.rarity).toLowerCase())) score+=5;
   return Math.min(100,score);
 }
-async function autoIdentifyFromPhoto(){
+
+function openScannerCamera(mode='camera'){
+  if(mode==='gallery'){
+    openScannerFilePicker();
+    return;
+  }
+  openLiveScannerCamera();
+}
+function openScannerFilePicker(){
+  const input=$('hiddenCamera');
+  if(!input){toast('Photo picker is unavailable. Reload the app.');return;}
+  input.value='';
+  input.accept='image/*';
+  input.removeAttribute('capture');
+  try{
+    if(typeof input.showPicker==='function')input.showPicker();
+    else input.click();
+  }catch{
+    try{input.click()}catch{toast('Could not open the photo picker.')}
+  }
+}
+function scannerCameraPermissionHelp(){
+  alert(
+    'Camera access is blocked.\n\n' +
+    'On Android:\n' +
+    '1. Open phone Settings.\n' +
+    '2. Apps → 2GEN Vault (or Chrome if you run it in Chrome).\n' +
+    '3. Permissions → Camera → Allow.\n' +
+    '4. Return to 2GEN Vault and tap TAKE CARD PHOTO again.\n\n' +
+    'You can also use the Gallery button as a fallback.'
+  );
+}
+function closeLiveScannerCamera(){
+  if(scannerLiveStream){
+    try{scannerLiveStream.getTracks().forEach(t=>t.stop())}catch{}
+  }
+  scannerLiveStream=null;
+  scannerLiveCameraOpen=false;
+  document.getElementById('scannerCameraModal')?.remove();
+}
+async function openLiveScannerCamera(){
+  if(scannerLiveCameraOpen)return;
+  if(!window.isSecureContext || !navigator.mediaDevices?.getUserMedia){
+    toast('Direct camera is unavailable here. Opening photo picker instead.');
+    openScannerFilePicker();
+    return;
+  }
+
+  scannerLiveCameraOpen=true;
+  const modal=document.createElement('div');
+  modal.id='scannerCameraModal';
+  modal.className='scanner-camera-modal';
+  modal.innerHTML=`
+    <div class="scanner-camera-shell">
+      <div class="scanner-camera-topbar">
+        <div><b>2GEN Card Camera</b><span>Fill the frame with one card</span></div>
+        <button type="button" class="scanner-camera-close" onclick="closeLiveScannerCamera()">×</button>
+      </div>
+      <div class="scanner-live-stage">
+        <video id="scannerLiveVideo" autoplay muted playsinline></video>
+        <div class="scanner-card-guide"><i></i></div>
+        <div id="scannerCameraMessage" class="scanner-camera-message">Starting rear camera…</div>
+      </div>
+      <div class="scanner-camera-tips">Keep the card flat • use even light • reduce glare • make the name and collector number readable</div>
+      <div class="scanner-camera-controls">
+        <button type="button" class="btn" onclick="closeLiveScannerCamera();openScannerFilePicker()">Gallery</button>
+        <button type="button" id="scannerCaptureBtn" class="scanner-shutter" onclick="captureLiveScannerFrame()" disabled aria-label="Take photo"></button>
+        <button type="button" class="btn" onclick="scannerCameraPermissionHelp()">Permission help</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  const video=document.getElementById('scannerLiveVideo');
+  const message=document.getElementById('scannerCameraMessage');
+  const capture=document.getElementById('scannerCaptureBtn');
+
+  try{
+    let stream;
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({
+        audio:false,
+        video:{
+          facingMode:{ideal:'environment'},
+          width:{ideal:1920},
+          height:{ideal:1080}
+        }
+      });
+    }catch(firstError){
+      // Some Android browsers reject advanced rear-camera constraints.
+      stream=await navigator.mediaDevices.getUserMedia({audio:false,video:true});
+    }
+
+    scannerLiveStream=stream;
+    video.srcObject=stream;
+    await video.play();
+    message.textContent='Rear camera ready';
+    message.classList.add('ready');
+    capture.disabled=false;
+
+    setTimeout(()=>{ if(message) message.style.opacity='.15'; },1400);
+  }catch(e){
+    scannerLiveCameraOpen=false;
+    if(message){
+      message.style.opacity='1';
+      message.classList.add('error');
+      if(e?.name==='NotAllowedError'){
+        message.textContent='Camera permission was denied. Tap Permission help or use Gallery.';
+      }else if(e?.name==='NotFoundError'){
+        message.textContent='No camera was detected. Use Gallery instead.';
+      }else{
+        message.textContent='Could not start the camera. Use Gallery or check camera permission.';
+      }
+    }
+    if(capture)capture.disabled=true;
+    toast(e?.name==='NotAllowedError'?'Camera permission is blocked':'Could not start phone camera');
+  }
+}
+async function captureLiveScannerFrame(){
+  const video=document.getElementById('scannerLiveVideo');
+  if(!video || !video.videoWidth || !video.videoHeight){
+    toast('Camera is not ready yet');
+    return;
+  }
+
+  const btn=document.getElementById('scannerCaptureBtn');
+  if(btn)btn.disabled=true;
+
+  try{
+    const maxSide=1800;
+    const scale=Math.min(1,maxSide/Math.max(video.videoWidth,video.videoHeight));
+    const canvas=document.createElement('canvas');
+    canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
+    canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+    const ctx=canvas.getContext('2d',{alpha:false});
+    ctx.fillStyle='#fff';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    cameraPreview=canvas.toDataURL('image/jpeg',.92);
+
+    closeLiveScannerCamera();
+    scannerBestMatch=null;
+    scannerOcrText='';
+    scannerOcrConfidence=null;
+    scannerAutoCandidates=[];
+    scannerSearchResults=[];
+    renderTools();
+
+    await new Promise(r=>setTimeout(r,80));
+    await autoIdentifyFromPhoto(true);
+  }catch(e){
+    toast(e.message||'Could not capture the card photo');
+    if(btn)btn.disabled=false;
+  }
+}
+
+async function resizeScannerImage(file,maxSide=1800){
+  if(!file)throw new Error('No image selected.');
+  if(!String(file.type||'').startsWith('image/'))throw new Error('Choose an image file.');
+  if(file.size>25*1024*1024)throw new Error('That photo is too large. Try a normal camera photo.');
+  const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||''));r.onerror=()=>reject(new Error('Could not read the photo.'));r.readAsDataURL(file);});
+  const img=await new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=()=>reject(new Error('Could not decode the photo.'));i.src=dataUrl;});
+  const scale=Math.min(1,maxSide/Math.max(img.naturalWidth||img.width,img.naturalHeight||img.height));
+  const w=Math.max(1,Math.round((img.naturalWidth||img.width)*scale)),h=Math.max(1,Math.round((img.naturalHeight||img.height)*scale));
+  const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
+  const ctx=canvas.getContext('2d',{alpha:false});ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);ctx.drawImage(img,0,0,w,h);
+  return canvas.toDataURL('image/jpeg',.9);
+}
+async function scannerOcrImage(dataUrl){
+  const img=await new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=()=>reject(new Error('Could not prepare the photo for OCR.'));i.src=dataUrl;});
+  const canvas=document.createElement('canvas');canvas.width=img.naturalWidth||img.width;canvas.height=img.naturalHeight||img.height;
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0);
+  const imageData=ctx.getImageData(0,0,canvas.width,canvas.height),d=imageData.data;
+  for(let i=0;i<d.length;i+=4){const gray=Math.round(d[i]*.299+d[i+1]*.587+d[i+2]*.114),c=Math.max(0,Math.min(255,Math.round((gray-128)*1.35+128)));d[i]=d[i+1]=d[i+2]=c;}
+  ctx.putImageData(imageData,0,0);return canvas.toDataURL('image/jpeg',.92);
+}
+async function handleScannerPhotoFile(file){
+  if(scannerPhotoBusy)return;
+  scannerPhotoBusy=true;scannerBestMatch=null;scannerOcrText='';scannerOcrConfidence=null;scannerAutoCandidates=[];scannerSearchResults=[];
+  try{
+    toast('Preparing card photo…');cameraPreview=await resizeScannerImage(file);renderTools();await new Promise(r=>setTimeout(r,80));
+    if(scannerAutoRunAfterCapture)await autoIdentifyFromPhoto(true);else toast('Photo ready — tap Identify & live value');
+  }catch(e){toast(e.message||'Could not use that photo')}
+  finally{scannerPhotoBusy=false;const input=$('hiddenCamera');if(input)input.value='';}
+}
+async function refreshScannerCandidate(card){
+  try{if(!liveProviderSupported(card))return card;const live=await refreshUniversalCard(card);return {...live,autoScore:card.autoScore};}catch{return card}
+}
+function scannerBestMatchMarkup(){
+  const card=scannerBestMatch;if(!card)return '';
+  const value=Number(card.market),score=Number(card.autoScore)||0;
+  return `<div class="scanner-best-value"><div class="scanner-best-label">BEST CURRENT MATCH • ${score}% ${autoConfidenceLabel(card)}</div>
+    <div class="scanner-best-main">${cardArt(card)}<div class="grow"><strong>${esc(card.name)}</strong><span>${esc(card.set)} • ${esc(card.number||'—')}</span><small>Confirm set, number and variant before relying on this value.</small></div>
+      <div class="scanner-live-price"><span>LIVE MARKET REF.</span><strong>${Number.isFinite(value)?money(value):'—'}</strong>${typeof card.low==='number'?`<small>Low ${money(card.low)}</small>`:''}</div></div>
+    <div class="action-row"><button class="btn primary" onclick='selectAutoMatch(${JSON.stringify(card).replace(/'/g,"&#39;")})'>Confirm match</button><button class="btn" onclick='queueCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>＋ Queue</button>${card.url?`<a class="btn" href="${esc(card.url)}" target="_blank" rel="noreferrer">Market source ↗</a>`:''}</div></div>`;
+}
+
+async function autoIdentifyFromPhoto(autoRun=false){
   if(!cameraPreview){toast('Take or choose a card photo first');return;}
   if(scannerOcrBusy)return;
-  scannerOcrBusy=true;
-  scannerOcrText='';
-  scannerOcrConfidence=null;
-  scannerAutoCandidates=[];
-  renderTools();
+  scannerOcrBusy=true;scannerOcrText='';scannerOcrConfidence=null;scannerAutoCandidates=[];scannerBestMatch=null;renderTools();
   try{
-    toast('Reading card text on your phone…');
-    const T=await loadTesseract();
-    const result=await T.recognize(cameraPreview,'eng',{
-      logger:m=>{
-        if(m?.status==='recognizing text' && typeof m.progress==='number'){
-          const pct=Math.round(m.progress*100);
-          const el=$('ocrProgressText'); if(el) el.textContent=`Reading text… ${pct}%`;
-        }
-      }
-    });
-    const raw=result?.data?.text||'';
-    const conf=Number(result?.data?.confidence);
-    scannerOcrText=normalizeOcrText(raw);
-    scannerOcrConfidence=Number.isFinite(conf)?conf:null;
-    if(!scannerOcrText) throw new Error('No readable card text was found. Try a sharper photo with less glare.');
-
-    const numberHint=extractLikelyCardNumber(scannerOcrText);
-    const tokens=likelyNameTokens(scannerOcrText);
-    const queryTerms=tokens.slice(0,7);
-
-    // Search several likely OCR clues through the selected live provider.
+    toast(autoRun?'Scanning card and retrieving live value…':'Reading card text…');
+    const T=await loadTesseract(),ocrImage=await scannerOcrImage(cameraPreview);
+    const result=await T.recognize(ocrImage,'eng',{logger:m=>{if(m?.status==='recognizing text'&&typeof m.progress==='number'){const el=$('ocrProgressText');if(el)el.textContent=`Reading card… ${Math.round(m.progress*100)}%`;}}});
+    scannerOcrText=normalizeOcrText(result?.data?.text||'');const conf=Number(result?.data?.confidence);scannerOcrConfidence=Number.isFinite(conf)?conf:null;
+    if(!scannerOcrText)throw new Error('No readable text found. Retake closer with less glare.');
+    const numberHint=extractLikelyCardNumber(scannerOcrText),tokens=likelyNameTokens(scannerOcrText),queries=[];
+    if(numberHint)queries.push(numberHint);for(const t of tokens.slice(0,6))queries.push(t);
+    if(!queries.length)throw new Error('Not enough identifying text was readable.');
     const candidateMap=new Map();
-    const queries=[];
-    if(numberHint)queries.push(numberHint);
-    for(const token of queryTerms.slice(0,5))queries.push(token);
-
-    for(const q of queries.slice(0,6)){
+    for(const q of queries.slice(0,7)){
       try{
-        const cards=await universalSearchCards(scannerGame,q,25);
-        for(const card of cards){
-          const score=candidateScore(card,scannerOcrText,numberHint);
-          const prior=candidateMap.get(card.id);
-          if(!prior || score>prior.autoScore)candidateMap.set(card.id,{...card,autoScore:score});
-        }
+        const cards=await universalSearchCards(scannerGame,q,30);
+        for(const card of cards){const score=candidateScore(card,scannerOcrText,numberHint),prior=candidateMap.get(card.id);if(!prior||score>prior.autoScore)candidateMap.set(card.id,{...card,autoScore:score});}
       }catch{}
     }
-
-    scannerAutoCandidates=[...candidateMap.values()]
-      .sort((a,b)=>b.autoScore-a.autoScore)
-      .slice(0,12);
-
-    if(!scannerAutoCandidates.length){
-      throw new Error(`Text was read, but no confident ${scannerGame} card matches were found. Use Manual Identify instead.`);
-    }
-
-    scannerSearchResults=scannerAutoCandidates;
-    scannerAutoCandidates.forEach(c=>captureCardPrice(c,'Auto Identify Beta'));
-    saveState();
-    scannerLastMarketLookupAt=new Date().toISOString();
-    toast(`Auto Identify found ${scannerAutoCandidates.length} possible matches`);
-  }catch(e){
-    scannerAutoCandidates=[];
-    toast(e.message||'Auto Identify failed');
-  }finally{
-    scannerOcrBusy=false;
-    renderTools();
-  }
+    let ranked=[...candidateMap.values()].sort((a,b)=>b.autoScore-a.autoScore).slice(0,10);
+    if(!ranked.length)throw new Error(`No ${scannerGame} match was found. Try Manual Identify or retake the photo.`);
+    const refreshed=[];for(const c of ranked.slice(0,5))refreshed.push(await refreshScannerCandidate(c));
+    ranked=[...refreshed,...ranked.slice(5)].sort((a,b)=>b.autoScore-a.autoScore);
+    scannerAutoCandidates=ranked;scannerSearchResults=ranked;scannerBestMatch=ranked[0]||null;ranked.forEach(c=>captureCardPrice(c,'Scanner live-value lookup'));scannerLastMarketLookupAt=new Date().toISOString();saveState();
+    if(scannerBestMatch){const v=Number(scannerBestMatch.market);toast(Number.isFinite(v)?`Best match: ${scannerBestMatch.name} • ${money(v)} market reference`:`Best match: ${scannerBestMatch.name} • value unavailable`);}
+  }catch(e){scannerAutoCandidates=[];scannerSearchResults=[];scannerBestMatch=null;toast(e.message||'Card scan failed')}
+  finally{scannerOcrBusy=false;renderTools();}
 }
 function autoConfidenceLabel(card){
   const s=Number(card.autoScore)||0;
@@ -4039,13 +4204,7 @@ function reviewScannerSettings(){
   if(binder!==null && binderNames().includes(binder.trim())) state.scannerSettings.preferredBinder=binder.trim();
   saveState();renderTools();toast('Scanner settings saved');
 }
-function setScannerGame(game){
-  scannerGame=game;
-  scannerSearchResults=[];
-  scannerAutoCandidates=[];
-  scannerLastQuery='';
-  renderTools();
-}
+function setScannerGame(game){scannerGame=game;scannerSearchResults=[];scannerAutoCandidates=[];scannerBestMatch=null;scannerLastQuery='';renderTools();}
 async function scannerSearch(event){
   if(event)event.preventDefault();
   const q=($('scannerSearchQ')?.value||scannerLastQuery||'').trim();
@@ -4143,99 +4302,37 @@ function commitScanQueue(){
   saveState();renderTools();
   toast(`Vault updated • ${added} new • ${merged} merged`);
 }
-function clearScannerPhoto(){
-  cameraPreview='';
-  scannerOcrText='';
-  scannerOcrConfidence=null;
-  scannerAutoCandidates=[];
-  renderTools();
-}
+function clearScannerPhoto(){cameraPreview='';scannerOcrText='';scannerOcrConfidence=null;scannerAutoCandidates=[];scannerSearchResults=[];scannerBestMatch=null;const input=$('hiddenCamera');if(input)input.value='';renderTools();}
 
 function renderScannerTool(){
   ensureScannerSchema();
-  const activeRip=activeRipSessionId?ripSessionById(activeRipSessionId):null;
-  return `<div class="panel scanner-pro-panel">
-    <div class="section-head"><div><div class="eyebrow">2GEN AUTO IDENTIFY BETA</div><h2>Smart Scanner</h2><p>Take a card photo, read visible text on-device, rank likely Pokémon matches, then show live market fields for the match you confirm.</p></div><button class="btn" onclick="reviewScannerSettings()">⚙ Scanner rules</button></div>
-
-    <div class="scanner-stats">
-      <div><span>Queued</span><strong>${state.scanQueue.reduce((n,q)=>n+(Number(q.qty)||0),0)}</strong></div>
-      <div><span>Duplicate types</span><strong>${state.scanQueue.filter(q=>scannerOwnedQty(q.card)>0).length}</strong></div>
-      <div><span>Missing-set hits</span><strong>${state.scanQueue.filter(q=>scannerSetSignal(q.card).type==='missing').length}</strong></div>
-      <div><span>Grading review</span><strong>${state.scanQueue.filter(q=>gradingCandidate(q.card).candidate).length}</strong></div>
-    </div>
-
-    ${activeRip?`<div class="notice good"><span>✦</span><span>Active Rip Session: <b>${esc(activeRip.name)}</b>. Committed cards can also be added to that opening.</span></div>`:''}
-
-    <div class="scanner-workspace">
-      <div>
-        <div class="scanbox">${cameraPreview?`<img src="${cameraPreview}" alt="Card preview">`:`<span style="font-size:44px">◉</span><span>Fill the frame with one card</span>`}</div>
-        <div class="action-row">
-          <button class="btn primary" onclick="$('hiddenCamera').click()">◉ Take / choose photo</button>
-          ${cameraPreview?`<button class="btn auto-btn" onclick="autoIdentifyFromPhoto()" ${scannerOcrBusy?'disabled':''}>${scannerOcrBusy?'Reading…':'✦ Auto Identify Beta'}</button><button class="btn" onclick="clearScannerPhoto()">Clear</button>`:''}
-        </div>
-        ${scannerOcrBusy?`<div class="ocr-progress"><i></i><span id="ocrProgressText">Reading text…</span></div>`:''}
-      </div>
-
-      <div>
-        <div class="scanner-game-tabs">${Object.keys(LIVE_CARD_PROVIDERS).map(g=>`<button class="${scannerGame===g?'active':''}" onclick='setScannerGame(${JSON.stringify(g)})'>${esc(g)}</button>`).join('')}</div>
-        <form class="searchbar" onsubmit="scannerSearch(event)">
-          <span>⌕</span>
-          <input id="scannerSearchQ" value="${esc(scannerLastQuery)}" placeholder="Manual fallback: ${esc(scannerGame)} card name or number">
-          <button class="btn primary" ${scannerBusy?'disabled':''}>${scannerBusy?'Searching…':'Manual Identify'}</button>
-        </form>
-
-        <div class="scanner-accuracy-box">
-          <b>How Auto Identify works</b>
-          <span>1. The photo is processed on your device to read printed text.</span>
-          <span>2. Only extracted text is used to search live Pokémon card data.</span>
-          <span>3. 2GEN Vault ranks possible matches.</span>
-          <span>4. <b>You confirm the exact card</b> before it enters your Vault.</span>
-        </div>
-
-        ${scannerOcrText?`<div class="ocr-readout"><div class="kpi-line"><span>Text-reader confidence</span><strong>${scannerOcrConfidence!==null?scannerOcrConfidence.toFixed(0)+'%':'—'}</strong></div><p>${esc(scannerOcrText.slice(0,300))}${scannerOcrText.length>300?'…':''}</p></div>`:''}
-      </div>
-    </div>
-
-    ${scannerSearchResults.length?`<div class="subpanel" style="margin-top:11px"><div class="section-head"><div><h2>${scannerAutoCandidates.length?'Ranked possible matches':'Possible matches'}</h2><p>${scannerAutoCandidates.length?'Confirm the exact printing before adding it.':'Choose the correct live card result.'}</p></div><button class="link-btn" onclick="scannerSearchResults=[];scannerAutoCandidates=[];renderTools()">Clear</button></div>${scannerLastMarketLookupAt?`<div class="market-refresh-note">Market lookup retrieved ${humanAge(scannerLastMarketLookupAt)}.</div>`:''}<div class="scanner-match-list">${scannerSearchResults.map(scannerResultMarkup).join('')}</div></div>`:''}
+  const activeRip=activeRipSessionId?ripSessionById(activeRipSessionId):null,secure=location.protocol==='https:'||location.hostname==='localhost',provider=providerForGame(scannerGame);
+  return `<div class="panel scanner-pro-panel scanner-v71">
+    <div class="section-head"><div><div class="eyebrow">2GEN LIVE VALUE SCANNER</div><h2>Take a photo → identify → live market reference</h2><p>Tap TAKE CARD PHOTO to open a live rear-camera view inside 2GEN Vault. Capture one card, then identification and live-provider value lookup start automatically.</p></div><button class="btn" onclick="reviewScannerSettings()">⚙ Rules</button></div>
+    <div class="scanner-status-strip"><span class="${secure?'good':'bad'}">${secure?'✓ Direct camera supported':'! Direct camera needs HTTPS'}</span><span>Game: <b>${esc(scannerGame)}</b></span><span>Provider: <b>${esc(provider?.label||'Not connected')}</b></span><span>${scannerLastMarketLookupAt?`Lookup ${humanAge(scannerLastMarketLookupAt)}`:'No lookup yet'}</span></div>
+    <div class="scanner-game-tabs scanner-game-tabs-top">${Object.keys(LIVE_CARD_PROVIDERS).map(g=>`<button class="${scannerGame===g?'active':''}" onclick='setScannerGame(${JSON.stringify(g)})'>${esc(g)}</button>`).join('')}</div>
+    ${activeRip?`<div class="notice good"><span>✦</span><span>Active Rip Session: <b>${esc(activeRip.name)}</b>.</span></div>`:''}
+    <div class="scanner-workspace scanner-camera-workspace"><div>
+      <div class="scanbox scanner-camera-box">${cameraPreview?`<img src="${cameraPreview}" alt="Card preview">`:`<span class="camera-glyph">◉</span><b>Center one card in the frame</b><span>Use even light • avoid glare • keep card name and collector number readable</span>`}</div>
+      <div class="scanner-camera-actions"><button class="btn primary camera-main-btn" onclick="openScannerCamera('camera')" ${scannerPhotoBusy||scannerOcrBusy?'disabled':''}>📷 TAKE CARD PHOTO</button><button class="btn" onclick="openScannerCamera('gallery')" ${scannerPhotoBusy||scannerOcrBusy?'disabled':''}>▧ Gallery</button>${cameraPreview?`<button class="btn auto-btn" onclick="autoIdentifyFromPhoto(false)" ${scannerOcrBusy?'disabled':''}>${scannerOcrBusy?'Reading…':'✦ Identify & live value'}</button><button class="btn" onclick="clearScannerPhoto()">Clear</button>`:''}</div>
+      <div class="scanner-auto-note"><span>✓</span><span>A photo automatically starts identification. You still confirm the exact printing before adding it.</span></div>${scannerOcrBusy?`<div class="ocr-progress"><i></i><span id="ocrProgressText">Reading card…</span></div>`:''}
+    </div><div>
+      <form class="searchbar" onsubmit="scannerSearch(event)"><span>⌕</span><input id="scannerSearchQ" value="${esc(scannerLastQuery)}" placeholder="Manual fallback: card name or number"><button class="btn primary" ${scannerBusy?'disabled':''}>${scannerBusy?'Searching…':'Manual Identify'}</button></form>
+      <div class="scanner-accuracy-box"><b>What the value means</b><span>The camera identifies a likely printing; it does not value physical condition by itself.</span><span>2GEN Vault requests current reference fields from ${esc(provider?.label||'the selected provider')}.</span><span>Condition, exact variant, foil, language and grading can change actual sale value.</span></div>
+      ${scannerOcrText?`<div class="ocr-readout"><div class="kpi-line"><span>OCR confidence</span><strong>${scannerOcrConfidence!==null?scannerOcrConfidence.toFixed(0)+'%':'—'}</strong></div><p>${esc(scannerOcrText.slice(0,300))}${scannerOcrText.length>300?'…':''}</p></div>`:''}
+    </div></div>
+    ${scannerBestMatchMarkup()}
+    ${scannerSearchResults.length?`<div class="subpanel" style="margin-top:11px"><div class="section-head"><div><h2>${scannerAutoCandidates.length?'Other possible printings':'Possible matches'}</h2><p>Check set, collector number and variant before using the value.</p></div><button class="link-btn" onclick="scannerSearchResults=[];scannerAutoCandidates=[];scannerBestMatch=null;renderTools()">Clear</button></div>${scannerLastMarketLookupAt?`<div class="market-refresh-note">Live lookup retrieved ${humanAge(scannerLastMarketLookupAt)}.</div>`:''}<div class="scanner-match-list">${scannerSearchResults.map(scannerResultMarkup).join('')}</div></div>`:''}
   </div>
-
-  <div class="panel">
-    <div class="section-head"><div><h2>Batch review</h2><p>Review quantity, cost and binder suggestions before writing anything to your Vault.</p></div><div class="action-row"><button class="btn red" onclick="clearScanQueue()">Clear</button><button class="btn primary" onclick="commitScanQueue()">✓ Add queue to Vault</button></div></div>
-    ${renderScanQueue()}
-  </div>
-
-  <div class="panel">
-    <div class="section-head"><div><h2>Collector automation</h2><p>Useful assistance without pretending the camera can determine physical grade or authenticity.</p></div></div>
-    <div class="automation-grid">
-      <div><b>Auto Identify Beta</b><span>Reads visible text locally and ranks likely Pokémon card matches. You still confirm the exact printing.</span></div>
-      <div><b>Real market fields</b><span>After identification, available market/low fields come from the live card data provider instead of demo pricing.</span></div>
-      <div><b>Duplicate detection</b><span>Flags cards already in your Vault and shows how many copies are owned.</span></div>
-      <div><b>Set-gap detection</b><span>Flags cards that appear missing from the set when live set metadata is available.</span></div>
-      <div><b>Binder suggestion</b><span>Suggests the binder that already contains the most cards from the same set/game.</span></div>
-      <div><b>Grading review flag</b><span>Uses market threshold/rarity only. It does not judge centering, surface, edges, condition, or authenticity.</span></div>
-    </div>
-  </div>`;
+  <div class="panel"><div class="section-head"><div><h2>Batch review</h2><p>Review quantity, cost and binder before adding cards.</p></div><div class="action-row"><button class="btn red" onclick="clearScanQueue()">Clear</button><button class="btn primary" onclick="commitScanQueue()">✓ Add queue to Vault</button></div></div>${renderScanQueue()}</div>
+  <div class="panel"><div class="section-head"><div><h2>Scanner coverage</h2><p>Live providers connected to photo/manual identification.</p></div></div><div class="automation-grid">${Object.entries(LIVE_CARD_PROVIDERS).map(([g,p])=>`<div><b>✓ ${esc(g)}</b><span>${esc(p.label)} • ${esc(p.price)}</span></div>`).join('')}<div><b>Privacy</b><span>The photo is resized and OCR-processed in your browser; extracted text is used for lookup.</span></div><div><b>Condition limits</b><span>The scanner does not determine authenticity, surface, centering, edges or professional grade.</span></div></div></div>`;
 }
-
-$('hiddenCamera').addEventListener('change',e=>{
-  const f=e.target.files?.[0]; if(!f)return;
-  const r=new FileReader();
-  r.onload=()=>{
-    if(toolsTab==='rips'){
-      ripScannerPreview=String(r.result||'');
-      renderTools();
-      setTimeout(()=>{ if(activeRipSessionId) promptRipCardSearch(activeRipSessionId); },50);
-    }else{
-      cameraPreview=String(r.result||'');
-      scannerOcrText='';
-      scannerOcrConfidence=null;
-      scannerAutoCandidates=[];
-      scannerSearchResults=[];
-      renderTools();
-      toast('Photo captured — tap Auto Identify Beta');
-    }
-  };
-  r.readAsDataURL(f);
+$('hiddenCamera').addEventListener('change',async e=>{
+  const f=e.target.files?.[0];if(!f)return;
+  if(toolsTab==='rips'){
+    const r=new FileReader();r.onload=()=>{ripScannerPreview=String(r.result||'');e.target.value='';renderTools();setTimeout(()=>{if(activeRipSessionId)promptRipCardSearch(activeRipSessionId)},50);};r.readAsDataURL(f);return;
+  }
+  await handleScannerPhotoFile(f);
 });
 function renderWishlistTool(){
   return `<div class="panel"><div class="section-head"><div><h2>Wishlist</h2><p>Keep your chase cards organized.</p></div></div>${state.wishlist.length?state.wishlist.map(w=>`<div class="compact-row">${cardArt(w.card)}<div class="grow"><strong>${esc(w.card.name)}</strong><span>${esc(w.card.set)} • Market ${money(Number(w.card.market))}</span></div><div class="right"><button class="remove" onclick="removeWishlist('${w.uid}')">Remove</button></div></div>`).join(''):`<div class="empty">Tap “Watch” on a card in Search.</div>`}</div>`;
@@ -5999,7 +6096,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,setDiscoverGame,setScannerGame,setTradeSearchGame,openVaultIQCard,queueVaultIQCard,queueVaultIQWatch,updateAcquisitionStatus,removeAcquisitionItem,editVaultIQSettings,vaultIQDealCheck,setShowcaseProfile,toggleShowcaseFeatured,editShowcaseText,toggleShowcaseSetting,downloadShowcaseHtml,downloadShowcaseJson,shareShowcase,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,setDiscoverGame,setScannerGame,setTradeSearchGame,openVaultIQCard,queueVaultIQCard,queueVaultIQWatch,updateAcquisitionStatus,removeAcquisitionItem,editVaultIQSettings,vaultIQDealCheck,setShowcaseProfile,toggleShowcaseFeatured,editShowcaseText,toggleShowcaseSetting,downloadShowcaseHtml,downloadShowcaseJson,shareShowcase,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,openScannerCamera,openScannerFilePicker,openLiveScannerCamera,closeLiveScannerCamera,captureLiveScannerFrame,scannerCameraPermissionHelp,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -6033,3 +6130,5 @@ ensureDailySnapshot();
 evaluateWatchtower({notify:false});
 render('home');
 })();
+
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&scannerLiveCameraOpen)closeLiveScannerCamera();});
