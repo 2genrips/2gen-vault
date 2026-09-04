@@ -13,9 +13,10 @@
  *   GET /health
  *   GET /inventory?q=...&zip=...&radius=25&retailers=Best%20Buy,...
  *   GET /card-price?q=...&game=...
+ *   GET /area-scan?zip=28761&radius=25&games=Pokemon,Lorcana
  */
 
-const VERSION = "7.4.0";
+const VERSION = "10.3.0";
 const BESTBUY_BASE = "https://api.bestbuy.com/v1";
 const MAX_PRODUCT_MATCHES = 4;
 const CACHE_TTL_SECONDS = 120;
@@ -279,6 +280,207 @@ function dedupe(rows){
   return [...m.values()];
 }
 
+
+function withTimeout(url,options={},ms=6500){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),ms);
+  return fetch(url,{...options,signal:controller.signal}).finally(()=>clearTimeout(timer));
+}
+async function geocodeZip(zip,cache){
+  const cacheKey=new Request(`https://cache.vaultsignal.local/zip/${zip}`);
+  const cached=await cache.match(cacheKey);
+  if(cached)return await cached.json();
+
+  let result=null;
+  try{
+    const r=await withTimeout(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`,{headers:{Accept:"application/json"}},3500);
+    if(r.ok){
+      const d=await r.json();
+      const p=d.places?.[0];
+      if(p)result={
+        zip,
+        lat:Number(p.latitude),
+        lon:Number(p.longitude),
+        city:p["place name"]||"",
+        state:p["state abbreviation"]||p.state||""
+      };
+    }
+  }catch{}
+
+  if(!result){
+    const u=new URL("https://nominatim.openstreetmap.org/search");
+    u.searchParams.set("format","jsonv2");
+    u.searchParams.set("countrycodes","us");
+    u.searchParams.set("postalcode",zip);
+    u.searchParams.set("limit","1");
+    const r=await withTimeout(u.toString(),{headers:{Accept:"application/json","User-Agent":"VaultSignal/10.3"}},4000);
+    if(!r.ok)throw new Error("ZIP lookup failed");
+    const d=await r.json();
+    if(!d[0])throw new Error("ZIP could not be located");
+    result={zip,lat:Number(d[0].lat),lon:Number(d[0].lon),city:"",state:""};
+  }
+
+  if(!Number.isFinite(result.lat)||!Number.isFinite(result.lon))throw new Error("ZIP coordinates unavailable");
+
+  await cache.put(cacheKey,new Response(JSON.stringify(result),{
+    headers:{"content-type":"application/json","cache-control":"public,max-age=86400"}
+  }));
+  return result;
+}
+function distanceMiles(lat1,lon1,lat2,lon2){
+  const R=3958.8,toRad=x=>x*Math.PI/180;
+  const dLat=toRad(lat2-lat1),dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function workerRetailerFamily(name=""){
+  const n=String(name).toLowerCase();
+  if(n.includes("walmart"))return "Walmart";
+  if(n.includes("target"))return "Target";
+  if(n.includes("best buy"))return "Best Buy";
+  if(n.includes("gamestop"))return "GameStop";
+  if(n.includes("sam's")||n.includes("sams club"))return "Sam's Club";
+  if(n.includes("costco"))return "Costco";
+  if(n.includes("walgreens"))return "Walgreens";
+  if(n.includes("cvs"))return "CVS";
+  if(n.includes("dollar general"))return "Dollar General";
+  if(n.includes("family dollar"))return "Family Dollar";
+  return "";
+}
+async function nearbyStoresForArea(location,radius,cache){
+  const cacheKey=new Request(`https://cache.vaultsignal.local/stores/${location.zip}/${Math.round(radius)}`);
+  const cached=await cache.match(cacheKey);
+  if(cached)return await cached.json();
+
+  const meters=Math.round(radius*1609.344);
+  const regex="Walmart|Target|Best Buy|GameStop|Sam's Club|Costco|Walgreens|CVS|Dollar General|Family Dollar";
+  const q=`[out:json][timeout:7];(
+    nwr(around:${meters},${location.lat},${location.lon})["name"~"${regex}",i];
+    nwr(around:${meters},${location.lat},${location.lon})["brand"~"${regex}",i];
+    nwr(around:${meters},${location.lat},${location.lon})["operator"~"${regex}",i];
+  );out center tags;`;
+
+  const endpoints=["https://overpass.kumi.systems/api/interpreter","https://overpass-api.de/api/interpreter"];
+  let elements=[];
+
+  for(const ep of endpoints){
+    try{
+      const r=await withTimeout(ep,{
+        method:"POST",
+        headers:{"content-type":"application/x-www-form-urlencoded;charset=UTF-8"},
+        body:"data="+encodeURIComponent(q)
+      },6500);
+      if(!r.ok)continue;
+      const d=await r.json();
+      if(Array.isArray(d.elements)&&d.elements.length){elements=d.elements;break;}
+    }catch{}
+  }
+
+  const seen=new Set();
+  const rows=elements.map(e=>{
+    const t=e.tags||{};
+    const lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;
+    if(!Number.isFinite(lat)||!Number.isFinite(lon))return null;
+    const name=t.name||t.brand||t.operator||"Retailer";
+    const family=workerRetailerFamily(name)||workerRetailerFamily(t.brand||"")||workerRetailerFamily(t.operator||"");
+    if(!family)return null;
+    const dist=distanceMiles(location.lat,location.lon,lat,lon);
+    if(dist>radius+1)return null;
+    const key=`${family}|${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}`;
+    if(seen.has(key))return null;
+    seen.add(key);
+    return {
+      id:key,name,family,
+      brand:t.brand||"",
+      operator:t.operator||"",
+      address:[t["addr:housenumber"],t["addr:street"],t["addr:city"],t["addr:state"],t["addr:postcode"]].filter(Boolean).join(", "),
+      lat:Number(lat),lon:Number(lon),distanceMiles:dist,
+      shop:t.shop||"",website:t.website||t["contact:website"]||"",
+      source:"OpenStreetMap"
+    };
+  }).filter(Boolean).sort((a,b)=>a.distanceMiles-b.distanceMiles).slice(0,40);
+
+  await cache.put(cacheKey,new Response(JSON.stringify(rows),{
+    headers:{"content-type":"application/json","cache-control":"public,max-age=900"}
+  }));
+  return rows;
+}
+function areaGameQuery(game){
+  const q={
+    Pokemon:"pokemon trading cards",
+    Lorcana:"lorcana trading cards",
+    Magic:"magic the gathering cards",
+    "Yu-Gi-Oh!":"yu gi oh cards",
+    "One Piece":"one piece trading cards"
+  };
+  return q[game]||`${game} trading cards`;
+}
+async function fastAreaScan(url,env){
+  const started=Date.now();
+  const zip=safeText(url.searchParams.get("zip"),10).replace(/\D/g,"").slice(0,5);
+  if(zip.length!==5)return {status:400,data:{error:"A 5-digit ZIP code is required"}};
+
+  const radius=boundedNumber(url.searchParams.get("radius"),1,100,25);
+  const games=(url.searchParams.get("games")||"Pokemon").split(",").map(x=>safeText(x,40)).filter(Boolean).slice(0,5);
+  const retailers=selectedRetailers(url);
+  const cache=caches.default;
+  const errors=[];
+
+  const location=await geocodeZip(zip,cache);
+  const liveTasks=[];
+
+  if(env.BESTBUY_API_KEY && bestBuySelected(retailers)){
+    for(const game of games){
+      const args={
+        q:areaGameQuery(game),zip,radius,game,
+        sku:"",upc:"",bestBuySku:"",productId:"",retailers
+      };
+      liveTasks.push(
+        bestBuyResults(args,env,cache)
+          .catch(e=>{errors.push({provider:"Best Buy",game,error:e.message||"Best Buy lookup failed"});return [];})
+      );
+    }
+  }
+
+  const [nearbyStores,liveChunks]=await Promise.all([
+    nearbyStoresForArea(location,radius,cache).catch(e=>{
+      errors.push({provider:"Store discovery",error:e.message||"Store discovery failed"});return [];
+    }),
+    Promise.all(liveTasks)
+  ]);
+
+  const results=dedupe(liveChunks.flat());
+
+  const retailerChecks=[];
+  for(const game of games){
+    retailerChecks.push(...retailerFallbackResults({
+      q:areaGameQuery(game),
+      retailers
+    }).map(x=>({...x,game})));
+  }
+
+  return {
+    status:200,
+    data:{
+      version:VERSION,
+      location,
+      nearbyStores,
+      results,
+      retailerChecks:dedupe(retailerChecks),
+      providers:providerStatus(env),
+      meta:{
+        zip,radius,games,
+        liveResultCount:results.length,
+        nearbyStoreCount:nearbyStores.length,
+        retailerCheckCount:retailerChecks.length,
+        errors,
+        durationMs:Date.now()-started,
+        checkedAt:new Date().toISOString()
+      }
+    }
+  };
+}
+
 export default {
   async fetch(request, env, ctx){
     const origin=corsOrigin(request,env);
@@ -293,12 +495,21 @@ export default {
     const url=new URL(request.url);
     if(url.pathname==="/health"){
       return json({
-        ok:true,version:VERSION,message:"2GEN Real Inventory Worker is online",
+        ok:true,version:VERSION,message:"VaultSignal Inventory Worker is online",
         providers:providerStatus(env),
         pricingProviders:[priceChartingStatus(env)],
         checkedAt:new Date().toISOString()
       },200,origin);
     }
+    if(url.pathname==="/area-scan"){
+      try{
+        const out=await fastAreaScan(url,env);
+        return json(out.data,out.status,origin);
+      }catch(e){
+        return json({ok:false,error:e.message||"Area scan failed",checkedAt:new Date().toISOString()},502,origin);
+      }
+    }
+
     if(url.pathname==="/card-price"){
       const q=safeText(url.searchParams.get("q"),140);
       const game=safeText(url.searchParams.get("game"),40);

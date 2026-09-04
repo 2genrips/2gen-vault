@@ -116,3 +116,11 @@ New Cloudflare secret:
 Keep this token server-side only. Never place it in `config.js`, `app.js`, or GitHub Pages.
 
 When configured, the Smart Scanner uses PriceCharting as its primary guide and keeps the existing game-specific provider as a secondary reference.
+
+
+## v10.3 `/area-scan`
+
+`GET /area-scan?zip=28761&radius=25&games=Pokemon,Lorcana&retailers=Walmart,Target,Best%20Buy,GameStop`
+
+Returns nearby stores, authorized live inventory results, retailer-check handoffs, provider status and scan duration.
+ZIP and store discovery are cached; store discovery and live provider work run in parallel.

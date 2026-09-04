@@ -1,6 +1,6 @@
 # VaultSignal — Product Roadmap
 
-## Current build: v10.2 Retailer Discovery Fix
+## Current build: v10.3 Stock Intelligence Network
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -386,3 +386,15 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - stronger nearby retailer discovery
 - immediate retailer check buttons
 - map lookup fallback
+
+
+## v10.3 completed
+- one-request area scan
+- server-side ZIP geocoding
+- server-side nearby store discovery
+- live provider requests in parallel
+- 12-second frontend timeout
+- scan speed tracking
+- professional store stock feed
+- product / price / source / freshness display
+- exact quantity only when supplied by provider

@@ -2473,6 +2473,29 @@ function inventoryPulseDiff(previous,current){
   }
   return events.slice(0,80);
 }
+
+function latestAreaScanSpeed(){
+  const s=latestAreaScan();
+  if(!s?.durationMs)return '—';
+  return `${(Number(s.durationMs)/1000).toFixed(1)}s`;
+}
+function stockFeedSourceLabel(x){
+  if(x?.sourceType==='official_api')return x.sourceAttribution||x.provider||'Official API';
+  return 'Retailer check';
+}
+function stockQuantityLabel(x){
+  if(x?.quantity!==null&&x?.quantity!==undefined&&Number.isFinite(Number(x.quantity)))return String(Number(x.quantity));
+  return x?.sourceType==='official_api'?'Not supplied':'—';
+}
+function stockFreshnessLabel(x){
+  const at=x?.checkedAt||x?.updatedAt;
+  if(!at)return '—';
+  const ms=Date.now()-new Date(at).getTime();
+  if(ms<60000)return 'JUST NOW';
+  if(ms<5*60000)return `${Math.max(1,Math.round(ms/60000))}M AGO`;
+  return humanAge(at);
+}
+
 function latestAreaScan(){
   return (state.areaScanHistory||[])[0]||null;
 }
@@ -2491,7 +2514,7 @@ async function maybeAutoScanArea(){
 }
 async function runAreaInventoryScan(silent=false){
   if(!hasPremium()){
-    if(!silent){toolsTab='premium';renderTools();toast('Nearby Inventory Radar is a Premium feature');}
+    if(!silent){toolsTab='premium';renderTools();toast('Inventory Radar is included with VaultSignal Premium');}
     return;
   }
 
@@ -2499,7 +2522,8 @@ async function runAreaInventoryScan(silent=false){
   const zip=($('stockZip')?.value||state.settings.zip||'').trim();
   const radius=Number($('stockRadius')?.value||state.settings.radius)||25;
   if(!zip){if(!silent)toast('Enter a ZIP code first');return;}
-  if(!inventoryBackendConnected()){if(!silent)toast('Inventory backend is not connected');return;}
+  if(!inventoryBackendConnected()){if(!silent)toast('Inventory service is not connected');return;}
+
   const scanGames=areaScanGames();
   if(!scanGames.length){if(!silent)toast('Select at least one TCG');return;}
 
@@ -2510,62 +2534,104 @@ async function runAreaInventoryScan(silent=false){
 
   areaScanBusy=true;
   if(!silent)renderStock();
-
-  const all=[];
-  const retailerChecks=[];
-  const errors=[];
-  const queries=[];
-  for(const game of scanGames){
-    for(const q of AREA_SCAN_QUERIES[game]||[])queries.push({game,q});
-  }
+  const started=performance.now();
 
   try{
-    for(let i=0;i<queries.length;i++){
-      const item=queries[i];
-      const params=new URLSearchParams({
-        q:item.q,game:item.game,zip,radius:String(radius),
-        retailers:[...selectedRetailers].join(',')
+    const params=new URLSearchParams({
+      zip,
+      radius:String(radius),
+      games:scanGames.join(','),
+      retailers:[...selectedRetailers].join(',')
+    });
+
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),12000);
+
+    let r;
+    try{
+      r=await fetch(`${inventoryBackendBase()}/area-scan?${params.toString()}`,{
+        headers:{Accept:'application/json'},
+        signal:controller.signal
       });
-      try{
-        const controller=new AbortController();
-        const timer=setTimeout(()=>controller.abort(),18000);
-        const r=await fetch(`${inventoryBackendBase()}/inventory?${params.toString()}`,{headers:{Accept:'application/json'},signal:controller.signal});
-        clearTimeout(timer);
-        if(!r.ok)throw new Error(`HTTP ${r.status}`);
-        const d=await r.json();
-        for(const raw of d.results||[]){
-          const x=normalizeInventoryResult(raw);x.game=item.game;
-          if(x.sourceType==='official_api'&&x.status!=='retailer_check')all.push(x);
-          else if(x.sourceType==='retailer_verified'||x.status==='retailer_check')retailerChecks.push(x);
-        }
-        if(Array.isArray(d.providers)){
-          state.inventoryProviderStatus={connected:true,providers:d.providers,checkedAt:new Date().toISOString(),message:'Inventory service connected',version:d.version||''};
-        }
-      }catch(e){errors.push(`${item.game}: ${e.name==='AbortError'?'timeout':e.message||'failed'}`)}
-      if(i<queries.length-1)await new Promise(r=>setTimeout(r,180));
+    }finally{
+      clearTimeout(timer);
     }
 
-    state.areaInventoryResults=mergeInventoryResults(all);
-    state.areaRetailerCheckResults=mergeInventoryResults(retailerChecks);
-    const nearby=await findNearbyStores({silent:true,skipRender:true});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||`Area scan returned ${r.status}`);
+
+    state.areaInventoryResults=mergeInventoryResults((d.results||[]).map(normalizeInventoryResult));
+    state.areaRetailerCheckResults=mergeInventoryResults((d.retailerChecks||[]).map(normalizeInventoryResult));
+    state.nearbyStores=(d.nearbyStores||[]).map(s=>({
+      id:s.id||`${s.name}|${s.lat}|${s.lon}`,
+      name:s.name||'Retailer',
+      brand:s.brand||'',
+      operator:s.operator||'',
+      family:s.family||retailerFamily(s.name||s.brand||s.operator||''),
+      address:s.address||'',
+      lat:Number(s.lat),
+      lon:Number(s.lon),
+      distance:Number(s.distanceMiles??s.distance??0),
+      shop:s.shop||'',
+      website:s.website||'',
+      source:s.source||'VaultSignal Worker'
+    })).filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon));
+
+    if(Array.isArray(d.providers)){
+      state.inventoryProviderStatus={
+        connected:true,
+        providers:d.providers,
+        checkedAt:new Date().toISOString(),
+        message:'Inventory service connected',
+        version:d.version||''
+      };
+    }
+
+    if(d.location?.lat && d.location?.lon){
+      state.settings.lat=Number(d.location.lat);
+      state.settings.lon=Number(d.location.lon);
+    }
+
     const snapshot=areaSnapshotRows(state.areaInventoryResults);
     const pulse=inventoryPulseDiff(previous,snapshot);
     state.inventoryPulseEvents=[...pulse,...(state.inventoryPulseEvents||[])].slice(0,120);
 
+    const elapsed=Math.max(1,Math.round(performance.now()-started));
     state.areaScanHistory.unshift({
-      uid:uid(),zip,radius,games:[...scanGames],retailers:[...selectedRetailers],
-      stores:areaStoreGroups().length,results:state.areaInventoryResults.length,
-      errors,snapshot,checkedAt:new Date().toISOString()
+      uid:uid(),zip,radius,
+      games:[...scanGames],
+      retailers:[...selectedRetailers],
+      stores:areaStoreGroups().length,
+      nearbyStores:state.nearbyStores.length,
+      results:state.areaInventoryResults.length,
+      retailerChecks:state.areaRetailerCheckResults.length,
+      errors:d.meta?.errors||[],
+      durationMs:Number(d.meta?.durationMs)||elapsed,
+      snapshot,
+      checkedAt:new Date().toISOString()
     });
-    state.areaScanHistory=state.areaScanHistory.slice(0,12);
+    state.areaScanHistory=state.areaScanHistory.slice(0,20);
     areaSelectedStoreKey=areaStoreGroups()[0]?.key||null;
     saveState();
+
     if(!silent){
-      const verifiedStores=areaStoreGroups().length;
-      if(verifiedStores)toast(`Verified inventory found at ${verifiedStores} store${verifiedStores===1?'':'s'}`);
-      else if(nearby.length)toast(`No verified live feed result • ${nearby.length} nearby retailers ready to check`);
-      else if(state.areaRetailerCheckResults.length)toast('No verified live inventory • retailer availability checks are ready');
-      else toast('No verified inventory or nearby retailer checks found');
+      const liveStores=areaStoreGroups().length;
+      const nearby=state.nearbyStores.length;
+      const seconds=((Number(d.meta?.durationMs)||elapsed)/1000).toFixed(1);
+      if(liveStores){
+        toast(`${liveStores} live store${liveStores===1?'':'s'} • ${state.areaInventoryResults.length} stock result${state.areaInventoryResults.length===1?'':'s'} • ${seconds}s`);
+      }else if(nearby){
+        toast(`${nearby} nearby store${nearby===1?'':'s'} found • live shelf feed not connected • ${seconds}s`);
+      }else if(state.areaRetailerCheckResults.length){
+        toast(`${state.areaRetailerCheckResults.length} retailer checks ready • ${seconds}s`);
+      }else{
+        toast(`Scan finished in ${seconds}s • no stock feed or mapped retailers returned`);
+      }
+    }
+  }catch(e){
+    if(!silent){
+      if(e.name==='AbortError')toast('Stock scan timed out after 12 seconds — try a smaller radius');
+      else toast(e.message||'Stock scan failed');
     }
   }finally{
     areaScanBusy=false;
@@ -2590,61 +2656,112 @@ function renderInventoryPulse(){
   </div>`).join('');
 }
 function renderAreaStoreCard(g){
-  return `<div class="area-store-card ${areaSelectedStoreKey===g.key?'active':''}">
+  const knownQty=g.products.filter(x=>x.quantity!==null&&x.quantity!==undefined);
+  const totalKnownQty=knownQty.reduce((n,x)=>n+(Number(x.quantity)||0),0);
+  const available=g.products.filter(x=>x.status!=='out_of_stock').length;
+
+  return `<div class="area-store-card stock-intel-card ${areaSelectedStoreKey===g.key?'active':''}">
     <button class="area-store-main" onclick='selectAreaStore(${JSON.stringify(g.key)})'>
       <div class="store-radar-icon">◉</div>
-      <div class="grow"><div class="eyebrow">${esc(g.retailer)} • VERIFIED INVENTORY</div><strong>${esc(g.store)}</strong><span>${esc(g.address||'Provider supplied store')} ${typeof g.distanceMiles==='number'?`• ${g.distanceMiles.toFixed(1)} mi`:''}</span></div>
-      <div class="hunt-score"><b>${g.huntScore}</b><span>HUNT SCORE</span></div>
+      <div class="grow">
+        <div class="eyebrow">${esc(g.retailer)} • LIVE STOCK FEED</div>
+        <strong>${esc(g.store)}</strong>
+        <span>${esc(g.address||'Provider supplied store')}${typeof g.distanceMiles==='number'?` • ${g.distanceMiles.toFixed(1)} mi`:''}</span>
+      </div>
+      <div class="freshness-pill">${stockFreshnessLabel(g.products[0]||{})}</div>
     </button>
-    <div class="area-store-kpis">
-      <span><b>${g.products.length}</b> products</span>
-      ${g.watchMatches.length?`<span class="match"><b>${g.watchMatches.length}</b> watch match${g.watchMatches.length===1?'':'es'}</span>`:''}
-      ${g.lowStock?`<span class="low"><b>${g.lowStock}</b> low stock</span>`:''}
-      <span><b>${g.bestPrice?money(g.bestPrice):'—'}</b> lowest</span>
+
+    <div class="stock-intel-kpis">
+      <div><b>${g.products.length}</b><span>products</span></div>
+      <div><b>${available}</b><span>available</span></div>
+      <div><b>${knownQty.length?totalKnownQty:'—'}</b><span>${knownQty.length?'known units':'qty not supplied'}</span></div>
+      <div><b>${g.bestPrice?money(g.bestPrice):'—'}</b><span>lowest price</span></div>
     </div>
+
+    <div class="stock-intel-preview">
+      ${g.products.slice(0,3).map(x=>`
+        <div>
+          <span class="stock-dot ${x.lowStock?'low':x.status==='out_of_stock'?'out':'live'}"></span>
+          <div class="grow">
+            <strong>${esc(x.product)}</strong>
+            <small>${x.price?money(x.price):'Price not supplied'} • Qty ${stockQuantityLabel(x)}</small>
+          </div>
+        </div>`).join('')}
+    </div>
+
     <div class="area-store-foot">
-      <span>${humanAge(g.checkedAt)}</span>
+      <span>${esc(stockFeedSourceLabel(g.products[0]||{}))}</span>
       <button class="mini-icon-btn ${g.favorite?'on':''}" onclick='toggleFavoriteInventoryStore(${JSON.stringify(g.key)})'>${g.favorite?'★':'☆'}</button>
-      <button class="link-btn" onclick='selectAreaStore(${JSON.stringify(g.key)})'>View inventory →</button>
+      <button class="link-btn" onclick='selectAreaStore(${JSON.stringify(g.key)})'>Open store feed →</button>
     </div>
   </div>`;
 }
 function renderAreaProductCard(x){
-  const confidence=inventoryResultConfidence(x);
   const matching=(state.stockWatches||[]).find(w=>w.enabled&&(watchMatchesText({product:x.product},w.product)||watchMatchesText({product:w.product},x.product)));
   const targetHit=matching?.maxPrice&&x.price&&x.price<=Number(matching.maxPrice);
-  return `<div class="area-product-card">
-    ${x.image?`<img src="${esc(x.image)}" alt="">`:`<div class="area-product-placeholder">◈</div>`}
+
+  return `<div class="area-product-card stock-feed-row">
+    <div class="stock-feed-status">
+      <span class="stock-dot ${x.lowStock?'low':x.status==='out_of_stock'?'out':'live'}"></span>
+      <span>${x.lowStock?'LOW':x.status==='out_of_stock'?'OUT':'LIVE'}</span>
+    </div>
+
+    ${x.image?`<img src="${esc(x.image)}" alt="">`:`<div class="product-image-fallback">◈</div>`}
+
     <div class="grow">
-      <div class="eyebrow">${esc(x.game||'TCG')} • ${esc(x.retailer)}${x.retailerSku?` • SKU ${esc(String(x.retailerSku))}`:''}</div>
+      <div class="eyebrow">${esc(x.game||'TCG')} • ${esc(x.retailer||'RETAILER')}</div>
       <strong>${esc(x.product)}</strong>
-      <span>${x.status==='low_stock'?'Low stock':'In stock'}${x.pickupEligible?' • Pickup eligible':''}</span>
-      <div class="area-product-meta">
-        <b>${x.price?money(x.price):'Price not supplied'}</b>
-        ${matching?`<span class="watch-match">${targetHit?'TARGET HIT':'WATCH MATCH'}</span>`:''}
-        ${confidence!==null?`<span>${confidence}% source confidence</span>`:''}
-        <span>${humanAge(x.checkedAt)}</span>
-      </div>
-      <div class="action-row">
-        ${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Retailer ↗</a>`:''}
-        ${x.addToCartUrl?`<a class="btn green" href="${esc(x.addToCartUrl)}" target="_blank" rel="noreferrer">Cart ↗</a>`:''}
-        <button class="btn" onclick='openInventoryProduct(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Product</button>
-        <button class="btn" onclick='saveInventoryResultAsReport(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Snapshot</button>
-      </div>
+      <span>${x.retailerSku?`SKU ${esc(String(x.retailerSku))} • `:''}${x.upc?`UPC ${esc(x.upc)} • `:''}${esc(String(x.status||'unknown').replace(/_/g,' ').toUpperCase())}</span>
+      <small>${esc(stockFeedSourceLabel(x))} • ${stockFreshnessLabel(x)}</small>
+      ${matching?`<span class="watch-match">${targetHit?'TARGET HIT':'WATCH MATCH'}</span>`:''}
+    </div>
+
+    <div class="stock-feed-price">
+      <strong>${x.price?money(x.price):'—'}</strong>
+      <span>QTY ${stockQuantityLabel(x)}</span>
+      <small>${typeof x.distanceMiles==='number'?`${x.distanceMiles.toFixed(1)} mi`:''}</small>
+    </div>
+
+    <div class="stock-feed-actions">
+      ${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Open product ↗</a>`:''}
+      ${x.addToCartUrl?`<a class="btn green" href="${esc(x.addToCartUrl)}" target="_blank" rel="noreferrer">Add to cart ↗</a>`:''}
+      <button class="btn" onclick='openInventoryProduct(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Product</button>
+      <button class="btn" onclick='saveInventoryResultAsReport(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Snapshot</button>
     </div>
   </div>`;
 }
 function renderAreaStoreDetail(){
   const g=selectedAreaStore();
-  if(!g)return `<div class="empty">Tap a verified store above to see every product found there.</div>`;
-  return `<div class="area-store-detail">
-    <div class="section-head"><div><div class="eyebrow">${esc(g.retailer)} • STORE INVENTORY</div><h2>${esc(g.store)}</h2><p>${esc(g.address||'')} ${typeof g.distanceMiles==='number'?`• ${g.distanceMiles.toFixed(1)} miles`:''}</p></div><div class="hunt-score large"><b>${g.huntScore}</b><span>HUNT SCORE</span></div></div>
-    ${g.watchMatches.length?`<div class="notice good"><span>★</span><span><b>${g.watchMatches.length} saved watch match${g.watchMatches.length===1?'':'es'} at this store.</b> Hunt Score uses your watches, target prices, distance and number of verified products. It is not a stock probability.</span></div>`:''}
+  if(!g)return `<div class="empty">Tap a verified store above to see its stock feed.</div>`;
+
+  const knownQty=g.products.filter(x=>x.quantity!==null&&x.quantity!==undefined);
+  const totalKnownQty=knownQty.reduce((n,x)=>n+(Number(x.quantity)||0),0);
+
+  return `<div class="area-store-detail stock-feed-detail">
+    <div class="section-head">
+      <div>
+        <div class="eyebrow">${esc(g.retailer)} • STORE STOCK FEED</div>
+        <h2>${esc(g.store)}</h2>
+        <p>${esc(g.address||'')}${typeof g.distanceMiles==='number'?` • ${g.distanceMiles.toFixed(1)} miles`:''}</p>
+      </div>
+      <span class="badge primary">${g.products.length} PRODUCT${g.products.length===1?'':'S'}</span>
+    </div>
+
+    <div class="store-answer-grid">
+      <div><span>Products found</span><strong>${g.products.length}</strong></div>
+      <div><span>Known quantity</span><strong>${knownQty.length?totalKnownQty:'Not supplied'}</strong></div>
+      <div><span>Freshness</span><strong>${stockFreshnessLabel(g.products[0]||{})}</strong></div>
+      <div><span>Source</span><strong>${esc(stockFeedSourceLabel(g.products[0]||{}))}</strong></div>
+    </div>
+
     <div class="action-row">
       ${g.address?`<a class="btn primary" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(g.address)}" target="_blank" rel="noreferrer">Directions ↗</a>`:''}
       <button class="btn" onclick='toggleFavoriteInventoryStore(${JSON.stringify(g.key)})'>${g.favorite?'★ Favorite':'☆ Favorite'}</button>
     </div>
-    <div class="area-product-grid">${g.products.map(renderAreaProductCard).join('')}</div>
+
+    <div class="stock-feed-list">${g.products.map(renderAreaProductCard).join('')}</div>
+
+    ${knownQty.length===0?`<div class="notice warn"><span>!</span><span>This provider verifies product/store availability but does not expose an exact shelf quantity. VaultSignal will never invent a count.</span></div>`:''}
   </div>`;
 }
 function renderQuickRetailerChecks(){
@@ -2678,13 +2795,13 @@ function renderStock(){
     <div class="page-title"><div><h1>Inventory Radar</h1><p>Verified live inventory when an authorized source is connected, plus nearby retailer checks everywhere else.</p></div><span class="badge ${connection.mode==='live'?'primary':connection.mode==='checks'?'signal-gold':''}">${backendOnline?'● INVENTORY SERVICE ONLINE':'○ SETUP REQUIRED'}</span></div>
     <div class="panel inventory-source-truth ${connection.mode}"><div class="inventory-source-icon">${connection.mode==='live'?'●':connection.mode==='checks'?'↗':'!'}</div><div class="grow"><div class="eyebrow">SOURCE MODE</div><strong>${esc(connection.title)}</strong><span>${esc(connection.detail)}</span></div><b>${esc(connection.badge)}</b></div>
     <div class="panel area-radar-hero">
-      <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL INVENTORY RADAR</div><h2>Scan my area</h2><p>Choose ZIP, radius and TCGs. VaultSignal checks connected sources and automatically finds nearby stores to verify.</p></div><span class="badge ${connection.mode==='live'?'primary':'signal-gold'}">${areaScanBusy?'SCANNING…':esc(connection.badge)}</span></div>
+      <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL INVENTORY RADAR</div><h2>Scan my area</h2><p>Choose ZIP, radius and TCGs. One fast scan checks connected stock feeds and nearby retailers in parallel.</p></div><span class="badge ${connection.mode==='live'?'primary':'signal-gold'}">${areaScanBusy?'SCANNING…':esc(connection.badge)}</span></div>
       <div class="form-grid"><label class="field"><span>ZIP code</span><input id="stockZip" inputmode="numeric" value="${esc(state.settings.zip||'')}" placeholder="28752"></label><label class="field"><span>Radius</span><select id="stockRadius">${[5,10,15,25,50,75,100].map(v=>`<option value="${v}" ${v===radius?'selected':''}>${v} miles</option>`).join('')}</select></label></div>
       <div class="area-game-selector">${scanGames.map(g=>`<button class="${areaScanGames().includes(g)?'on':''}" onclick='toggleAreaGame(${JSON.stringify(g)})'>${esc(g)}</button>`).join('')}</div>
-      <div class="action-row radar-actions"><button class="btn primary area-scan-btn" ${areaScanBusy?'disabled':''} onclick="runAreaInventoryScan(false)">${areaScanBusy?'Scanning sources + nearby stores…':'◉ SCAN MY AREA'}</button><button class="btn" onclick="saveStockArea()">Save area</button><button class="btn" onclick="useMyLocation()">⌖ Use location</button></div>
+      <div class="action-row radar-actions"><button class="btn primary area-scan-btn" ${areaScanBusy?'disabled':''} onclick="runAreaInventoryScan(false)">${areaScanBusy?'Finding stores + stock…':'◉ SCAN MY AREA'}</button><button class="btn" onclick="saveStockArea()">Save area</button><button class="btn" onclick="useMyLocation()">⌖ Use location</button></div>
       <div class="auto-refresh-strip"><label><input type="checkbox" ${state.areaScanSettings.autoRefresh?'checked':''} onchange="setAreaAutoRefresh(this.checked)"> Smart refresh when Stock opens</label><select onchange="setAreaAutoRefreshHours(this.value)">${[1,2,4,6,12,24].map(h=>`<option value="${h}" ${Number(state.areaScanSettings.autoRefreshHours)===h?'selected':''}>after ${h}h</option>`).join('')}</select><span>${last?`Last scan ${humanAge(last.checkedAt)}`:'No scan yet'}</span></div>
     </div>
-    <div class="stat-grid compact-stats"><div class="stat-card"><span>Verified stores</span><strong>${groups.length}</strong><small>${liveProviders.length?liveProviders.map(x=>x.name).join(', '):'No authorized live feed yet'}</small></div><div class="stat-card"><span>Mapped nearby stores</span><strong>${nearbyCount}</strong><small>${nearbyCount?`${radius} mile area`:"Map lookup returned none • retailer checks still work"}</small></div><div class="stat-card"><span>Retailer checks</span><strong>${retailerCheckCount}</strong><small>Direct retailer handoffs</small></div><div class="stat-card"><span>Pulse changes</span><strong>${(state.inventoryPulseEvents||[]).length}</strong><small>Verified-source changes</small></div></div>
+    <div class="stat-grid compact-stats"><div class="stat-card"><span>Verified stores</span><strong>${groups.length}</strong><small>${liveProviders.length?liveProviders.map(x=>x.name).join(', '):'No authorized live feed yet'}</small></div><div class="stat-card"><span>Mapped nearby stores</span><strong>${nearbyCount}</strong><small>${nearbyCount?`${radius} mile area`:"Map lookup returned none • retailer checks still work"}</small></div><div class="stat-card"><span>Retailer checks</span><strong>${retailerCheckCount}</strong><small>Direct retailer handoffs</small></div><div class="stat-card"><span>Last scan speed</span><strong>${latestAreaScanSpeed()}</strong><small>Single backend scan</small></div></div>
     ${retailerCheckCount?`<div class="panel quick-check-panel"><div class="section-head"><div><div class="eyebrow">CHECK RETAILERS NOW</div><h2>${retailerCheckCount} retailer check${retailerCheckCount===1?'':'s'} ready</h2><p>These open the retailer's own current search/availability flow. They do not claim inventory is in stock.</p></div></div>${renderQuickRetailerChecks()}</div>`:''}
     ${groups.length?`<div class="panel"><div class="section-head"><div><div class="eyebrow">VERIFIED LIVE INVENTORY</div><h2>Provider-confirmed stores</h2><p>Only authorized live inventory results appear here.</p></div><button class="link-btn" onclick="clearAreaInventory()">Clear</button></div><div class="area-store-grid">${groups.map(renderAreaStoreCard).join('')}</div></div><div class="panel" id="areaStoreDetail">${renderAreaStoreDetail()}</div>`:`<div class="panel verified-empty-panel"><div class="section-head"><div><div class="eyebrow">VERIFIED LIVE INVENTORY</div><h2>No verified live store result</h2><p>${liveProviders.length?'The connected live source returned no matching inventory in this scan.':'No authorized live store-inventory provider is configured yet. VaultSignal will not pretend a store is in stock.'}</p></div></div></div>`}
     <div class="panel retailer-check-panel"><div class="section-head"><div><div class="eyebrow">NEARBY RETAILER CHECKS</div><h2>Stores you can check now</h2><p>Real nearby store locations with direct retailer/map handoffs. These are not labeled in stock without a verified feed.</p></div><button class="btn" onclick="findNearbyStores()">Refresh stores</button></div>${renderNearbyStoreChecks()}</div>

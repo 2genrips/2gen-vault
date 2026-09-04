@@ -1,7 +1,7 @@
 {
   "name": "VaultSignal",
   "short_name": "VaultSignal",
-  "description": "VaultSignal v10.2 \u2014 stronger nearby retailer discovery with immediate retailer availability handoffs.",
+  "description": "VaultSignal v10.3 \u2014 fast professional stock-intelligence network with single-request area scanning and store/product stock feeds.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
