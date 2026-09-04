@@ -1,4 +1,4 @@
-# 2GEN Vault — Collector OS (GitHub Pages)
+# 2GEN Vault — Live Stock Network v0.5 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -85,3 +85,19 @@ The backend will hold private credentials and return normalized stock results to
 ## Why this architecture is useful
 
 You keep the same installed GitHub Pages app on your phone. As we add retailer connectors, cloud accounts, community reporting, push alerts, and premium features, you update the website files — no APK reinstall is required during development.
+
+
+## New in v0.5 — 2GEN Live Stock Network
+
+- **Hunt Mode:** builds a collector run from nearby stores and lets you check off each stop.
+- **Directions per stop:** one tap opens directions to the store.
+- **Report from a hunt stop:** pre-fills the store into the stock-report workflow.
+- **Stock confidence:** reports receive a freshness/confidence score based on age and confirmations.
+- **Still there / Sold out confirmations:** local proof-of-concept for the future community network.
+- **Find → Buy → Track:** “Bought it” can log the purchase and immediately add the product to the Sealed Vault.
+- **Hunt saved watches:** load a saved stock watch back into Stock Finder with one tap.
+- **Live connector remains honest:** retailer quantities are only shown if a secure connected inventory service returns them.
+
+### Why confidence scoring matters
+
+A stock report that is 8 minutes old should not be treated the same as one from yesterday. The app now visibly scores freshness. When cloud/community accounts are connected, confirmations from multiple collectors can feed this same model.

@@ -1,5 +1,9 @@
 # 2GEN Vault — Product Roadmap
 
+## Current build: v0.5 Live Stock Network
+
+Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
+
 ## The goal
 Create a collector operating system instead of another simple portfolio app.
 

@@ -30,6 +30,7 @@ const seed = {
   setGoals: [],
   inventoryResults: [],
   nearbyStores: [],
+  huntRoute: [],
   settings: {
     zip:'',
     radius:25,
@@ -84,6 +85,31 @@ function dateShort(v){
   catch { return '—'; }
 }
 function todayInput(){ return new Date().toISOString().slice(0,10); }
+
+function reportAgeMinutes(ts){
+  const t = new Date(ts).getTime();
+  if(!Number.isFinite(t)) return 999999;
+  return Math.max(0,(Date.now()-t)/60000);
+}
+function confidenceScore(report){
+  const age = reportAgeMinutes(report.ts);
+  let score = age <= 15 ? 92 : age <= 60 ? 82 : age <= 180 ? 68 : age <= 480 ? 50 : age <= 1440 ? 30 : 14;
+  score += Math.min(8,(Number(report.confirmations)||0)*2);
+  score -= Math.min(25,(Number(report.soldOutConfirmations)||0)*8);
+  if(report.status === 'Out of stock') score = Math.min(score,45);
+  return Math.max(5,Math.min(99,Math.round(score)));
+}
+function confidenceLabel(score){
+  return score >= 85 ? 'VERY FRESH' : score >= 70 ? 'FRESH' : score >= 50 ? 'AGING' : 'STALE';
+}
+function humanAge(ts){
+  const m = reportAgeMinutes(ts);
+  if(m < 1) return 'just now';
+  if(m < 60) return `${Math.floor(m)}m ago`;
+  if(m < 1440) return `${Math.floor(m/60)}h ago`;
+  return `${Math.floor(m/1440)}d ago`;
+}
+
 function toast(msg){
   const el = $('toast'); if(!el) return;
   clearTimeout(toastTimer);
@@ -167,6 +193,7 @@ function renderHome(){
       <div class="hero-badges">
         <span class="badge primary">◆ COLLECTOR OS</span>
         <span class="badge">◎ ${state.stockWatches.length} STOCK WATCHES</span>
+        <span class="badge">⌖ ${state.huntRoute.filter(x=>!x.visited).length} HUNT STOPS</span>
         <span class="badge red">2GEN RIPS</span>
       </div>
     </div>
@@ -255,6 +282,28 @@ function renderStock(){
       : `<div class="notice warn"><span>!</span><span><b>No live retailer backend is connected yet.</b> The app will not invent stock counts. Nearby store locations, retailer search links, watchlists and your own reports work now. We can connect supported retailer feeds/APIs to the same screen later without rebuilding the app.</span></div>`
     }
 
+
+    <div class="panel network-panel">
+      <div class="section-head">
+        <div><div class="eyebrow">2GEN LIVE STOCK NETWORK</div><h2>Hunt Mode</h2><p>Turn nearby stores into a collector run. Check stops off as you go and report what you actually find.</p></div>
+        <span class="badge ${state.huntRoute.length?'primary':''}">${state.huntRoute.length?state.huntRoute.filter(x=>!x.visited).length+' LEFT':'READY'}</span>
+      </div>
+      <div class="action-row">
+        <button class="btn primary" onclick="buildHuntRoute()">⌖ Build hunt</button>
+        <button class="btn" onclick="clearHuntRoute()">Clear route</button>
+      </div>
+      <div id="huntRoute" style="margin-top:10px">${renderHuntRoute()}</div>
+    </div>
+
+    <div class="panel">
+      <div class="section-head"><div><h2>Community-style freshness</h2><p>Your reports already use freshness/confidence scoring. When cloud accounts are added, the same system can combine multiple collector confirmations.</p></div></div>
+      <div class="confidence-legend">
+        <span><i class="confidence-dot c-high"></i> 85–99 very fresh</span>
+        <span><i class="confidence-dot c-mid"></i> 50–84 recent</span>
+        <span><i class="confidence-dot c-low"></i> under 50 stale</span>
+      </div>
+    </div>
+
     <div class="panel">
       <div class="section-head"><div><h2>Inventory results</h2><p id="inventoryResultCaption">${state.inventoryResults.length ? `${state.inventoryResults.length} saved/live results` : 'No inventory results yet.'}</p></div><button class="link-btn" onclick="clearInventoryResults()">Clear</button></div>
       <div id="inventoryResults">${renderInventoryResults()}</div>
@@ -277,9 +326,22 @@ function renderStock(){
 
     <div class="panel">
       <div class="section-head"><div><h2>Your stock reports</h2><p>Log what you actually saw in stores. These are local to your phone in the Pages build.</p></div><button class="btn" onclick="openTool('stockreport')">＋ Add report</button></div>
-      ${state.stockReports.length ? [...state.stockReports].sort((a,b)=>new Date(b.ts)-new Date(a.ts)).slice(0,8).map(r=>`
-        <div class="compact-row"><div class="thumb square"><b>${r.status==='In stock'?'✓':r.status==='Low stock'?'!':'×'}</b></div><div class="grow"><strong>${esc(r.product)}</strong><span>${esc(r.store)} • ${esc(r.status)} • ${dateShort(r.ts)}</span></div><div class="right"><strong>${money(Number(r.price))}</strong><button class="remove" onclick="removeStockReport('${r.uid}')">Delete</button></div></div>
-      `).join('') : `<div class="empty">No stock reports yet.</div>`}
+      ${state.stockReports.length ? [...state.stockReports].sort((a,b)=>new Date(b.ts)-new Date(a.ts)).slice(0,10).map(r=>{
+        const cs=confidenceScore(r);
+        return `<div class="stock-report-card">
+          <div class="stock-report-head">
+            <div class="thumb square"><b>${r.status==='In stock'?'✓':r.status==='Low stock'?'!':'×'}</b></div>
+            <div class="grow"><strong>${esc(r.product)}</strong><span>${esc(r.store)} • ${esc(r.status)} • ${humanAge(r.ts)}</span></div>
+            <div class="right"><strong>${money(Number(r.price))}</strong><span class="confidence-badge ${cs>=85?'high':cs>=50?'mid':'low'}">${cs}% ${confidenceLabel(cs)}</span></div>
+          </div>
+          <div class="report-actions">
+            <button class="btn green" onclick="confirmStockReport('${r.uid}','still')">✓ Still there</button>
+            <button class="btn red" onclick="confirmStockReport('${r.uid}','gone')">× Sold out</button>
+            <button class="btn" onclick="buyFromReport('${r.uid}')">$ Bought it</button>
+            <button class="remove" onclick="removeStockReport('${r.uid}')">Delete</button>
+          </div>
+        </div>`
+      }).join('') : `<div class="empty">No stock reports yet.</div>`}
     </div>`;
 }
 
@@ -311,7 +373,11 @@ function renderStockWatches(){
   if(!state.stockWatches.length) return `<div class="empty">Save your first product hunt to build a restock watchlist.</div>`;
   return state.stockWatches.map(w=>`
     <div class="compact-row"><div class="thumb square"><b>◎</b></div><div class="grow"><strong>${esc(w.product)}</strong><span>${esc(w.game)} • ${w.radius} mi • ${w.retailers.length} retailers${w.maxPrice?` • max ${money(w.maxPrice)}`:''}</span></div>
-      <div class="right"><button class="btn ${w.enabled?'green':''}" onclick="toggleWatch('${w.uid}')">${w.enabled?'On':'Off'}</button><button class="remove" onclick="removeWatch('${w.uid}')">Delete</button></div></div>
+      <div class="right">
+        <button class="btn primary" onclick="huntWatch('${w.uid}')">Hunt</button>
+        <button class="btn ${w.enabled?'green':''}" onclick="toggleWatch('${w.uid}')">${w.enabled?'On':'Off'}</button>
+        <button class="remove" onclick="removeWatch('${w.uid}')">Delete</button>
+      </div></div>
   `).join('');
 }
 function toggleWatch(id){ const w=state.stockWatches.find(x=>x.uid===id); if(w) w.enabled=!w.enabled; saveState(); renderStock(); }
@@ -353,13 +419,13 @@ function renderInventoryResults(){
     return `<div class="inventory-card">
       <div class="topline"><div class="grow"><div class="eyebrow">${esc(x.retailer||'Retailer')}</div><h3>${esc(x.product||'Product')}</h3><p>${esc(x.store||'')} ${x.address?`• ${esc(x.address)}`:''}</p></div><span class="stock-pill ${cls}">${label}</span></div>
       <div class="meta-grid"><div class="meta"><span>Price</span><strong>${money(Number(x.price))}</strong></div><div class="meta"><span>Qty</span><strong>${x.quantity ?? '—'}</strong></div><div class="meta"><span>Distance</span><strong>${typeof x.distanceMiles==='number'?x.distanceMiles.toFixed(1)+' mi':'—'}</strong></div></div>
-      <div class="action-row">${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Open retailer ↗</a>`:''}<button class="btn" onclick='saveInventoryResultAsReport(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Save report</button></div>
+      <div class="action-row">${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Open retailer ↗</a>`:''}<button class="btn" onclick='saveInventoryResultAsReport(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Save report</button><button class="btn green" onclick='buyInventoryResult(${JSON.stringify(x).replace(/'/g,"&#39;")})'>$ Bought it</button></div>
       <div class="tiny" style="margin-top:8px">Updated ${dateShort(x.updatedAt)}</div>
     </div>`;
   }).join('');
 }
 function saveInventoryResultAsReport(x){
-  state.stockReports.unshift({uid:uid(),store:x.store||x.retailer||'',product:x.product||'',status:x.status==='in_stock'?'In stock':x.status==='low_stock'?'Low stock':'Out of stock',qty:x.quantity||'',price:Number(x.price)||0,notes:'Saved from inventory connector',ts:new Date().toISOString()});
+  state.stockReports.unshift({uid:uid(),store:x.store||x.retailer||'',product:x.product||'',status:x.status==='in_stock'?'In stock':x.status==='low_stock'?'Low stock':'Out of stock',qty:x.quantity||'',price:Number(x.price)||0,notes:'Saved from inventory connector',ts:new Date().toISOString(),confirmations:1,soldOutConfirmations:0});
   saveState(); renderStock(); toast('Saved to stock reports');
 }
 
@@ -441,6 +507,100 @@ function renderNearbyStores(){
     <div class="compact-row"><div class="thumb square"><b>⌖</b></div><div class="grow"><strong>${esc(s.name)}</strong><span>${esc(s.address||s.shop||'Store')} • ${s.distance.toFixed(1)} mi</span></div>
     <div class="right"><a class="btn" target="_blank" rel="noreferrer" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.lat+','+s.lon)}">Map ↗</a></div></div>
   `).join('');
+}
+
+
+function buildHuntRoute(){
+  if(!state.nearbyStores.length){
+    toast('Find nearby stores first');
+    findNearbyStores();
+    return;
+  }
+  const selected=[...selectedRetailers].map(x=>x.toLowerCase());
+  let stores=state.nearbyStores.filter(s=>{
+    const name=(s.name||'').toLowerCase();
+    if(selected.includes('local card shop') && /card|game|hobby|comic|collect/.test(name)) return true;
+    return selected.some(r=>r!=='local card shop' && name.includes(r.toLowerCase()));
+  });
+  if(!stores.length) stores=[...state.nearbyStores];
+  state.huntRoute=stores.slice(0,8).map(s=>({
+    uid:uid(),storeId:s.id,name:s.name,address:s.address||'',lat:s.lat,lon:s.lon,distance:s.distance,visited:false,visitedAt:null
+  }));
+  saveState();renderStock();toast(`${state.huntRoute.length} hunt stops ready`);
+}
+function clearHuntRoute(){ state.huntRoute=[];saveState();renderStock(); }
+function renderHuntRoute(){
+  if(!state.huntRoute.length) return `<div class="empty">Find nearby stores, then build a hunt route. 2GEN Vault will prioritize nearby selected retailers.</div>`;
+  const completed=state.huntRoute.filter(x=>x.visited).length;
+  const furthest=Math.max(...state.huntRoute.map(x=>Number(x.distance)||0),0);
+  return `<div class="hunt-summary"><strong>${completed}/${state.huntRoute.length} stops visited</strong><span>Furthest stop ${furthest.toFixed(1)} mi from your search point</span></div>`+
+    state.huntRoute.map((s,idx)=>`<div class="hunt-stop ${s.visited?'visited':''}">
+      <div class="hunt-number">${s.visited?'✓':idx+1}</div>
+      <div class="grow"><strong>${esc(s.name)}</strong><span>${esc(s.address||'Nearby store')} • ${Number(s.distance||0).toFixed(1)} mi${s.visited&&s.visitedAt?' • visited '+humanAge(s.visitedAt):''}</span></div>
+      <div class="hunt-actions">
+        <a class="btn" target="_blank" rel="noreferrer" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.lat+','+s.lon)}">Directions ↗</a>
+        <button class="btn ${s.visited?'':'primary'}" onclick="toggleHuntStop('${s.uid}')">${s.visited?'Undo':'Visited'}</button>
+        <button class="btn green" onclick="reportAtHuntStop('${s.uid}')">Report</button>
+      </div>
+    </div>`).join('');
+}
+function toggleHuntStop(id){
+  const s=state.huntRoute.find(x=>x.uid===id);if(!s)return;
+  s.visited=!s.visited;s.visitedAt=s.visited?new Date().toISOString():null;saveState();renderStock();
+}
+function reportAtHuntStop(id){
+  const s=state.huntRoute.find(x=>x.uid===id);if(!s)return;
+  toolsTab='stockreport';switchTab('tools');
+  setTimeout(()=>{
+    const store=$('reportStore'); if(store) store.value=s.name;
+    const product=$('reportProduct'); if(product && stockQuery) product.value=stockQuery;
+  },0);
+}
+function confirmStockReport(id,kind){
+  const r=state.stockReports.find(x=>x.uid===id);if(!r)return;
+  if(kind==='still'){
+    r.confirmations=(Number(r.confirmations)||0)+1;
+    r.status=r.status==='Out of stock'?'In stock':r.status;
+    r.ts=new Date().toISOString();
+    toast('Stock sighting refreshed');
+  }else{
+    r.soldOutConfirmations=(Number(r.soldOutConfirmations)||0)+1;
+    r.status='Out of stock';
+    r.ts=new Date().toISOString();
+    toast('Marked sold out');
+  }
+  saveState();renderStock();
+}
+function buyFromReport(id){
+  const r=state.stockReports.find(x=>x.uid===id);if(!r)return;
+  logPurchaseAndSealed(r.product,r.store,Number(r.price)||0);
+}
+function buyInventoryResult(x){
+  logPurchaseAndSealed(x.product||'TCG product',x.store||x.retailer||'Retailer',Number(x.price)||0);
+}
+function logPurchaseAndSealed(product,merchant,defaultPrice){
+  const qRaw=prompt(`How many ${product} did you buy?`,'1');
+  if(qRaw===null)return;
+  const qty=Math.max(1,Number(qRaw)||1);
+  const pRaw=prompt('Price paid EACH:',defaultPrice?String(defaultPrice.toFixed(2)):'');
+  if(pRaw===null)return;
+  const each=Math.max(0,Number(pRaw)||0);
+  const addSealedChoice=confirm('Add this purchase to your Sealed Vault too?');
+  state.purchases.unshift({uid:uid(),merchant,item:product,category:'Stock Finder purchase',amount:each*qty,qty,date:todayInput(),notes:'Logged from Stock Finder'});
+  if(addSealedChoice){
+    state.sealed.unshift({uid:uid(),name:product,game:stockGame||'Pokemon',qty,cost:each,current:each,location:'New purchase',addedAt:new Date().toISOString()});
+  }
+  saveState();renderStock();toast(addSealedChoice?'Purchase + sealed vault updated':'Purchase logged');
+}
+function huntWatch(id){
+  const w=state.stockWatches.find(x=>x.uid===id);if(!w)return;
+  stockQuery=w.product;stockGame=w.game||'Pokemon';selectedRetailers=new Set(w.retailers||[]);
+  renderStock();
+  setTimeout(()=>{
+    const q=$('stockQuery');if(q)q.value=stockQuery;
+    if((window.TWOGEN_CONFIG?.inventoryApiBase||'').trim()) runInventorySearch();
+    else toast('Watch loaded — use Nearby stores or retailer checks');
+  },0);
 }
 
 function renderDiscover(){
@@ -631,7 +791,7 @@ function renderStockReportTool(){
 }
 function addStockReport(){
   const store=$('reportStore')?.value.trim(), product=$('reportProduct')?.value.trim(); if(!store||!product){toast('Store and product are required');return;}
-  state.stockReports.unshift({uid:uid(),store,product,status:$('reportStatus')?.value||'In stock',qty:Number($('reportQty')?.value)||0,price:Number($('reportPrice')?.value)||0,notes:$('reportNotes')?.value.trim()||'',ts:new Date().toISOString()});
+  state.stockReports.unshift({uid:uid(),store,product,status:$('reportStatus')?.value||'In stock',qty:Number($('reportQty')?.value)||0,price:Number($('reportPrice')?.value)||0,notes:$('reportNotes')?.value.trim()||'',ts:new Date().toISOString(),confirmations:0,soldOutConfirmations:0});
   saveState(); toast('Stock report saved'); switchTab('stock');
 }
 function renderBudgetTool(){
@@ -699,6 +859,7 @@ function exportCollectionCSV(){
 
 Object.assign(window,{
   switchTab,openVault,openTool,toggleRetailer,saveStockArea,useMyLocation,runInventorySearch,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
+  buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   setDiscoverMode,doCardSearch,addCard,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
   setToolTab,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });

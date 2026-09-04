@@ -156,3 +156,40 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   .vault-item{grid-template-columns:47px 1fr}.vault-item .thumb{width:47px}.vault-item .right{grid-column:2;flex-direction:row;justify-content:flex-end;align-items:center}
   .meta-grid{grid-template-columns:1fr 1fr}
 }
+
+
+/* v0.5 — 2GEN Live Stock Network + Hunt Mode */
+.network-panel{
+  background:
+    radial-gradient(circle at 92% 5%,rgba(46,211,154,.10),transparent 28%),
+    radial-gradient(circle at 5% 0%,rgba(21,101,255,.18),transparent 38%),
+    rgba(17,21,29,.94);
+}
+.confidence-legend{display:flex;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:9px}
+.confidence-legend span{display:flex;align-items:center;gap:5px}
+.confidence-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.c-high{background:var(--green);box-shadow:0 0 9px rgba(46,211,154,.5)}
+.c-mid{background:var(--gold)}
+.c-low{background:#ff747f}
+.confidence-badge{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:5px 7px;font-size:7px;font-weight:900;white-space:nowrap}
+.confidence-badge.high{color:#88ebc9;border-color:rgba(46,211,154,.3);background:rgba(46,211,154,.08)}
+.confidence-badge.mid{color:#f0d783;border-color:rgba(241,199,91,.3);background:rgba(241,199,91,.07)}
+.confidence-badge.low{color:#ff9aa2;border-color:rgba(255,45,45,.28);background:rgba(255,45,45,.07)}
+.stock-report-card{padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.stock-report-card:last-child{border-bottom:0}
+.stock-report-head{display:flex;gap:9px;align-items:center}
+.report-actions{display:flex;gap:5px;flex-wrap:wrap;margin:8px 0 0 56px}
+.hunt-summary{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:9px 10px;border:1px solid rgba(21,101,255,.22);border-radius:12px;background:rgba(21,101,255,.06);margin-bottom:8px}
+.hunt-summary strong{font-size:10px}.hunt-summary span{font-size:8px;color:var(--muted);text-align:right}
+.hunt-stop{display:grid;grid-template-columns:30px 1fr;gap:9px;padding:10px 0;border-bottom:1px solid var(--line-soft);align-items:center}
+.hunt-stop:last-child{border-bottom:0}
+.hunt-stop.visited{opacity:.62}
+.hunt-number{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:rgba(21,101,255,.14);border:1px solid rgba(21,101,255,.35);font-size:10px;font-weight:900;color:#9abaff}
+.hunt-stop.visited .hunt-number{background:rgba(46,211,154,.1);border-color:rgba(46,211,154,.28);color:#84e7c5}
+.hunt-actions{grid-column:2;display:flex;gap:5px;flex-wrap:wrap}
+@media(max-width:430px){
+  .report-actions{margin-left:0}
+  .stock-report-head{align-items:flex-start}
+  .hunt-summary{align-items:flex-start;flex-direction:column}
+  .hunt-summary span{text-align:left}
+}
