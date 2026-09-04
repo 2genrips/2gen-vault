@@ -2647,17 +2647,26 @@ function renderAreaStoreDetail(){
     <div class="area-product-grid">${g.products.map(renderAreaProductCard).join('')}</div>
   </div>`;
 }
-function renderNearbyStoreChecks(){
-  const rows=(state.nearbyStores||[]).slice(0,20),q=areaRetailerQuery();
-  if(rows.length)return rows.map(s=>{
-    const family=retailerFamily(s.name||s.brand||''),checkUrl=family?retailerSearchUrl(family,q):'';
-    return `<div class="nearby-check-row"><div class="grow"><strong>${esc(s.name||'Retailer')}</strong><span>${esc(s.address||s.shop||'Nearby store')} • ${Number(s.distance||0).toFixed(1)} mi</span><small>${family?'Retailer-site availability check — not a verified VaultSignal stock count':'Nearby store discovered from map data'}</small></div><span class="stock-pill check">${family?'RETAILER CHECK':'NEARBY'}</span><div class="nearby-check-actions">${checkUrl?`<a class="btn primary" href="${esc(checkUrl)}" target="_blank" rel="noreferrer">Check ${esc(family)} ↗</a>`:''}<a class="btn" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.lat+','+s.lon)}" target="_blank" rel="noreferrer">Map ↗</a></div></div>`;
-  }).join('');
-  const fallback=mergeInventoryResults(state.areaRetailerCheckResults||[]).filter(x=>x.sourceType==='retailer_verified'||x.status==='retailer_check').filter((x,i,a)=>a.findIndex(y=>y.retailer===x.retailer)===i);
-  if(fallback.length)return `<div class="retailer-check-fallback-grid">${fallback.map(x=>`<div class="retailer-check-fallback-card"><div><strong>${esc(x.retailer)}</strong><span>Retailer-site availability search</span></div>${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Check retailer ↗</a>`:''}</div>`).join('')}</div>`;
-  return `<div class="empty">Run SCAN MY AREA. VaultSignal will discover nearby stores and give you retailer checks even when no authorized live inventory feed is connected.</div>`;
+function renderQuickRetailerChecks(){
+  const q=areaRetailerQuery();
+  const providerNames=(state.areaRetailerCheckResults||[]).map(x=>x.retailer).filter(Boolean);
+  const names=[...new Set(providerNames.length?providerNames:['Walmart','Target','GameStop'])];
+  return `<div class="quick-retailer-checks">${names.map(name=>{
+    const url=retailerSearchUrl(name,q);
+    return url?`<a class="quick-retailer-btn" href="${esc(url)}" target="_blank" rel="noreferrer"><b>${esc(name)}</b><span>Check ${esc(q)} ↗</span></a>`:'';
+  }).join('')}</div>`;
 }
 
+function renderNearbyStoreChecks(){
+  const rows=(state.nearbyStores||[]).slice(0,20),q=areaRetailerQuery(),quick=renderQuickRetailerChecks();
+  if(rows.length)return quick+rows.map(s=>{
+    const family=retailerFamily(s.name||s.brand||s.operator||''),checkUrl=family?retailerSearchUrl(family,q):'';
+    return `<div class="nearby-check-row"><div class="grow"><strong>${esc(s.name||'Retailer')}</strong><span>${esc(s.address||s.shop||'Nearby store')} • ${Number(s.distance||0).toFixed(1)} mi</span><small>${family?'Retailer-site availability check — not a verified VaultSignal stock count':'Nearby retailer discovered from map data'}</small></div><span class="stock-pill check">${family?'RETAILER CHECK':'NEARBY'}</span><div class="nearby-check-actions">${checkUrl?`<a class="btn primary" href="${esc(checkUrl)}" target="_blank" rel="noreferrer">Check ${esc(family)} ↗</a>`:''}<a class="btn" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.lat+','+s.lon)}" target="_blank" rel="noreferrer">Map ↗</a></div></div>`;
+  }).join('');
+  const fallback=mergeInventoryResults(state.areaRetailerCheckResults||[]).filter(x=>x.sourceType==='retailer_verified'||x.status==='retailer_check').filter((x,i,a)=>a.findIndex(y=>y.retailer===x.retailer)===i);
+  if(fallback.length)return quick+`<div class="retailer-check-fallback-grid">${fallback.map(x=>`<div class="retailer-check-fallback-card"><div><strong>${esc(x.retailer)}</strong><span>Retailer-site availability search</span></div>${x.url?`<a class="btn primary" href="${esc(x.url)}" target="_blank" rel="noreferrer">Check retailer ↗</a>`:''}</div>`).join('')}</div>`;
+  return quick||`<div class="empty">Run SCAN MY AREA to find nearby retailers.</div>`;
+}
 function renderStock(){
   ensureRealInventorySchema();
   const radius=Number(state.settings.radius)||25,groups=areaStoreGroups(),last=latestAreaScan();
@@ -2675,7 +2684,8 @@ function renderStock(){
       <div class="action-row radar-actions"><button class="btn primary area-scan-btn" ${areaScanBusy?'disabled':''} onclick="runAreaInventoryScan(false)">${areaScanBusy?'Scanning sources + nearby stores…':'◉ SCAN MY AREA'}</button><button class="btn" onclick="saveStockArea()">Save area</button><button class="btn" onclick="useMyLocation()">⌖ Use location</button></div>
       <div class="auto-refresh-strip"><label><input type="checkbox" ${state.areaScanSettings.autoRefresh?'checked':''} onchange="setAreaAutoRefresh(this.checked)"> Smart refresh when Stock opens</label><select onchange="setAreaAutoRefreshHours(this.value)">${[1,2,4,6,12,24].map(h=>`<option value="${h}" ${Number(state.areaScanSettings.autoRefreshHours)===h?'selected':''}>after ${h}h</option>`).join('')}</select><span>${last?`Last scan ${humanAge(last.checkedAt)}`:'No scan yet'}</span></div>
     </div>
-    <div class="stat-grid compact-stats"><div class="stat-card"><span>Verified stores</span><strong>${groups.length}</strong><small>${liveProviders.length?liveProviders.map(x=>x.name).join(', '):'No authorized live feed yet'}</small></div><div class="stat-card"><span>Nearby stores</span><strong>${nearbyCount}</strong><small>${radius} mile area</small></div><div class="stat-card"><span>Retailer checks</span><strong>${retailerCheckCount}</strong><small>Direct retailer handoffs</small></div><div class="stat-card"><span>Pulse changes</span><strong>${(state.inventoryPulseEvents||[]).length}</strong><small>Verified-source changes</small></div></div>
+    <div class="stat-grid compact-stats"><div class="stat-card"><span>Verified stores</span><strong>${groups.length}</strong><small>${liveProviders.length?liveProviders.map(x=>x.name).join(', '):'No authorized live feed yet'}</small></div><div class="stat-card"><span>Mapped nearby stores</span><strong>${nearbyCount}</strong><small>${nearbyCount?`${radius} mile area`:"Map lookup returned none • retailer checks still work"}</small></div><div class="stat-card"><span>Retailer checks</span><strong>${retailerCheckCount}</strong><small>Direct retailer handoffs</small></div><div class="stat-card"><span>Pulse changes</span><strong>${(state.inventoryPulseEvents||[]).length}</strong><small>Verified-source changes</small></div></div>
+    ${retailerCheckCount?`<div class="panel quick-check-panel"><div class="section-head"><div><div class="eyebrow">CHECK RETAILERS NOW</div><h2>${retailerCheckCount} retailer check${retailerCheckCount===1?'':'s'} ready</h2><p>These open the retailer's own current search/availability flow. They do not claim inventory is in stock.</p></div></div>${renderQuickRetailerChecks()}</div>`:''}
     ${groups.length?`<div class="panel"><div class="section-head"><div><div class="eyebrow">VERIFIED LIVE INVENTORY</div><h2>Provider-confirmed stores</h2><p>Only authorized live inventory results appear here.</p></div><button class="link-btn" onclick="clearAreaInventory()">Clear</button></div><div class="area-store-grid">${groups.map(renderAreaStoreCard).join('')}</div></div><div class="panel" id="areaStoreDetail">${renderAreaStoreDetail()}</div>`:`<div class="panel verified-empty-panel"><div class="section-head"><div><div class="eyebrow">VERIFIED LIVE INVENTORY</div><h2>No verified live store result</h2><p>${liveProviders.length?'The connected live source returned no matching inventory in this scan.':'No authorized live store-inventory provider is configured yet. VaultSignal will not pretend a store is in stock.'}</p></div></div></div>`}
     <div class="panel retailer-check-panel"><div class="section-head"><div><div class="eyebrow">NEARBY RETAILER CHECKS</div><h2>Stores you can check now</h2><p>Real nearby store locations with direct retailer/map handoffs. These are not labeled in stock without a verified feed.</p></div><button class="btn" onclick="findNearbyStores()">Refresh stores</button></div>${renderNearbyStoreChecks()}</div>
     <div class="panel pulse-panel"><div class="section-head"><div><div class="eyebrow">INVENTORY PULSE</div><h2>Verified-source changes</h2><p>Compares authorized provider results between scans.</p></div>${state.inventoryPulseEvents.length?`<button class="link-btn" onclick="clearInventoryPulse()">Clear</button>`:''}</div>${renderInventoryPulse()}</div>
@@ -2848,33 +2858,69 @@ async function findNearbyStores(options={}){
   const silent=options?.silent===true,skipRender=options?.skipRender===true;
   try{
     const {lat,lon}=await geocodeSavedArea();
-    const meters=(Number(state.settings.radius)||25)*1609.344;
+    const radiusMiles=Number(state.settings.radius)||25;
+    const meters=radiusMiles*1609.344;
     const names=['Walmart','Target','Best Buy','GameStop',"Sam's Club",'Costco','Walgreens','CVS','Dollar General','Family Dollar'];
-    const regex=names.join('|').replace(/'/g,"'");
-    const q=`[out:json][timeout:25];(
+    const regex=names.join('|');
+    const q=`[out:json][timeout:28];(
       nwr(around:${Math.round(meters)},${lat},${lon})["name"~"${regex}",i];
-      nwr(around:${Math.round(meters)},${lat},${lon})["shop"~"games|toys|department_store|supermarket|variety_store"];
+      nwr(around:${Math.round(meters)},${lat},${lon})["brand"~"${regex}",i];
+      nwr(around:${Math.round(meters)},${lat},${lon})["operator"~"${regex}",i];
+      nwr(around:${Math.round(meters)},${lat},${lon})["shop"~"games|toys|department_store|supermarket|variety_store|chemist"];
     );out center tags;`;
     const endpoints=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
-    let data=null,lastErr=null;
-    for(const ep of endpoints){try{const r=await fetch(ep,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:'data='+encodeURIComponent(q)});if(!r.ok)throw new Error(`Store lookup ${r.status}`);data=await r.json();break}catch(e){lastErr=e}}
-    if(!data)throw lastErr||new Error('Store lookup failed');
+    let elements=[];
+    for(const ep of endpoints){
+      try{
+        const r=await fetch(ep,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:'data='+encodeURIComponent(q)});
+        if(!r.ok)throw new Error(`Store lookup ${r.status}`);
+        const d=await r.json();
+        if(Array.isArray(d.elements))elements=d.elements;
+        if(elements.length)break;
+      }catch{}
+    }
     const seen=new Set();
-    const stores=(data.elements||[]).map(e=>{
+    let stores=elements.map(e=>{
       const t=e.tags||{},slat=e.lat??e.center?.lat,slon=e.lon??e.center?.lon;
       if(typeof slat!=='number'||typeof slon!=='number')return null;
-      const name=t.name||t.brand||'Local store',key=`${name}|${slat.toFixed(4)}|${slon.toFixed(4)}`;
+      const name=t.name||t.brand||t.operator||'Local store';
+      const family=retailerFamily(name)||retailerFamily(t.brand||'')||retailerFamily(t.operator||'');
+      const shop=t.shop||'';
+      if(!family&&!/games|toys|department_store|supermarket|variety_store|chemist/i.test(shop))return null;
+      const distance=haversine(lat,lon,slat,slon);
+      if(distance>radiusMiles+1)return null;
+      const key=`${name}|${slat.toFixed(4)}|${slon.toFixed(4)}`;
       if(seen.has(key))return null;seen.add(key);
       const address=[t['addr:housenumber'],t['addr:street'],t['addr:city'],t['addr:state'],t['addr:postcode']].filter(Boolean).join(' ');
-      return {id:key,name,brand:t.brand||'',address,lat:slat,lon:slon,distance:haversine(lat,lon,slat,slon),shop:t.shop||'',openingHours:t.opening_hours||'',phone:t.phone||t['contact:phone']||'',website:t.website||t['contact:website']||''};
+      return {id:key,name,brand:t.brand||'',operator:t.operator||'',family,address,lat:slat,lon:slon,distance,shop,openingHours:t.opening_hours||'',phone:t.phone||t['contact:phone']||'',website:t.website||t['contact:website']||'',source:'OpenStreetMap'};
     }).filter(Boolean).sort((a,b)=>a.distance-b.distance).slice(0,40);
+
+    // Chain-name fallback when Overpass is sparse.
+    if(stores.length<2){
+      const more=[];
+      for(const chain of names){
+        try{
+          const u=new URL('https://nominatim.openstreetmap.org/search');
+          u.searchParams.set('format','jsonv2');u.searchParams.set('limit','4');u.searchParams.set('q',`${chain} ${state.settings.zip||state.settings.locationLabel||''}`);
+          const r=await fetch(u.toString(),{headers:{Accept:'application/json'}}); if(!r.ok)continue;
+          const list=await r.json();
+          for(const x of list||[]){
+            const slat=Number(x.lat),slon=Number(x.lon);if(!Number.isFinite(slat)||!Number.isFinite(slon))continue;
+            const distance=haversine(lat,lon,slat,slon);if(distance>radiusMiles+3)continue;
+            const key=`${chain}|${slat.toFixed(4)}|${slon.toFixed(4)}`;if(seen.has(key))continue;seen.add(key);
+            more.push({id:key,name:(x.display_name||chain).split(',')[0]||chain,brand:chain,family:chain,address:x.display_name||'',lat:slat,lon:slon,distance,shop:x.type||'',source:'OpenStreetMap'});
+          }
+        }catch{}
+        if(more.length>=8)break;
+      }
+      stores=[...stores,...more].sort((a,b)=>a.distance-b.distance).slice(0,40);
+    }
     state.nearbyStores=stores;saveState();
     if(!skipRender)renderStock();
-    if(!silent)toast(`${stores.length} nearby retailer${stores.length===1?'':'s'} found`);
+    if(!silent)toast(stores.length?`${stores.length} nearby retailer${stores.length===1?'':'s'} found`:'No mapped retailers found • retailer website checks are still ready');
     return stores;
   }catch(e){if(!silent)toast(e.message||'Nearby store lookup failed');return []}
 }
-
 function renderNearbyStores(){
   if(!state.nearbyStores.length) return `<div class="empty">Save a ZIP or use GPS, then tap “Nearby stores.”</div>`;
   return state.nearbyStores.map(s=>`

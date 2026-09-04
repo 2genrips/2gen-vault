@@ -1,7 +1,7 @@
 {
   "name": "VaultSignal",
   "short_name": "VaultSignal",
-  "description": "VaultSignal v10.1 \u2014 app-like tool navigation, clear $4.99 Premium pricing, and truthful Inventory Radar with automatic nearby retailer checks.",
+  "description": "VaultSignal v10.2 \u2014 stronger nearby retailer discovery with immediate retailer availability handoffs.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

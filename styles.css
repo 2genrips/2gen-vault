@@ -1359,3 +1359,9 @@ body{
 .nearby-check-row{grid-template-columns:minmax(0,1fr) auto!important;align-items:center!important}.nearby-check-row .grow>small{display:block;font-size:5.8px;color:var(--muted);margin-top:4px;line-height:1.4}.nearby-check-actions{grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;margin-left:0}
 .retailer-check-fallback-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.retailer-check-fallback-card{display:flex;justify-content:space-between;gap:10px;align-items:center;border:1px solid rgba(255,184,0,.16);border-radius:12px;padding:10px;background:#09111D}.retailer-check-fallback-card strong,.retailer-check-fallback-card span{display:block}.retailer-check-fallback-card strong{font-size:8px}.retailer-check-fallback-card span{font-size:6px;color:var(--muted);margin-top:3px}.verified-empty-panel{border-style:dashed!important}
 @media(max-width:600px){.tool-detail-nav{padding-left:10px;padding-right:10px}.tool-detail-title small{display:none}.premium-banner-card{align-items:flex-start;flex-direction:column}.inventory-source-truth{grid-template-columns:34px 1fr}.inventory-source-truth>b{grid-column:2;justify-self:start}.retailer-check-fallback-grid{grid-template-columns:1fr}}
+\n/* v10.2 retailer discovery */
+.quick-check-panel{background:radial-gradient(circle at 100% 0%,rgba(255,184,0,.07),transparent 30%),linear-gradient(145deg,#101824,#09111B)}
+.quick-retailer-checks{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.quick-retailer-btn{display:block;text-decoration:none;color:var(--text);border:1px solid rgba(255,184,0,.18);border-radius:13px;padding:10px;background:#09111D}
+.quick-retailer-btn b,.quick-retailer-btn span{display:block}.quick-retailer-btn b{font-size:8px}.quick-retailer-btn span{font-size:6px;color:#FFD66A;margin-top:4px}
+@media(max-width:620px){.quick-retailer-checks{grid-template-columns:1fr}}

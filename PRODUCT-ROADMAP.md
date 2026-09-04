@@ -1,6 +1,6 @@
 # VaultSignal — Product Roadmap
 
-## Current build: v10.1 UX + Inventory Radar Fix
+## Current build: v10.2 Retailer Discovery Fix
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -380,3 +380,9 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - backend vs live-inventory status separation
 - automatic nearby retailer checks
 - verified stock remains source-grounded only
+
+
+## v10.2 completed
+- stronger nearby retailer discovery
+- immediate retailer check buttons
+- map lookup fallback

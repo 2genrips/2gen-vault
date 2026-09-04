@@ -1,68 +1,118 @@
-# VaultSignal Android + iOS Launch Foundation
+# VaultSignal Real Inventory Worker v5
 
-VaultSignal currently runs as a PWA/GitHub Pages web app. The production Android and iOS releases should use one shared web codebase wrapped with Capacitor.
+This is the secure backend for automatic retailer inventory searches.
 
-## Store product
-- Product ID: `vaultsignal_premium_monthly`
-- Price target: **$4.99/month**
-- Entitlement: `premium`
+## Why this exists
 
-## Required native pieces before release
+GitHub Pages is public. A retailer API key placed in `config.js` or `app.js` can be copied by anyone.
 
-### Android
-- Capacitor Android shell
-- Camera permissions
-- Google Play Billing subscription purchase
-- Restore/query purchases
-- Receipt / purchase-token verification through secure backend
-- Play Store signing + listing
+This Worker keeps private retailer credentials on the server side. VaultSignal receives only normalized inventory results.
 
-### iOS
-- Capacitor iOS shell
-- Camera usage description
-- StoreKit auto-renewable subscription
-- Restore purchases
-- Transaction verification through secure backend
-- App Store signing + listing
+## Connected in v5
 
-## Entitlement flow
+### Best Buy — official live API connector
 
-1. User purchases VaultSignal Premium through Apple or Google.
-2. Native billing layer receives the store transaction / purchase token.
-3. Native layer sends proof to VaultSignal backend.
-4. Backend validates with the platform and stores the user's entitlement.
-5. App receives a verified Premium entitlement.
-6. High-value backend endpoints also check Premium server-side.
+Best Buy's official developer API supports:
 
-Do not trust a public JavaScript flag as production payment security.
+- product lookup
+- current pricing fields
+- store information
+- near-real-time in-store availability for a SKU near a ZIP code
 
-## Development mode
+The Worker does **not** invent quantity because Best Buy's in-store availability response does not provide a shelf quantity.
 
-`config.js` currently has:
+### Target / Walmart / GameStop / other supported retailer buttons
 
-`premiumPreview: true`
+These are labeled `RETAILER CHECK`, not `LIVE API`.
 
-This intentionally unlocks Premium features while the app is still being built and tested.
+They open the retailer's own product/availability experience. The Worker does not scrape hidden site endpoints or claim these retailers have stock when it cannot verify it through an authorized source.
 
-**Before store release, set this to `false`.**
+## Required secret
 
-## Premium feature strategy
+`BESTBUY_API_KEY`
 
-Free remains useful:
-- collection + sealed Vault
-- basic card search
-- manual inventory
-- exact product/retailer search
-- 3 live scanner/value lookups per day
+Create a Best Buy developer key through the official Best Buy Developer portal, then save it as a **Cloudflare Worker secret**.
 
-Premium $4.99/month:
-- unlimited live scanner/value lookups
-- Nearby Inventory Radar + Inventory Pulse
-- Inventory Command audits / ledger / replenishment
-- Signal Center
-- VaultIQ
-- Market Pulse
-- Dashboard Pro
-- Trade Lab + Sell Lab
-- Showcase Studio
-- future secure cloud sync / multi-device
+Never paste that key into the GitHub Pages repository.
+
+## Cloudflare dashboard deployment
+
+You can deploy this without installing software:
+
+1. Create a Cloudflare account.
+2. Go to **Workers & Pages**.
+3. Create a Worker named `2gen-vault-inventory`.
+4. Paste the contents of `src/index.js` into the Worker editor and deploy.
+5. Open **Settings → Variables and Secrets**.
+6. Add the secret:
+   - Name: `BESTBUY_API_KEY`
+   - Value: your Best Buy developer API key
+7. Add variable:
+   - `ALLOWED_ORIGIN`
+   - `https://2genrips.github.io`
+8. Deploy again.
+9. Copy the Worker URL, such as:
+   - `https://2gen-vault-inventory.<your-subdomain>.workers.dev`
+10. In the main app's `config.js`, set:
+   - `inventoryApiBase: "YOUR WORKER URL"`
+11. Commit `config.js` to GitHub Pages.
+12. Open VaultSignal → Tools → Settings → **Test connection**.
+
+## Endpoints
+
+### `GET /health`
+
+Reports the backend version and provider connector status.
+
+### `GET /inventory`
+
+Example:
+
+`/inventory?q=Prismatic%20Evolutions%20ETB&zip=28752&radius=50&retailers=Best%20Buy,Target`
+
+The frontend may also pass:
+
+- `game`
+- `productId`
+- `upc`
+- `sku`
+- `bestBuySku`
+
+If a Product Command entry has a saved Best Buy SKU, exact-SKU availability is preferred over keyword matching.
+
+## Security
+
+- CORS can be restricted with `ALLOWED_ORIGIN`.
+- Retailer keys remain Worker secrets.
+- No secrets are returned to the browser.
+- Best Buy responses are cached only briefly (120 seconds).
+- The app displays Best Buy attribution when Best Buy data is shown.
+
+## Accuracy
+
+Inventory changes quickly. A result means the provider reported that availability at the time shown.
+
+VaultSignal always displays:
+- provider/source
+- checked time
+- low-stock flag when supplied
+- distance
+- price when supplied
+- whether quantity is actually known
+
+Unknown quantities stay unknown.
+
+
+## v7.4 — PriceCharting card pricing
+
+New Worker endpoint:
+
+`GET /card-price?q=...&game=...`
+
+New Cloudflare secret:
+
+`PRICECHARTING_API_TOKEN`
+
+Keep this token server-side only. Never place it in `config.js`, `app.js`, or GitHub Pages.
+
+When configured, the Smart Scanner uses PriceCharting as its primary guide and keeps the existing game-specific provider as a secondary reference.
