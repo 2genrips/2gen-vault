@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v1.8 Action Center
+## Current build: v1.9 Watchtower
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -222,3 +222,16 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Giveaway / creator-content actions
 - Direct routing to the correct tool
 - 7-day action snooze
+
+
+## v1.9 completed
+- Persistent Watchtower notification inbox
+- Action-to-alert conversion
+- Duplicate-alert fingerprinting
+- Unread / high-priority counts
+- Category notification preferences
+- High-priority-only mode
+- Browser/PWA notification permission flow
+- Best-effort local browser alerts
+- Service-worker notification click handling
+- Home Watchtower preview

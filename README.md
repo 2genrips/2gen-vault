@@ -1,4 +1,4 @@
-# 2GEN Vault — Action Center v1.8 (GitHub Pages)
+# 2GEN Vault — Watchtower v1.9 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -756,3 +756,63 @@ This version is an **in-app action system**.
 It refreshes when 2GEN Vault is opened/used.
 
 It does not pretend to deliver true background push notifications while the browser/PWA is closed. True push alerts will require a backend notification service / service-worker push architecture.
+
+
+## New in v1.9 — 2GEN Watchtower
+
+Action Center answers “What should I do next?”
+
+Watchtower adds a second layer:
+
+**“What happened that I should not miss?”**
+
+### Persistent alert inbox
+
+Watchtower turns supported Action Center conditions into saved notifications.
+
+Examples:
+- price target hit
+- hot stock watch
+- hobby budget warning
+- stale backup
+- price refresh due
+- set close to completion
+- grading follow-up
+- unprofitable sale draft
+- trade proposal follow-up
+- giveaway ready
+- creator-content follow-up
+
+Unlike a normal dashboard card, the alert remains in the Watchtower inbox until the user reads or clears it.
+
+### Duplicate-alert protection
+
+Watchtower fingerprints each alert condition so it does not recreate the exact same message every time the app renders.
+
+If the underlying detail changes, a new alert can be generated.
+
+### Browser notification support
+
+The user can optionally request browser/PWA notification permission.
+
+When supported, Watchtower can show best-effort browser notifications for newly detected collector alerts.
+
+Important:
+- this is NOT yet true remote push
+- it does not promise scheduled alerts while the app is fully closed
+- it depends on browser/PWA notification support
+- server-triggered push still requires backend functions + a push subscription store
+
+### Preferences
+
+Watchtower supports:
+- master on/off
+- high-priority-only mode
+- category toggles for Market, Stock, Budget, Safety, Sets, Grading, Selling, Trading and Creator
+- mark all read
+- rebuild current alerts
+- clear inbox
+
+### Home badge
+
+Unread/high-priority Watchtower counts now appear on the Home screen.

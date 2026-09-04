@@ -42,6 +42,17 @@ const seed = {
   giveawayLocker: [],
   contentQueue: [],
   actionSnoozes: {},
+  notificationInbox: [],
+  notificationSeenKeys: {},
+  notificationPrefs: {
+    enabled:true,
+    browserNotifications:false,
+    highOnly:false,
+    categories:{
+      Market:true,Stock:true,Budget:true,Safety:true,Sets:true,
+      Grading:true,Selling:true,Trading:true,Creator:true
+    }
+  },
   grading: [],
   setGoals: [],
   productCatalog: [],
@@ -107,6 +118,7 @@ let tradeSearchBusy = false;
 let sellDraftSource = null;
 let sellMarketplace = 'Local / Cash';
 let activeCollectorProfileId = 'collector-household';
+let watchtowerLastEvaluatedAt = null;
 let toastTimer;
 
 function $(id){ return document.getElementById(id); }
@@ -654,6 +666,8 @@ function updateStatus(){
 }
 
 function renderHome(){
+  ensureWatchtowerSchema();
+  evaluateWatchtower({notify:false});
   const t = totals();
   const spent = monthSpend();
   const budget = Number(state.settings.monthlyBudget)||0;
@@ -664,6 +678,8 @@ function renderHome(){
   const health = dataHealthScore();
   const homeActions = buildActionCenter();
   const homeActionCounts = actionCounts(homeActions);
+  const homeWatchtowerUnread = watchtowerUnread();
+  const homeWatchtowerHigh = watchtowerHighUnread();
   $('home').innerHTML = `
     <div class="hero">
       <div class="eyebrow">2GEN RIPS PRESENTS</div>
@@ -701,9 +717,16 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('sell')"><span class="big-icon">$</span><b>Sell Lab</b><span>Estimate fees, protect cost basis, create listings and track profit.</span></button>
         <button class="quick-card" onclick="openTool('family')"><span class="big-icon">2G</span><b>2GEN Hub</b><span>Family collections, giveaways and creator content in one place.</span></button>
         <button class="quick-card" onclick="openTool('actions')"><span class="big-icon">✓</span><b>Action Center</b><span>${homeActionCounts.total} priorities • ${homeActionCounts.high} high • know what to do next.</span></button>
+        <button class="quick-card" onclick="openTool('watchtower')"><span class="big-icon">◉</span><b>Watchtower</b><span>${homeWatchtowerUnread} unread alerts • ${homeWatchtowerHigh} high priority.</span></button>
       </div>
     </div>
 
+
+
+    ${homeWatchtowerUnread?`<div class="panel watchtower-home-preview">
+      <div class="section-head"><div><div class="eyebrow">WATCHTOWER</div><h2>${homeWatchtowerUnread} unread alert${homeWatchtowerUnread===1?'':'s'}</h2><p>${homeWatchtowerHigh?`${homeWatchtowerHigh} high-priority alert${homeWatchtowerHigh===1?'':'s'} waiting.`:'No unread high-priority alerts.'}</p></div><button class="btn primary" onclick="openTool('watchtower')">Open inbox</button></div>
+      ${(state.notificationInbox||[]).filter(n=>!n.read).slice(0,2).map(n=>watchtowerNotificationMarkup(n)).join('')}
+    </div>`:''}
 
     <div class="panel action-home-preview">
       <div class="section-head"><div><div class="eyebrow">ACTION CENTER</div><h2>${homeActionCounts.total?`${homeActionCounts.total} collector priorities`:'All caught up'}</h2><p>${homeActionCounts.high?`${homeActionCounts.high} high-priority item${homeActionCounts.high===1?'':'s'} need attention.`:'No high-priority collector actions right now.'}</p></div><button class="btn" onclick="openTool('actions')">Open Action Center</button></div>
@@ -1795,6 +1818,7 @@ function renderTools(){
   $('tools').innerHTML = `
     <div class="page-title"><div><h1>Collector Tools</h1><p>The rest of your collecting workflow, all under one roof.</p></div></div>
     <div class="tool-menu">
+      ${toolButton('watchtower','◉','Watchtower','Collector alert inbox')}
       ${toolButton('actions','✓','Action Center','Smart collector priorities')}
       ${toolButton('market','↗','Market Pulse','Live price tracking')}
       ${toolButton('analytics','⌁','Dashboard Pro','Collection analytics')}
@@ -1818,6 +1842,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='watchtower') return renderWatchtowerTool();
   if(toolsTab==='actions') return renderActionCenterTool();
   if(toolsTab==='family') return renderFamilyCreatorHub();
   if(toolsTab==='sell') return renderSellLabTool();
@@ -3817,6 +3842,230 @@ function actionCardMarkup(a,compact=false){
     </div>
   </div>`;
 }
+
+function ensureWatchtowerSchema(){
+  if(!Array.isArray(state.notificationInbox)) state.notificationInbox=[];
+  if(!state.notificationSeenKeys || typeof state.notificationSeenKeys!=='object') state.notificationSeenKeys={};
+  state.notificationPrefs={
+    enabled:true,
+    browserNotifications:false,
+    highOnly:false,
+    categories:{
+      Market:true,Stock:true,Budget:true,Safety:true,Sets:true,
+      Grading:true,Selling:true,Trading:true,Creator:true
+    },
+    ...(state.notificationPrefs||{})
+  };
+  state.notificationPrefs.categories={
+    Market:true,Stock:true,Budget:true,Safety:true,Sets:true,
+    Grading:true,Selling:true,Trading:true,Creator:true,
+    ...(state.notificationPrefs.categories||{})
+  };
+}
+function watchtowerCategoryEnabled(category){
+  ensureWatchtowerSchema();
+  return state.notificationPrefs.categories?.[category]!==false;
+}
+function actionFingerprint(a){
+  return `${a.id}|${a.priority}|${a.detail||''}`;
+}
+function notificationForAction(a){
+  return {
+    uid:uid(),
+    actionId:a.id,
+    key:actionFingerprint(a),
+    title:a.title,
+    detail:a.detail||'',
+    priority:a.priority,
+    category:a.category,
+    icon:a.icon||'!',
+    cta:a.cta||'Open',
+    tool:a.tool||null,
+    tab:a.tab||null,
+    watchId:a.watchId||null,
+    createdAt:new Date().toISOString(),
+    read:false
+  };
+}
+async function showBrowserAlert(n){
+  if(!state.notificationPrefs.browserNotifications)return;
+  if(!('Notification' in window) || Notification.permission!=='granted')return;
+  try{
+    if('serviceWorker' in navigator){
+      const reg=await navigator.serviceWorker.ready;
+      await reg.showNotification(`2GEN Vault • ${n.title}`,{
+        body:n.detail||n.category,
+        icon:'./icon.svg',
+        badge:'./icon.svg',
+        tag:`2gen-${n.actionId}`,
+        data:{url:location.href}
+      });
+    }else{
+      new Notification(`2GEN Vault • ${n.title}`,{body:n.detail||n.category});
+    }
+  }catch{}
+}
+function evaluateWatchtower({notify=true}={}){
+  ensureWatchtowerSchema();
+  if(!state.notificationPrefs.enabled){
+    watchtowerLastEvaluatedAt=new Date().toISOString();
+    return [];
+  }
+
+  const actions=buildActionCenter();
+  const fresh=[];
+
+  for(const a of actions){
+    if(state.notificationPrefs.highOnly && a.priority!=='high')continue;
+    if(!watchtowerCategoryEnabled(a.category))continue;
+    const key=actionFingerprint(a);
+    if(state.notificationSeenKeys[key])continue;
+
+    const n=notificationForAction(a);
+    state.notificationInbox.unshift(n);
+    state.notificationSeenKeys[key]=n.createdAt;
+    fresh.push(n);
+  }
+
+  state.notificationInbox=state.notificationInbox.slice(0,200);
+  // Keep seen map bounded to roughly the inbox + recent historic events.
+  const seenEntries=Object.entries(state.notificationSeenKeys)
+    .sort((a,b)=>new Date(b[1])-new Date(a[1]))
+    .slice(0,500);
+  state.notificationSeenKeys=Object.fromEntries(seenEntries);
+  watchtowerLastEvaluatedAt=new Date().toISOString();
+
+  if(fresh.length){
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
+    if(notify){
+      const important=fresh.filter(x=>x.priority==='high');
+      const browserBatch=(important.length?important:fresh).slice(0,3);
+      browserBatch.forEach(showBrowserAlert);
+    }
+  }
+  return fresh;
+}
+function watchtowerUnread(){
+  ensureWatchtowerSchema();
+  return state.notificationInbox.filter(n=>!n.read).length;
+}
+function watchtowerHighUnread(){
+  ensureWatchtowerSchema();
+  return state.notificationInbox.filter(n=>!n.read&&n.priority==='high').length;
+}
+function openWatchtowerNotification(id){
+  const n=state.notificationInbox.find(x=>x.uid===id);if(!n)return;
+  n.read=true;saveState();
+  if(n.watchId) selectedWatchId=n.watchId;
+  if(n.tab){switchTab(n.tab);return;}
+  if(n.tool){openTool(n.tool);return;}
+  openTool('actions');
+}
+function markWatchtowerRead(id){
+  const n=state.notificationInbox.find(x=>x.uid===id);if(!n)return;
+  n.read=true;saveState();renderTools();renderHome();
+}
+function markAllWatchtowerRead(){
+  state.notificationInbox.forEach(n=>n.read=true);saveState();renderTools();renderHome();
+}
+function clearWatchtowerInbox(){
+  if(!state.notificationInbox.length)return;
+  if(!confirm('Clear the Watchtower notification inbox?'))return;
+  state.notificationInbox=[];saveState();renderTools();renderHome();
+}
+function resetWatchtowerSignals(){
+  if(!confirm('Allow current conditions to generate fresh Watchtower alerts again?'))return;
+  state.notificationSeenKeys={};saveState();
+  const fresh=evaluateWatchtower({notify:false});
+  renderTools();renderHome();toast(`${fresh.length} alerts rebuilt`);
+}
+async function enableBrowserNotifications(){
+  if(!('Notification' in window)){
+    toast('Browser notifications are not supported on this device/browser');
+    return;
+  }
+  try{
+    const result=await Notification.requestPermission();
+    state.notificationPrefs.browserNotifications=result==='granted';
+    saveState();renderTools();
+    if(result==='granted'){
+      toast('Browser notifications enabled while supported by the PWA');
+      await showBrowserAlert({
+        actionId:'test',title:'Watchtower enabled',
+        detail:'2GEN Vault can now surface supported alerts when the app is active/opened.'
+      });
+    }else toast('Notification permission was not granted');
+  }catch(e){toast('Could not request notification permission')}
+}
+function disableBrowserNotifications(){
+  state.notificationPrefs.browserNotifications=false;saveState();renderTools();toast('Browser alerts disabled in 2GEN Vault');
+}
+function toggleWatchtowerPref(key){
+  if(key==='enabled') state.notificationPrefs.enabled=!state.notificationPrefs.enabled;
+  else if(key==='highOnly') state.notificationPrefs.highOnly=!state.notificationPrefs.highOnly;
+  saveState();renderTools();
+}
+function toggleWatchtowerCategory(category){
+  state.notificationPrefs.categories[category]=!watchtowerCategoryEnabled(category);
+  saveState();renderTools();
+}
+function watchtowerNotificationMarkup(n){
+  return `<div class="watchtower-row ${n.read?'read':'unread'} priority-${n.priority}">
+    <div class="watchtower-icon">${n.icon||'!'}</div>
+    <div class="grow">
+      <div class="action-meta"><span>${esc(n.category)}</span><b>${esc(n.priority.toUpperCase())}</b>${!n.read?`<i>NEW</i>`:''}</div>
+      <strong>${esc(n.title)}</strong>
+      <p>${esc(n.detail||'')}</p>
+      <small>${humanAge(n.createdAt)}</small>
+    </div>
+    <div class="right">
+      <button class="btn primary" onclick="openWatchtowerNotification('${n.uid}')">${esc(n.cta||'Open')}</button>
+      ${!n.read?`<button class="link-btn" onclick="markWatchtowerRead('${n.uid}')">Mark read</button>`:''}
+    </div>
+  </div>`;
+}
+function renderWatchtowerTool(){
+  ensureWatchtowerSchema();
+  evaluateWatchtower({notify:false});
+  const unread=watchtowerUnread();
+  const high=watchtowerHighUnread();
+  const categories=Object.keys(state.notificationPrefs.categories||{});
+
+  return `<div class="panel watchtower-hero">
+    <div class="section-head"><div><div class="eyebrow">2GEN WATCHTOWER</div><h2>Collector alert inbox</h2><p>Turns Action Center conditions into a persistent alert feed so important collector events do not disappear the next time the app changes state.</p></div><button class="btn" onclick="evaluateWatchtower({notify:true});renderTools()">↻ Check now</button></div>
+
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Unread alerts</span><strong>${unread}</strong><small>${state.notificationInbox.length} saved total</small></div>
+      <div class="stat-card"><span>High priority</span><strong class="${high?'bad':''}">${high}</strong><small>Unread high alerts</small></div>
+      <div class="stat-card"><span>Watchtower</span><strong>${state.notificationPrefs.enabled?'ON':'OFF'}</strong><small>In-app alert engine</small></div>
+      <div class="stat-card"><span>Browser alerts</span><strong>${state.notificationPrefs.browserNotifications?'ON':'OFF'}</strong><small>${'Notification' in window?Notification.permission:'unsupported'}</small></div>
+    </div>
+
+    <div class="watchtower-controls">
+      <button class="btn ${state.notificationPrefs.enabled?'primary':''}" onclick="toggleWatchtowerPref('enabled')">${state.notificationPrefs.enabled?'✓ Watchtower on':'Watchtower off'}</button>
+      <button class="btn ${state.notificationPrefs.highOnly?'primary':''}" onclick="toggleWatchtowerPref('highOnly')">${state.notificationPrefs.highOnly?'✓ High only':'All priorities'}</button>
+      ${state.notificationPrefs.browserNotifications
+        ? `<button class="btn" onclick="disableBrowserNotifications()">Disable browser alerts</button>`
+        : `<button class="btn" onclick="enableBrowserNotifications()">Enable browser alerts</button>`}
+      <button class="btn" onclick="markAllWatchtowerRead()">Mark all read</button>
+    </div>
+
+    <div class="notice warn" style="margin-top:10px"><span>!</span><span>Browser notifications here are <b>best-effort while the PWA is active/opened or supported by the browser</b>. True server-triggered alerts while the app is fully closed still require the backend push layer.</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>Alert categories</h2><p>Choose what Watchtower should turn into notifications.</p></div></div>
+    <div class="watchtower-category-grid">
+      ${categories.map(c=>`<button class="watchtower-category ${watchtowerCategoryEnabled(c)?'on':'off'}" onclick='toggleWatchtowerCategory(${JSON.stringify(c)})'><b>${watchtowerCategoryEnabled(c)?'✓':'○'} ${esc(c)}</b><span>${watchtowerCategoryEnabled(c)?'Enabled':'Muted'}</span></button>`).join('')}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>Alert inbox</h2><p>Newest collector alerts first.</p></div><div class="action-row"><button class="btn" onclick="resetWatchtowerSignals()">Rebuild current alerts</button><button class="remove" onclick="clearWatchtowerInbox()">Clear inbox</button></div></div>
+    ${state.notificationInbox.length?state.notificationInbox.map(watchtowerNotificationMarkup).join(''):`<div class="empty">No Watchtower alerts yet. Use 2GEN Vault normally and this inbox will populate when tracked conditions become relevant.</div>`}
+  </div>`;
+}
+
 function renderActionCenterTool(){
   const actions=buildActionCenter();
   const counts=actionCounts(actions);
@@ -4089,7 +4338,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -4109,11 +4358,13 @@ if('serviceWorker' in navigator){
 }
 ensureCollectionSchema();
 ensurePriceHistorySchema();
+ensureWatchtowerSchema();
 ensureActionSchema();
 ensureFamilySchema();
 ensureSalesSchema();
 ensureScannerSchema();
 ensureCatalogSeed();
 ensureDailySnapshot();
+evaluateWatchtower({notify:false});
 render('home');
 })();
