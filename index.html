@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0d0d0f" />
+  <meta name="description" content="2GEN Vault by 2GEN RIPS — Two Generations. One Collection." />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" />
+  <title>2GEN Vault</title>
+  <style>
+    :root{
+      color-scheme:dark;
+      --bg:#08090c;
+      --panel:#111318;
+      --panel2:#171a20;
+      --line:#292d35;
+      --text:#f7f9fc;
+      --muted:#9099a6;
+      --blue:#1565ff;
+      --blue2:#0b47d1;
+      --red:#ff2d2d;
+      --good:#30d898;
+      --shadow:0 20px 55px rgba(0,0,0,.34);
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:
+      radial-gradient(circle at 12% -5%,rgba(21,101,255,.20),transparent 30%),
+      radial-gradient(circle at 100% 6%,rgba(255,45,45,.12),transparent 28%),
+      linear-gradient(180deg,#0b0d11,#07080a);
+      color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+    button,input,select{font:inherit}
+    button{cursor:pointer}
+    a{color:inherit;text-decoration:none}
+    .shell{min-height:100vh;padding-bottom:86px}
+    .topbar{
+      position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;
+      padding:max(10px,env(safe-area-inset-top)) 14px 10px;
+      background:rgba(8,9,12,.88);backdrop-filter:blur(18px);
+      border-bottom:1px solid rgba(255,255,255,.07)
+    }
+    .app-icon{width:42px;height:42px;border-radius:13px;border:1px solid rgba(255,255,255,.12)}
+    .brand{display:flex;flex-direction:column;min-width:0}
+    .brand strong{font-size:14px;letter-spacing:-.02em}
+    .brand span{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .brand-chip{margin-left:auto;border:1px solid var(--line);border-radius:999px;padding:7px 9px;font-size:9px;color:#cbd3dc}
+    main{max-width:1050px;margin:0 auto;padding:16px 14px 28px}
+    .screen{display:none}.screen.active{display:block}
+    .hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:24px;padding:22px;background:
+      radial-gradient(circle at 86% 20%,rgba(255,45,45,.16),transparent 25%),
+      radial-gradient(circle at 12% 5%,rgba(21,101,255,.25),transparent 38%),
+      linear-gradient(135deg,#13161c,#0d0d0f 70%);
+      box-shadow:var(--shadow)}
+    .hero:after{content:"";position:absolute;width:170px;height:170px;border-radius:50%;right:-65px;top:-60px;border:28px solid rgba(255,255,255,.025)}
+    .eyebrow{font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:900;color:#4f8aff}
+    .hero h1,.page-title h1{margin:4px 0 6px;letter-spacing:-.05em}
+    .hero h1{font-size:clamp(31px,8vw,54px)}
+    .hero p{margin:0;color:#c4ccd5}
+    .hero-sub{margin-top:8px!important;font-size:12px;color:var(--muted)!important}
+    .badge{display:inline-flex;align-items:center;gap:7px;margin-top:16px;padding:8px 10px;border-radius:999px;background:linear-gradient(180deg,var(--blue),var(--blue2));font-size:10px;font-weight:900}
+    .stats{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0}
+    .stat{border:1px solid var(--line);border-radius:18px;padding:14px;background:rgba(17,19,24,.88)}
+    .stat span{display:block;color:var(--muted);font-size:10px;margin-bottom:6px}
+    .stat strong{display:block;font-size:21px;letter-spacing:-.03em}
+    .stat small{display:block;margin-top:5px;color:var(--muted)}
+    .panel{border:1px solid var(--line);border-radius:20px;padding:15px;background:rgba(17,19,24,.9);margin:11px 0;box-shadow:var(--shadow)}
+    .panel h2{font-size:18px;margin:0 0 5px}
+    .panel p{margin:0;color:var(--muted);font-size:12px}
+    .section-head,.page-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+    .page-title{margin:4px 0 16px}.page-title h1{font-size:30px}.page-title p{margin:4px 0 0;color:var(--muted);font-size:12px}
+    .bar{height:11px;border-radius:999px;background:#06070a;border:1px solid #242932;overflow:hidden;margin:18px 0 7px}
+    .bar>div{height:100%;width:50%;background:linear-gradient(90deg,var(--blue),var(--red))}
+    .split{display:flex;justify-content:space-between;color:var(--muted);font-size:10px}
+    .compact{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+    .compact:last-child{border-bottom:0}
+    .thumb{width:48px;aspect-ratio:2.5/3.5;border-radius:8px;background:linear-gradient(145deg,#15263f,#461a22);display:grid;place-items:center;border:1px solid rgba(255,255,255,.09);overflow:hidden;flex:0 0 auto}
+    .thumb img{width:100%;height:100%;object-fit:cover}
+    .thumb b{font-size:14px}
+    .grow{flex:1;min-width:0}.grow strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.grow span{display:block;color:var(--muted);font-size:10px;margin-top:3px}
+    .right{text-align:right}.right small{display:block;margin-top:4px}
+    .good{color:var(--good)!important}.bad{color:#ff7a86!important}
+    .search{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:15px;padding:8px;background:#11151b}
+    .search input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--text);padding:7px}
+    .btn{border:1px solid var(--line);border-radius:12px;padding:9px 11px;color:var(--text);background:#151a21;font-weight:800;font-size:11px}
+    .btn.primary{background:linear-gradient(180deg,#2875ff,var(--blue2));border-color:#2875ff}
+    .btn.danger{color:#ffd4d7;border-color:rgba(255,45,45,.3);background:rgba(255,45,45,.08)}
+    .btn.wide{width:100%}
+    .seg{display:flex;gap:7px;overflow:auto;margin:10px 0 12px}
+    .seg button{white-space:nowrap;border:1px solid var(--line);border-radius:999px;padding:8px 11px;background:#12161c;color:var(--muted);font-size:11px}
+    .seg button.active{background:var(--blue);color:white;border-color:var(--blue);font-weight:900}
+    .results{display:grid;gap:9px;margin-top:12px}
+    .card{display:grid;grid-template-columns:82px 1fr;gap:11px;border:1px solid var(--line);border-radius:18px;padding:10px;background:#11151a}
+    .card .thumb{width:82px}.card h3{margin:4px 0;font-size:16px}.tiny{font-size:10px;color:var(--muted)}
+    .price{display:flex;gap:8px;align-items:baseline;margin:8px 0}.price strong{font-size:18px}.price span{font-size:10px;color:var(--muted)}
+    .actions{display:flex;gap:6px;flex-wrap:wrap}
+    .filters{display:flex;gap:8px;margin-bottom:10px}.filters .search{flex:1}.filters select,.form input,.form select{border:1px solid var(--line);border-radius:12px;padding:10px;background:#0f141a;color:var(--text);outline:0}
+    .collection-item{display:grid;grid-template-columns:58px 1fr auto;gap:10px;border:1px solid var(--line);border-radius:17px;padding:10px;margin:8px 0;background:#11151a}
+    .collection-item .thumb{width:58px}.collection-item h3{margin:3px 0 5px;font-size:14px}
+    .mini-form{display:grid;grid-template-columns:60px 85px 1fr;gap:5px}
+    .mini-form label,.form label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:9px}
+    .mini-form input,.mini-form select{width:100%;background:#0c1015;color:var(--text);border:1px solid var(--line);border-radius:9px;padding:6px;font-size:10px}
+    .remove{background:transparent;border:0;color:#ff6e79;font-size:10px;padding:4px}
+    .scanbox{aspect-ratio:3/4;max-height:480px;border:2px dashed rgba(79,138,255,.55);border-radius:22px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--muted);overflow:hidden;background:#080b10;margin-bottom:11px}
+    .scanbox img{width:100%;height:100%;object-fit:contain}
+    .form{display:grid;gap:10px}.form input,.form select{width:100%}
+    .note{margin-top:10px;padding:11px;border:1px solid rgba(21,101,255,.22);border-radius:13px;background:rgba(21,101,255,.07);font-size:11px;color:#bac4cf}
+    .empty{min-height:130px;display:grid;place-items:center;color:var(--muted);text-align:center;font-size:12px}
+    .bottomnav{position:fixed;z-index:40;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(5,1fr);min-height:67px;padding-bottom:max(7px,env(safe-area-inset-bottom));background:rgba(7,8,10,.95);backdrop-filter:blur(18px);border-top:1px solid rgba(255,255,255,.08)}
+    .bottomnav button{border:0;background:transparent;color:#76818e;font-size:9px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
+    .bottomnav button.active{color:#4f8aff}
+    .navicon{font-size:20px;line-height:1}
+    @media(min-width:760px){
+      main{padding:24px}.stats{grid-template-columns:repeat(4,1fr)}.results{grid-template-columns:1fr 1fr}
+      .bottomnav{left:50%;transform:translateX(-50%);max-width:680px;bottom:12px;border:1px solid var(--line);border-radius:18px;overflow:hidden}
+    }
+    @media(max-width:430px){
+      .mini-form{grid-template-columns:54px 72px 1fr}.collection-item{grid-template-columns:48px 1fr}.collection-item .thumb{width:48px}.collection-item .right{grid-column:2;display:flex;gap:8px;justify-content:flex-end;align-items:center}
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header class="topbar">
+    <img class="app-icon" src="./icon.svg" alt="2GEN Vault" />
+    <div class="brand">
+      <strong>2GEN Vault</strong>
+      <span>by 2GEN RIPS • Two Generations. One Collection.</span>
+    </div>
+    <div class="brand-chip">2GEN RIPS</div>
+  </header>
+
+  <main>
+    <section id="home" class="screen active"></section>
+    <section id="discover" class="screen"></section>
+    <section id="collection" class="screen"></section>
+    <section id="scan" class="screen"></section>
+    <section id="more" class="screen"></section>
+  </main>
+
+  <nav class="bottomnav">
+    <button data-tab="home" class="active"><span class="navicon">⌂</span><span>Home</span></button>
+    <button data-tab="discover"><span class="navicon">⌕</span><span>Discover</span></button>
+    <button data-tab="collection"><span class="navicon">▣</span><span>Collection</span></button>
+    <button data-tab="scan"><span class="navicon">◉</span><span>Scan</span></button>
+    <button data-tab="more"><span class="navicon">☰</span><span>More</span></button>
+  </nav>
+</div>
+
+<script>
+const KEY='2gen-vault-pages-v1';
+const demoCards=[
+  {id:'p1',game:'Pokemon',name:'Charizard ex',set:'Demo Scarlet Set',number:'199/198',rarity:'Special Illustration Rare',market:128.42,low:115},
+  {id:'p2',game:'Pokemon',name:'Pikachu ex',set:'Demo Journey Set',number:'238/191',rarity:'Special Illustration Rare',market:84.15,low:72},
+  {id:'l1',game:'Lorcana',name:'Elsa — Spirit of Winter',set:'Demo First Chapter',number:'207/204',rarity:'Enchanted',market:412,low:380},
+  {id:'o1',game:'One Piece',name:'Monkey D. Luffy',set:'Demo Romance Dawn',number:'OP01-024',rarity:'Parallel',market:145.90,low:132},
+  {id:'m1',game:'Magic',name:'Mana Vault',set:'Demo Masters',number:'001',rarity:'Mythic',market:71.25,low:64},
+  {id:'y1',game:'Yu-Gi-Oh!',name:'Blue-Eyes White Dragon',set:'Demo Anniversary',number:'SDK-001',rarity:'Ultra Rare',market:39.90,low:31}
+];
+
+const seed={
+  collection:[
+    {uid:crypto.randomUUID(),card:demoCards[0],qty:1,condition:'Near Mint',cost:92},
+    {uid:crypto.randomUUID(),card:demoCards[1],qty:2,condition:'Near Mint',cost:51}
+  ],
+  wishlist:[],
+  alerts:[],
+  settings:{brand:'2GEN Vault',tagline:'Two Generations. One Collection.'}
+};
+let state=load();
+let searchMode='live';
+let searchResults=[];
+let scanPreview='';
+
+function load(){
+  try{
+    const raw=localStorage.getItem(KEY);
+    return raw?Object.assign({},seed,JSON.parse(raw)):structuredClone(seed);
+  }catch{return structuredClone(seed)}
+}
+function save(){localStorage.setItem(KEY,JSON.stringify(state))}
+const money=v=>typeof v==='number'?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'—';
+function totals(){
+  let market=0,cost=0,cards=0;
+  state.collection.forEach(i=>{market+=(i.card.market||0)*i.qty;cost+=(i.cost||0)*i.qty;cards+=i.qty});
+  return{market,cost,cards,gain:market-cost,pct:cost?((market-cost)/cost*100):0}
+}
+function art(card){
+  return `<div class="thumb">${card.image?`<img src="${card.image}" alt="">`:`<b>${card.game.slice(0,2).toUpperCase()}</b>`}</div>`
+}
+function escapeHtml(s=''){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function render(){
+  renderHome();renderDiscover();renderCollection();renderScan();renderMore();
+}
+function renderHome(){
+  const t=totals();
+  const top=[...state.collection].sort((a,b)=>(b.card.market||0)*b.qty-(a.card.market||0)*a.qty).slice(0,4);
+  home.innerHTML=`
+    <div class="hero">
+      <div class="eyebrow">2GEN RIPS PRESENTS</div>
+      <h1>${escapeHtml(state.settings.brand||'2GEN Vault')}</h1>
+      <p>${escapeHtml(state.settings.tagline||'Two Generations. One Collection.')}</p>
+      <p class="hero-sub">Collect • Track • Value • Trade</p>
+      <div class="badge">◆ ALL-IN-ONE TCG VAULT</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><span>Portfolio value</span><strong>${money(t.market)}</strong><small class="${t.gain>=0?'good':'bad'}">${t.gain>=0?'+':''}${money(t.gain)} • ${t.pct.toFixed(1)}%</small></div>
+      <div class="stat"><span>Total cards</span><strong>${t.cards}</strong><small>${state.collection.length} unique entries</small></div>
+      <div class="stat"><span>Cost basis</span><strong>${money(t.cost)}</strong><small>What you paid</small></div>
+      <div class="stat"><span>Watchlist</span><strong>${state.wishlist.length}</strong><small>${state.alerts.length} price alerts</small></div>
+    </div>
+    <div class="panel">
+      <div class="section-head"><div><h2>Portfolio pulse</h2><p>Market value compared with what you paid.</p></div></div>
+      <div class="bar"><div style="width:${Math.min(100,Math.max(6,t.cost?t.market/t.cost*50:50))}%"></div></div>
+      <div class="split"><span>Cost ${money(t.cost)}</span><span>Market ${money(t.market)}</span></div>
+    </div>
+    <div class="panel">
+      <div class="section-head"><div><h2>Top holdings</h2><p>Your biggest positions.</p></div></div>
+      ${top.length?top.map(i=>`<div class="compact">${art(i.card)}<div class="grow"><strong>${escapeHtml(i.card.name)}</strong><span>${escapeHtml(i.card.set)} • Qty ${i.qty}</span></div><div class="right"><strong>${money((i.card.market||0)*i.qty)}</strong></div></div>`).join(''):`<div class="empty">Add your first cards in Discover.</div>`}
+    </div>`;
+}
+function renderDiscover(){
+  discover.innerHTML=`
+    <div class="page-title"><div><h1>Discover</h1><p>Search live Pokémon data or use the built-in multi-TCG demo catalog.</p></div></div>
+    <div class="seg">
+      <button class="${searchMode==='live'?'active':''}" onclick="setMode('live')">Live Pokémon</button>
+      <button class="${searchMode==='demo'?'active':''}" onclick="setMode('demo')">Multi-TCG demo</button>
+    </div>
+    <form class="search" onsubmit="doSearch(event)">
+      <span>⌕</span><input id="q" placeholder="${searchMode==='live'?'Charizard, Pikachu, Mew...':'Search cards or games...'}">
+      <button class="btn primary">Search</button>
+    </form>
+    <div id="searchMsg" class="tiny" style="margin-top:9px">${searchMode==='live'?'Uses public Pokémon TCG API data when available.':'Demo mode lets you test collection features for multiple games.'}</div>
+    <div class="results">${searchResults.map(cardMarkup).join('')}</div>`;
+}
+function setMode(m){searchMode=m;searchResults=m==='demo'?demoCards:[];renderDiscover()}
+async function doSearch(e){
+  e.preventDefault();
+  const q=document.getElementById('q').value.trim();
+  const msg=document.getElementById('searchMsg');
+  if(!q){searchResults=searchMode==='demo'?demoCards:[];renderDiscover();return}
+  if(searchMode==='demo'){
+    const z=q.toLowerCase();
+    searchResults=demoCards.filter(c=>`${c.name} ${c.set} ${c.game} ${c.number} ${c.rarity}`.toLowerCase().includes(z));
+    renderDiscover();return;
+  }
+  msg.textContent='Searching live data…';
+  try{
+    const safe=q.replace(/"/g,'');
+    const url=`https://api.pokemontcg.io/v2/cards?q=name:%22${encodeURIComponent(safe)}%22&pageSize=20&orderBy=-set.releaseDate`;
+    const r=await fetch(url);
+    if(!r.ok)throw new Error('Live search is temporarily unavailable.');
+    const data=await r.json();
+    searchResults=(data.data||[]).map(c=>{
+      const prices=Object.values(c.tcgplayer?.prices||{});
+      const market=prices.find(p=>typeof p.market==='number')?.market;
+      const lows=prices.map(p=>p.low).filter(v=>typeof v==='number');
+      return{id:c.id,game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',number:c.number||'',rarity:c.rarity||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''}
+    });
+    renderDiscover();
+  }catch(err){
+    searchResults=[];
+    renderDiscover();
+    document.getElementById('searchMsg').textContent=err.message||'Search failed.';
+  }
+}
+function cardMarkup(c){
+  return `<article class="card">${art(c)}<div><div class="eyebrow">${escapeHtml(c.game)} • ${escapeHtml(c.set)}</div><h3>${escapeHtml(c.name)}</h3><div class="tiny">${escapeHtml(c.number||'—')} ${c.rarity?'• '+escapeHtml(c.rarity):''}</div><div class="price"><strong>${money(c.market)}</strong>${typeof c.low==='number'?`<span>Low ${money(c.low)}</span>`:''}</div><div class="actions"><button class="btn primary" onclick='addCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>+ Add</button><button class="btn" onclick='wish(${JSON.stringify(c).replace(/'/g,"&#39;")})'>♡</button><button class="btn" onclick='alertCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>◉ Alert</button>${c.url?`<a class="btn" target="_blank" rel="noreferrer" href="${c.url}">Market ↗</a>`:''}</div></div></article>`
+}
+function addCard(card){
+  const ex=state.collection.find(i=>i.card.id===card.id&&i.condition==='Near Mint');
+  if(ex)ex.qty+=1;
+  else state.collection.unshift({uid:crypto.randomUUID(),card,qty:1,condition:'Near Mint',cost:card.market||0});
+  save();render();switchTab('collection')
+}
+function wish(card){
+  if(!state.wishlist.some(x=>x.card.id===card.id))state.wishlist.unshift({uid:crypto.randomUUID(),card});
+  save();render();
+}
+function alertCard(card){
+  const v=prompt(`Alert when ${card.name} falls below:`,card.market?(card.market*.9).toFixed(2):'');
+  const n=Number(v);if(!v||!Number.isFinite(n))return;
+  state.alerts.unshift({uid:crypto.randomUUID(),card,target:n,on:true});save();render()
+}
+function renderCollection(){
+  const t=totals();
+  collection.innerHTML=`
+    <div class="page-title"><div><h1>Collection</h1><p>${t.cards} cards • ${money(t.market)} market value</p></div><button class="btn" onclick="exportCSV()">Export CSV</button></div>
+    <div class="filters"><div class="search"><span>⌕</span><input id="filterQ" oninput="filterCollection()" placeholder="Filter collection"></div></div>
+    <div id="collectionList">${collectionRows(state.collection)}</div>`;
+}
+function collectionRows(items){
+  if(!items.length)return `<div class="empty">No cards in your vault yet.</div>`;
+  return items.map(i=>`<div class="collection-item" data-search="${escapeHtml((i.card.name+' '+i.card.set+' '+i.card.game).toLowerCase())}">
+    ${art(i.card)}
+    <div><div class="eyebrow">${escapeHtml(i.card.game)} • ${escapeHtml(i.card.set)}</div><h3>${escapeHtml(i.card.name)}</h3>
+      <div class="mini-form">
+        <label>Qty<input type="number" min="1" value="${i.qty}" onchange="updateItem('${i.uid}','qty',this.value)"></label>
+        <label>Cost ea.<input type="number" min="0" step=".01" value="${i.cost}" onchange="updateItem('${i.uid}','cost',this.value)"></label>
+        <label>Condition<select onchange="updateItem('${i.uid}','condition',this.value)">${['Near Mint','Lightly Played','Moderately Played','Heavily Played'].map(c=>`<option ${c===i.condition?'selected':''}>${c}</option>`).join('')}</select></label>
+      </div>
+    </div>
+    <div class="right"><strong>${money((i.card.market||0)*i.qty)}</strong><small class="${((i.card.market||0)-i.cost)*i.qty>=0?'good':'bad'}">${money(((i.card.market||0)-i.cost)*i.qty)}</small><button class="remove" onclick="removeItem('${i.uid}')">Remove</button></div>
+  </div>`).join('')
+}
+function filterCollection(){
+  const q=document.getElementById('filterQ').value.toLowerCase();
+  document.querySelectorAll('#collectionList .collection-item').forEach(el=>el.style.display=el.dataset.search.includes(q)?'grid':'none')
+}
+function updateItem(uid,key,value){
+  const i=state.collection.find(x=>x.uid===uid);if(!i)return;
+  i[key]=key==='condition'?value:Math.max(key==='qty'?1:0,Number(value)||0);save();render()
+}
+function removeItem(uid){state.collection=state.collection.filter(x=>x.uid!==uid);save();render()}
+function exportCSV(){
+  const rows=[['Game','Name','Set','Number','Condition','Quantity','Cost Each','Market Each']];
+  state.collection.forEach(i=>rows.push([i.card.game,i.card.name,i.card.set,i.card.number||'',i.condition,i.qty,i.cost,i.card.market||'']));
+  const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='2gen-vault-collection.csv';a.click()
+}
+function renderScan(){
+  scan.innerHTML=`
+    <div class="page-title"><div><h1>Camera Search</h1><p>Take a card photo. Full automatic card recognition is a later cloud feature.</p></div></div>
+    <div class="panel">
+      <div class="scanbox" id="scanbox">${scanPreview?`<img src="${scanPreview}" alt="Card preview">`:`<span style="font-size:46px">◉</span><span>Place one trading card inside the frame</span>`}</div>
+      <input hidden id="photoInput" type="file" accept="image/*" capture="environment" onchange="pickPhoto(this)">
+      <button class="btn primary wide" onclick="photoInput.click()">Take / choose photo</button>
+      <div class="note">This Pages version keeps the selected image on your phone. It does not upload the photo.</div>
+    </div>`;
+}
+function pickPhoto(input){
+  const f=input.files&&input.files[0];if(!f)return;
+  const r=new FileReader();r.onload=()=>{scanPreview=r.result;renderScan()};r.readAsDataURL(f)
+}
+function renderMore(){
+  more.innerHTML=`
+    <div class="page-title"><div><h1>More</h1><p>Wishlist, alerts, branding, backup, and premium roadmap.</p></div></div>
+    <div class="panel"><h2>Wishlist</h2>${state.wishlist.length?state.wishlist.map(w=>`<div class="compact">${art(w.card)}<div class="grow"><strong>${escapeHtml(w.card.name)}</strong><span>${escapeHtml(w.card.set)}</span></div><div class="right"><strong>${money(w.card.market)}</strong><button class="remove" onclick="removeWish('${w.uid}')">Remove</button></div></div>`).join(''):`<div class="empty">Tap ♡ on a card in Discover.</div>`}</div>
+    <div class="panel"><h2>Price alerts</h2>${state.alerts.length?state.alerts.map(a=>`<div class="compact"><div class="grow"><strong>${escapeHtml(a.card.name)}</strong><span>Below ${money(a.target)} • market ${money(a.card.market)}</span></div><div class="right"><button class="remove" onclick="removeAlert('${a.uid}')">Delete</button></div></div>`).join(''):`<div class="empty">Create an alert from Discover.</div>`}<p style="margin-top:9px">In this Pages-only version, alerts are stored locally. True background push alerts need a backend later.</p></div>
+    <div class="panel"><h2>Brand settings</h2><div class="form"><label>App name<input id="brandName" value="${escapeHtml(state.settings.brand)}"></label><label>Tagline<input id="tagline" value="${escapeHtml(state.settings.tagline)}"></label><button class="btn primary" onclick="saveBrand()">Save branding</button></div></div>
+    <div class="panel"><h2>Backup</h2><div class="actions"><button class="btn" onclick="exportBackup()">Export backup</button><button class="btn" onclick="importBackup()">Import backup</button><button class="btn danger" onclick="resetApp()">Reset app</button></div></div>
+    <div class="panel"><div class="eyebrow">COMING LATER</div><h2>2GEN Vault Premium</h2><p>Cloud sync, automatic card scanning, historical price charts, multi-market comparison, push alerts, seller tools, family vaults, and more.</p></div>`;
+}
+function removeWish(uid){state.wishlist=state.wishlist.filter(x=>x.uid!==uid);save();render()}
+function removeAlert(uid){state.alerts=state.alerts.filter(x=>x.uid!==uid);save();render()}
+function saveBrand(){state.settings.brand=document.getElementById('brandName').value||'2GEN Vault';state.settings.tagline=document.getElementById('tagline').value||'Two Generations. One Collection.';save();render()}
+function exportBackup(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));a.download='2gen-vault-backup.json';a.click()}
+function importBackup(){
+  const i=document.createElement('input');i.type='file';i.accept='application/json';i.onchange=()=>{const f=i.files&&i.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{state=JSON.parse(r.result);save();render();alert('Backup imported.')}catch{alert('That backup could not be read.')}};r.readAsText(f)};i.click()
+}
+function resetApp(){if(confirm('Reset all local 2GEN Vault data?')){localStorage.removeItem(KEY);state=structuredClone(seed);save();render()}}
+function switchTab(tab){
+  document.querySelectorAll('.screen').forEach(x=>x.classList.toggle('active',x.id===tab));
+  document.querySelectorAll('.bottomnav button').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));
+  window.scrollTo({top:0,behavior:'smooth'})
+}
+document.querySelectorAll('.bottomnav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+render();
+</script>
+</body>
+</html>

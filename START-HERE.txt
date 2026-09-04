@@ -1,0 +1,75 @@
+2GEN VAULT — SIMPLE GITHUB PAGES VERSION
+
+ONLY 4 WEBSITE FILES ARE REQUIRED:
+1. index.html
+2. manifest.webmanifest
+3. sw.js
+4. icon.svg
+
+NO npm.
+NO Codespaces.
+NO build step.
+NO APK.
+NO GitHub Actions required.
+
+ANDROID / GITHUB SETUP
+
+1. Create a GitHub repository named:
+   2gen-vault
+
+2. Extract this ZIP on your Android phone.
+
+3. Open the repository in Chrome.
+
+4. Tap:
+   Add file > Upload files
+
+5. Upload the FOUR files listed above directly into the ROOT of the repository.
+   Do not upload the containing folder.
+
+6. Commit the files to the main branch.
+
+7. Open:
+   Settings > Pages
+
+8. Under Build and deployment:
+   Source = Deploy from a branch
+   Branch = main
+   Folder = / (root)
+
+9. Tap Save.
+
+10. Wait about 1–3 minutes.
+
+11. GitHub will give you a URL similar to:
+    https://YOURUSERNAME.github.io/2gen-vault/
+
+12. Open that address in Chrome on Android.
+
+13. Chrome menu:
+    Install app
+    or
+    Add to Home screen
+
+FROM THEN ON:
+Edit/upload index.html and your Pages app updates.
+There is no APK to reinstall.
+
+CURRENT APP FEATURES:
+- 2GEN RIPS / 2GEN Vault branding
+- Dashboard
+- Portfolio value
+- Collection quantity / condition / cost basis
+- Live Pokémon search where the public API is available
+- Multi-TCG demo catalog
+- Wishlist
+- Local price alerts
+- Camera/photo screen
+- CSV export
+- JSON backup/import
+- PWA install support
+- Offline caching of the app shell
+
+IMPORTANT:
+Automatic card recognition, cloud sync, real push alerts, protected marketplace APIs,
+and paid subscriptions need secure backend services later. They are not faked here.
