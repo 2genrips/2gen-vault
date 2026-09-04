@@ -212,3 +212,42 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
 @media(max-width:430px){
   .report-proof{margin-left:0}
 }
+
+
+/* v0.7 — Restock Radar / Hot Drops / Watch Detail */
+.radar-panel{
+  background:
+    radial-gradient(circle at 94% 0%,rgba(255,45,45,.11),transparent 26%),
+    radial-gradient(circle at 6% 0%,rgba(21,101,255,.18),transparent 36%),
+    rgba(17,21,29,.95);
+}
+.radar-card{border:1px solid var(--line);border-radius:15px;padding:11px;background:#0e141c;margin:8px 0}
+.radar-card.selected{border-color:rgba(21,101,255,.58);box-shadow:0 0 0 1px rgba(21,101,255,.12) inset}
+.radar-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.radar-head>div:first-child{min-width:0}.radar-head strong{display:block;font-size:12px;margin-top:6px}.radar-head small{display:block;color:var(--muted);font-size:8px;margin-top:4px}
+.priority-pill{display:inline-flex;padding:4px 6px;border-radius:999px;font-size:7px;font-weight:900;border:1px solid var(--line)}
+.priority-pill.high{background:rgba(255,45,45,.08);border-color:rgba(255,45,45,.28);color:#ff9ba3}
+.priority-pill.medium{background:rgba(241,199,91,.07);border-color:rgba(241,199,91,.27);color:#ecd37f}
+.priority-pill.low{background:rgba(21,101,255,.08);border-color:rgba(21,101,255,.28);color:#92b3ff}
+.radar-score{width:52px;height:52px;border-radius:15px;display:flex;flex-direction:column;align-items:center;justify-content:center;border:1px solid var(--line);flex:0 0 auto}
+.radar-score b{font-size:17px;line-height:1}.radar-score span{font-size:7px;margin-top:3px;font-weight:900}
+.radar-score.hot{background:rgba(255,45,45,.09);border-color:rgba(255,45,45,.3);color:#ff929a}
+.radar-score.warm{background:rgba(241,199,91,.08);border-color:rgba(241,199,91,.28);color:#efd57f}
+.radar-score.cool{background:rgba(21,101,255,.08);border-color:rgba(21,101,255,.25);color:#89adff}
+.radar-metrics{display:flex;gap:7px;flex-wrap:wrap;margin:9px 0}
+.radar-metrics span{font-size:8px;color:var(--muted);padding:5px 7px;border:1px solid var(--line-soft);border-radius:999px;background:#0a0f15}
+.watch-detail{border:1px solid var(--line-soft);border-radius:15px;padding:12px;background:#0c1219}
+.hot-panel{
+  background:
+    radial-gradient(circle at 100% 0%,rgba(255,45,45,.12),transparent 27%),
+    rgba(17,21,29,.94);
+}
+.hot-drop{display:grid;grid-template-columns:1fr 90px auto;gap:9px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.hot-drop:last-child{border-bottom:0}
+.heat-wrap{display:flex;flex-direction:column;gap:4px}.heat-wrap>span{font-size:7px;color:var(--muted);text-align:right}
+.heat-bar{height:7px;border-radius:999px;background:#090d12;overflow:hidden;border:1px solid var(--line-soft)}
+.heat-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--red))}
+.nearby-store-card{padding:8px 0;border-bottom:1px solid var(--line-soft)}.nearby-store-card:last-child{border-bottom:0}
+@media(max-width:430px){
+  .hot-drop{grid-template-columns:1fr auto}.heat-wrap{grid-column:1/-1;grid-row:2}.hot-drop .right{grid-column:2;grid-row:1}
+}

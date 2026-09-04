@@ -54,6 +54,7 @@ let discoverResults = [];
 let selectedRetailers = new Set(['Walmart','Target','Best Buy','GameStop','Local Card Shop']);
 let stockGame = 'Pokemon';
 let stockQuery = '';
+let selectedWatchId = null;
 let cameraPreview = '';
 let toastTimer;
 
@@ -265,6 +266,145 @@ function renderHome(){
     </div>`;
 }
 
+
+function normalizeName(v=''){
+  return String(v).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+}
+function watchMatchesText(watch, text){
+  const w=normalizeName(watch.product), t=normalizeName(text);
+  if(!w || !t) return false;
+  const tokens=w.split(' ').filter(x=>x.length>2);
+  return t.includes(w) || (tokens.length && tokens.filter(x=>t.includes(x)).length >= Math.max(1,Math.ceil(tokens.length*.6)));
+}
+function watchRadar(watch){
+  const now=Date.now();
+  let sightings=0, fresh=0, bestPrice=null, stores=new Set(), newest=null;
+  const consume=(product,store,price,ts,status)=>{
+    if(!watchMatchesText(watch,product)) return;
+    if(status && /out/i.test(String(status))) return;
+    const t=new Date(ts||0).getTime();
+    if(!Number.isFinite(t)) return;
+    const ageH=(now-t)/3600000;
+    sightings++;
+    if(ageH<=6) fresh++;
+    if(store) stores.add(store);
+    if(typeof Number(price)==='number' && Number.isFinite(Number(price)) && Number(price)>0){
+      bestPrice=bestPrice===null?Number(price):Math.min(bestPrice,Number(price));
+    }
+    newest=newest===null?ts:(new Date(ts)>new Date(newest)?ts:newest);
+  };
+  state.stockReports.forEach(r=>consume(r.product,r.store,r.price,r.ts,r.status));
+  (state.communityReports||[]).forEach(r=>consume(r.product,r.store,r.price,r.updated_at||r.created_at,r.status));
+  (state.inventoryResults||[]).forEach(r=>consume(r.product,r.store||r.retailer,r.price,r.updatedAt,r.status));
+  const priority=watch.priority==='High'?18:watch.priority==='Medium'?10:4;
+  let score=Math.min(100, priority + sightings*12 + fresh*15 + stores.size*5);
+  if(bestPrice!==null && watch.maxPrice && bestPrice<=watch.maxPrice) score=Math.min(100,score+18);
+  const label=score>=75?'HOT':score>=45?'WARM':score>=20?'WATCH':'QUIET';
+  return {score,label,sightings,fresh,bestPrice,stores:stores.size,newest};
+}
+function buildHotDrops(){
+  const rows=[];
+  const add=(product,store,price,ts,status,source)=>{
+    if(!product || (status && /out/i.test(String(status)))) return;
+    rows.push({product,store,price:Number(price)||0,ts,status,source});
+  };
+  state.stockReports.forEach(r=>add(r.product,r.store,r.price,r.ts,r.status,'Your reports'));
+  (state.communityReports||[]).forEach(r=>add(r.product,r.store,r.price,r.updated_at||r.created_at,r.status,'Community'));
+  (state.inventoryResults||[]).forEach(r=>add(r.product,r.store||r.retailer,r.price,r.updatedAt,r.status,'Live connector'));
+  const groups=new Map();
+  for(const row of rows){
+    const key=normalizeName(row.product);
+    if(!key) continue;
+    if(!groups.has(key)) groups.set(key,{name:row.product,count:0,stores:new Set(),best:null,newest:null,sources:new Set()});
+    const g=groups.get(key);g.count++;if(row.store)g.stores.add(row.store);g.sources.add(row.source);
+    if(row.price>0)g.best=g.best===null?row.price:Math.min(g.best,row.price);
+    if(!g.newest||new Date(row.ts)>new Date(g.newest))g.newest=row.ts;
+  }
+  return [...groups.values()].map(g=>{
+    const age=reportAgeMinutes(g.newest);
+    let heat=Math.min(100,g.count*18+g.stores.size*8+(age<=60?30:age<=360?18:age<=1440?7:0));
+    return {...g,heat};
+  }).sort((a,b)=>b.heat-a.heat).slice(0,8);
+}
+function compareRetailersForWatch(watch){
+  const rows=[];
+  const add=(product,retailer,price,status,ts)=>{
+    if(!watchMatchesText(watch,product) || (status&&/out/i.test(String(status)))) return;
+    if(!retailer) return;
+    rows.push({retailer,price:Number(price)||0,ts});
+  };
+  state.stockReports.forEach(r=>add(r.product,r.store,r.price,r.status,r.ts));
+  (state.communityReports||[]).forEach(r=>add(r.product,r.store,r.price,r.status,r.updated_at||r.created_at));
+  (state.inventoryResults||[]).forEach(r=>add(r.product,r.retailer||r.store,r.price,r.status,r.updatedAt));
+  const m=new Map();
+  rows.forEach(r=>{
+    const key=r.retailer;
+    if(!m.has(key))m.set(key,{retailer:key,count:0,best:null,newest:null});
+    const g=m.get(key);g.count++;
+    if(r.price>0)g.best=g.best===null?r.price:Math.min(g.best,r.price);
+    if(!g.newest||new Date(r.ts)>new Date(g.newest))g.newest=r.ts;
+  });
+  return [...m.values()].sort((a,b)=>(a.best??999999)-(b.best??999999)||new Date(b.newest)-new Date(a.newest));
+}
+function renderRestockRadar(){
+  if(!state.stockWatches.length) return `<div class="empty">Save product watches to activate Restock Radar.</div>`;
+  return state.stockWatches.slice().sort((a,b)=>watchRadar(b).score-watchRadar(a).score).map(w=>{
+    const r=watchRadar(w);
+    return `<div class="radar-card ${selectedWatchId===w.uid?'selected':''}">
+      <div class="radar-head">
+        <div><span class="priority-pill ${String(w.priority||'High').toLowerCase()}">${esc(w.priority||'High')}</span><strong>${esc(w.product)}</strong><small>${esc(w.game)} • ${w.desiredQty||1} wanted • ${w.retailers.length} retailers</small></div>
+        <div class="radar-score ${r.score>=75?'hot':r.score>=45?'warm':'cool'}"><b>${r.score}</b><span>${r.label}</span></div>
+      </div>
+      <div class="radar-metrics">
+        <span>${r.sightings} sightings</span><span>${r.stores} stores</span><span>${r.bestPrice!==null?`best ${money(r.bestPrice)}`:'no price yet'}</span><span>${r.newest?humanAge(r.newest):'no recent hit'}</span>
+      </div>
+      <div class="action-row">
+        <button class="btn primary" onclick="selectWatch('${w.uid}')">Details</button>
+        <button class="btn" onclick="huntWatch('${w.uid}')">Hunt</button>
+        <button class="btn" onclick="editWatch('${w.uid}')">Edit</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function renderSelectedWatch(){
+  const w=state.stockWatches.find(x=>x.uid===selectedWatchId);
+  if(!w) return `<div class="empty">Tap Details on a watch to see its product dashboard.</div>`;
+  const r=watchRadar(w), comps=compareRetailersForWatch(w);
+  return `<div class="watch-detail">
+    <div class="section-head"><div><div class="eyebrow">PRODUCT WATCH</div><h2>${esc(w.product)}</h2><p>${esc(w.game)} • priority ${esc(w.priority||'High')} • target ${w.maxPrice?money(w.maxPrice):'not set'}</p></div><span class="radar-score ${r.score>=75?'hot':r.score>=45?'warm':'cool'}"><b>${r.score}</b><span>${r.label}</span></span></div>
+    <div class="meta-grid">
+      <div class="meta"><span>Recent sightings</span><strong>${r.sightings}</strong></div>
+      <div class="meta"><span>Stores seen</span><strong>${r.stores}</strong></div>
+      <div class="meta"><span>Best observed</span><strong>${r.bestPrice!==null?money(r.bestPrice):'—'}</strong></div>
+    </div>
+    <div class="eyebrow" style="margin:11px 0 5px">RETAILER COMPARISON</div>
+    ${comps.length?comps.slice(0,8).map(c=>`<div class="compact-row"><div class="grow"><strong>${esc(c.retailer)}</strong><span>${c.count} sighting${c.count===1?'':'s'} • ${humanAge(c.newest)}</span></div><div class="right"><strong>${c.best!==null?money(c.best):'—'}</strong></div></div>`).join(''):`<div class="notice"><span>ℹ</span><span>No observed retailer prices yet. This comparison only uses real reports/inventory results already collected by the app.</span></div>`}
+    <div class="action-row" style="margin-top:10px">
+      ${w.retailers.map(ret=>`<button class="btn" onclick='openRetailerSearch(${JSON.stringify(ret)}, ${JSON.stringify(w.product)})'>${esc(ret)} ↗</button>`).join('')}
+    </div>
+  </div>`;
+}
+function renderHotDrops(){
+  const drops=buildHotDrops();
+  if(!drops.length) return `<div class="empty">Hot Drops will populate from recent inventory/community reports. Nothing is fabricated.</div>`;
+  return drops.map(d=>`<div class="hot-drop">
+    <div class="grow"><strong>${esc(d.name)}</strong><span>${d.count} sighting${d.count===1?'':'s'} • ${d.stores.size} store${d.stores.size===1?'':'s'} • ${humanAge(d.newest)}</span></div>
+    <div class="heat-wrap"><div class="heat-bar"><i style="width:${d.heat}%"></i></div><span>${d.heat}% heat</span></div>
+    <div class="right"><strong>${d.best!==null?money(d.best):'—'}</strong></div>
+  </div>`).join('');
+}
+function selectWatch(id){ selectedWatchId=id; renderStock(); }
+function editWatch(id){
+  const w=state.stockWatches.find(x=>x.uid===id);if(!w)return;
+  const p=prompt('Priority: High, Medium, or Low',w.priority||'High');
+  if(p!==null) w.priority=/^low$/i.test(p)?'Low':/^med/i.test(p)?'Medium':'High';
+  const q=prompt('Desired quantity',String(w.desiredQty||1));
+  if(q!==null) w.desiredQty=Math.max(1,Number(q)||1);
+  const max=prompt('Maximum price (leave blank for none)',w.maxPrice??'');
+  if(max!==null) w.maxPrice=max===''?null:Math.max(0,Number(max)||0);
+  saveState();renderStock();toast('Watch updated');
+}
+
 function renderStock(){
   const cfg = window.TWOGEN_CONFIG || {};
   const hasBackend = !!(cfg.inventoryApiBase||'').trim();
@@ -311,6 +451,22 @@ function renderStock(){
       : `<div class="notice warn"><span>!</span><span><b>No live retailer backend is connected yet.</b> The app will not invent stock counts. Nearby store locations, retailer search links, watchlists and your own reports work now. We can connect supported retailer feeds/APIs to the same screen later without rebuilding the app.</span></div>`
     }
 
+
+
+    <div class="panel radar-panel">
+      <div class="section-head"><div><div class="eyebrow">2GEN RESTOCK RADAR</div><h2>Watch intelligence</h2><p>Ranks your saved hunts using only real reports and connected inventory results already available to the app.</p></div><span class="badge primary">BETA</span></div>
+      <div>${renderRestockRadar()}</div>
+    </div>
+
+    <div class="panel">
+      <div class="section-head"><div><h2>Watch detail</h2><p>Observed retailer prices and recent sightings for one product watch.</p></div></div>
+      ${renderSelectedWatch()}
+    </div>
+
+    <div class="panel hot-panel">
+      <div class="section-head"><div><div class="eyebrow">HOT DROPS</div><h2>What collectors are seeing</h2><p>Heat is calculated from recency and repeated sightings — it is not a retailer stock guarantee.</p></div></div>
+      ${renderHotDrops()}
+    </div>
 
     <div class="panel network-panel">
       <div class="section-head">
@@ -404,17 +560,22 @@ function saveStockWatch(){
   stockGame = $('stockGame')?.value || 'Pokemon';
   if(!stockQuery){ toast('Enter a product or set first'); return; }
   const maxPriceRaw = $('stockMaxPrice')?.value;
+  const priority = prompt('Watch priority? Type High, Medium, or Low','High') || 'High';
+  const desiredRaw = prompt('How many do you want to find?','1');
   const watch = {
     uid:uid(), product:stockQuery, game:stockGame,
     retailers:[...selectedRetailers], radius:Number(state.settings.radius)||25,
-    maxPrice:maxPriceRaw ? Number(maxPriceRaw) : null, enabled:true, createdAt:new Date().toISOString()
+    maxPrice:maxPriceRaw ? Number(maxPriceRaw) : null,
+    priority:/^low$/i.test(priority)?'Low':/^med/i.test(priority)?'Medium':'High',
+    desiredQty:Math.max(1,Number(desiredRaw)||1),
+    enabled:true, createdAt:new Date().toISOString()
   };
-  state.stockWatches.unshift(watch); saveState(); renderStock(); toast('Stock watch saved');
+  state.stockWatches.unshift(watch); selectedWatchId=watch.uid; saveState(); renderStock(); toast('Stock watch saved');
 }
 function renderStockWatches(){
   if(!state.stockWatches.length) return `<div class="empty">Save your first product hunt to build a restock watchlist.</div>`;
   return state.stockWatches.map(w=>`
-    <div class="compact-row"><div class="thumb square"><b>◎</b></div><div class="grow"><strong>${esc(w.product)}</strong><span>${esc(w.game)} • ${w.radius} mi • ${w.retailers.length} retailers${w.maxPrice?` • max ${money(w.maxPrice)}`:''}</span></div>
+    <div class="compact-row"><div class="thumb square"><b>◎</b></div><div class="grow"><strong>${esc(w.product)}</strong><span>${esc(w.game)} • ${esc(w.priority||'High')} priority • want ${w.desiredQty||1} • ${w.radius} mi • ${w.retailers.length} retailers${w.maxPrice?` • max ${money(w.maxPrice)}`:''}</span></div>
       <div class="right">
         <button class="btn primary" onclick="huntWatch('${w.uid}')">Hunt</button>
         <button class="btn ${w.enabled?'green':''}" onclick="toggleWatch('${w.uid}')">${w.enabled?'On':'Off'}</button>
@@ -538,7 +699,7 @@ async function findNearbyStores(){
       const key=`${name}|${slat.toFixed(4)}|${slon.toFixed(4)}`;
       if(seen.has(key)) return null; seen.add(key);
       const address=[t['addr:housenumber'],t['addr:street'],t['addr:city'],t['addr:state'],t['addr:postcode']].filter(Boolean).join(' ');
-      return {id:key,name,brand:t.brand||'',address,lat:slat,lon:slon,distance:haversine(lat,lon,slat,slon),shop:t.shop||''};
+      return {id:key,name,brand:t.brand||'',address,lat:slat,lon:slon,distance:haversine(lat,lon,slat,slon),shop:t.shop||'',openingHours:t.opening_hours||'',phone:t.phone||t['contact:phone']||'',website:t.website||t['contact:website']||''};
     }).filter(Boolean).sort((a,b)=>a.distance-b.distance).slice(0,30);
     state.nearbyStores=stores; saveState(); renderStock(); toast(`${stores.length} nearby stores found`);
   }catch(e){ toast(e.message||'Nearby store lookup failed'); }
@@ -546,8 +707,14 @@ async function findNearbyStores(){
 function renderNearbyStores(){
   if(!state.nearbyStores.length) return `<div class="empty">Save a ZIP or use GPS, then tap “Nearby stores.”</div>`;
   return state.nearbyStores.map(s=>`
-    <div class="compact-row"><div class="thumb square"><b>⌖</b></div><div class="grow"><strong>${esc(s.name)}</strong><span>${esc(s.address||s.shop||'Store')} • ${s.distance.toFixed(1)} mi</span></div>
-    <div class="right"><a class="btn" target="_blank" rel="noreferrer" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.lat+','+s.lon)}">Map ↗</a></div></div>
+    <div class="nearby-store-card">
+      <div class="compact-row"><div class="thumb square"><b>⌖</b></div><div class="grow"><strong>${esc(s.name)}</strong><span>${esc(s.address||s.shop||'Store')} • ${s.distance.toFixed(1)} mi${s.openingHours?' • '+esc(s.openingHours):''}</span></div></div>
+      <div class="action-row" style="margin-left:56px">
+        <a class="btn" target="_blank" rel="noreferrer" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.lat+','+s.lon)}">Map ↗</a>
+        <a class="btn primary" target="_blank" rel="noreferrer" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.lat+','+s.lon)}">Directions ↗</a>
+        ${s.website?`<a class="btn" target="_blank" rel="noreferrer" href="${esc(s.website)}">Website ↗</a>`:''}
+      </div>
+    </div>
   `).join('');
 }
 
@@ -1086,6 +1253,7 @@ Object.assign(window,{
   switchTab,openVault,openTool,toggleRetailer,saveStockArea,useMyLocation,runInventorySearch,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
+  selectWatch,editWatch,
   setDiscoverMode,doCardSearch,addCard,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
   setToolTab,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });

@@ -1,4 +1,4 @@
-# 2GEN Vault — Cloud Community v0.6 (GitHub Pages)
+# 2GEN Vault — Restock Radar v0.7 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -120,3 +120,47 @@ The app now has an optional secure cloud layer while preserving Guest mode.
 - Supabase is the optional secure account/database layer
 
 To activate the cloud features, follow `START-HERE-CLOUD.txt` and run `SUPABASE_SETUP.sql`.
+
+
+## New in v0.7 — Restock Radar
+
+This build continues to work even while cloud setup is unavailable.
+
+### Restock Radar
+Each saved stock watch now gets a score based on:
+- report recency
+- repeated sightings
+- number of stores seen
+- high/medium/low priority
+- whether an observed price meets your max-price target
+
+The score is an app intelligence signal, not a claim that inventory is currently available.
+
+### Product watch dashboard
+Tap **Details** on any watch to see:
+- recent sighting count
+- number of stores observed
+- best observed price
+- retailer comparison
+- quick retailer search buttons
+- current radar score
+
+### Hot Drops
+The app groups recent real reports/results and ranks products by recency + sighting frequency.
+
+No inventory is fabricated.
+
+### Better nearby-store cards
+Nearby store discovery now preserves:
+- distance
+- raw opening-hours text when map data provides it
+- directions
+- website link when map data provides it
+
+### Watch upgrades
+New watches can store:
+- priority
+- desired quantity
+- maximum price
+- retailer list
+- radius

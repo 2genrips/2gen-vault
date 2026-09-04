@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v0.6 Cloud Community Network
+## Current build: v0.7 Restock Radar
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -74,3 +74,12 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Private vault cloud backup
 - Row-level security policies
 - Guest-mode fallback
+
+
+## v0.7 completed
+- Restock Radar scoring
+- Product watch details
+- Retailer comparison based on observed data
+- Hot Drops ranking
+- Watch priority + desired quantity
+- Better nearby store metadata
