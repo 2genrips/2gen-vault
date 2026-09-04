@@ -1,6 +1,6 @@
 # VaultSignal — Product Roadmap
 
-## Current build: v10.0 VaultSignal Premium + Mobile Launch
+## Current build: v10.1 UX + Inventory Radar Fix
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -372,3 +372,11 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Google Play / StoreKit product contract
 - secure entitlement flow documentation
 - mobile store release checklist
+
+
+## v10.1 completed
+- dedicated tool detail screens
+- $4.99/mo premium labels
+- backend vs live-inventory status separation
+- automatic nearby retailer checks
+- verified stock remains source-grounded only

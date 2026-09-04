@@ -1,7 +1,7 @@
 {
   "name": "VaultSignal",
   "short_name": "VaultSignal",
-  "description": "VaultSignal Collector OS v10.0 \u2014 all-in-one TCG collection, inventory, scanning, hunting and premium collector tools with Android/iOS launch foundation.",
+  "description": "VaultSignal v10.1 \u2014 app-like tool navigation, clear $4.99 Premium pricing, and truthful Inventory Radar with automatic nearby retailer checks.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
