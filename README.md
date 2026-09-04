@@ -124,3 +124,22 @@ When configured, the Smart Scanner uses PriceCharting as its primary guide and k
 
 Returns nearby stores, authorized live inventory results, retailer-check handoffs, provider status and scan duration.
 ZIP and store discovery are cached; store discovery and live provider work run in parallel.
+
+
+## v10.4 Store Discovery
+
+Optional Cloudflare Worker secret:
+
+`GOOGLE_PLACES_API_KEY`
+
+When configured, `/area-scan` uses Google Places Text Search (New) for supported retailer chains near the user's ZIP.
+
+Without it, VaultSignal uses an OpenStreetMap development fallback.
+
+### Watch-targeted scan
+
+`/area-scan` also accepts:
+
+`watchQueries=Prismatic Evolutions ETB||151 Booster Bundle`
+
+Up to 8 watched product queries are accepted. Connected live inventory providers receive both category queries and these precise watch queries.

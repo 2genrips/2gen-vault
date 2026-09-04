@@ -1403,3 +1403,33 @@ body{
   .stock-feed-price{grid-column:3;text-align:left}
   .stock-feed-actions{grid-column:2/4}
 }
+
+
+/* VaultSignal v10.4 — Stock Command */
+.stock-command-panel{
+  background:
+    radial-gradient(circle at 100% 0%,rgba(10,107,255,.16),transparent 34%),
+    radial-gradient(circle at 0% 100%,rgba(255,184,0,.05),transparent 30%),
+    linear-gradient(145deg,#101A2C,#08111C);
+  border-color:rgba(56,160,255,.18)!important;
+}
+.stock-command-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px;
+}
+.stock-command-grid>div{
+  padding:9px;border:1px solid var(--line);border-radius:11px;background:#09111D;
+}
+.stock-command-grid span,.stock-command-grid strong,.stock-command-grid small{display:block}
+.stock-command-grid span{font-size:5.8px;color:var(--muted)}
+.stock-command-grid strong{font-size:11px;margin-top:4px}
+.stock-command-grid small{font-size:5.8px;color:var(--muted);margin-top:3px;line-height:1.35}
+.watch-query-strip{
+  display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:1px solid var(--line-soft);
+}
+.watch-query-strip>span{
+  border:1px solid rgba(46,211,154,.2);background:rgba(46,211,154,.035);
+  color:#83E8C4;border-radius:999px;padding:4px 7px;font-size:5.5px;
+}
+@media(max-width:720px){
+  .stock-command-grid{grid-template-columns:repeat(2,1fr)}
+}

@@ -2233,6 +2233,28 @@ function retailerSearchUrl(name,query=areaRetailerQuery()){
   };
   return u[family]||'';
 }
+
+function storeDiscoveryProvider(){
+  const p=(state.inventoryProviderStatus?.storeDiscovery||state.inventoryProviderStatus?.storeDiscoveryProvider||null);
+  if(p)return p;
+  return {name:'Development store discovery',configured:false,mode:'development_fallback'};
+}
+function stockCoverageSummary(){
+  const live=liveInventoryProviders();
+  const nearby=(state.nearbyStores||[]).length;
+  const checks=retailerCheckProviders();
+  const sd=storeDiscoveryProvider();
+  return {
+    liveProviders:live.length,
+    liveNames:live.map(x=>x.name),
+    nearby,
+    retailerChecks:checks.length,
+    discoveryName:sd.name||'Store discovery',
+    discoveryMode:sd.mode||'development_fallback',
+    discoveryConfigured:sd.configured===true
+  };
+}
+
 function inventoryConnectionSummary(){
   const live=liveInventoryProviders(),checks=retailerCheckProviders();
   if(live.length)return {mode:'live',badge:`${live.length} LIVE SOURCE${live.length===1?'':'S'}`,title:'Verified inventory source connected',detail:`Live store inventory is available through ${live.map(x=>x.name).join(', ')}. Unsupported retailers remain retailer checks.`};
@@ -2512,6 +2534,31 @@ async function maybeAutoScanArea(){
   if(lastAreaScanAgeMinutes()<threshold)return;
   await runAreaInventoryScan(true);
 }
+
+function stockWatchQueriesForScan(){
+  const q=[];
+  for(const w of state.stockWatches||[]){
+    if(!w.enabled||!String(w.product||'').trim())continue;
+    q.push(String(w.product).trim());
+  }
+  for(const p of state.productCatalog||[]){
+    const st=productStats(p);
+    if(st.watch?.enabled && p.name)q.push(String(p.name).trim());
+  }
+  return [...new Set(q.map(x=>x.toLowerCase()))]
+    .map(k=>{
+      const fromWatch=(state.stockWatches||[]).find(w=>String(w.product||'').trim().toLowerCase()===k);
+      if(fromWatch)return String(fromWatch.product).trim();
+      const fromProduct=(state.productCatalog||[]).find(p=>String(p.name||'').trim().toLowerCase()===k);
+      return fromProduct?.name||k;
+    })
+    .slice(0,8);
+}
+function stockScanModeLabel(){
+  const watches=stockWatchQueriesForScan();
+  return watches.length?`${watches.length} WATCH${watches.length===1?'':'ES'} + CATEGORY`:'CATEGORY SCAN';
+}
+
 async function runAreaInventoryScan(silent=false){
   if(!hasPremium()){
     if(!silent){toolsTab='premium';renderTools();toast('Inventory Radar is included with VaultSignal Premium');}
@@ -2541,7 +2588,8 @@ async function runAreaInventoryScan(silent=false){
       zip,
       radius:String(radius),
       games:scanGames.join(','),
-      retailers:[...selectedRetailers].join(',')
+      retailers:[...selectedRetailers].join(','),
+      watchQueries:stockWatchQueriesForScan().join('||')
     });
 
     const controller=new AbortController();
@@ -2583,7 +2631,8 @@ async function runAreaInventoryScan(silent=false){
         providers:d.providers,
         checkedAt:new Date().toISOString(),
         message:'Inventory service connected',
-        version:d.version||''
+        version:d.version||'',
+        storeDiscovery:d.storeDiscovery||d.meta?.storeDiscovery||null
       };
     }
 
@@ -2606,6 +2655,8 @@ async function runAreaInventoryScan(silent=false){
       results:state.areaInventoryResults.length,
       retailerChecks:state.areaRetailerCheckResults.length,
       errors:d.meta?.errors||[],
+      storeDiscoverySource:d.meta?.storeDiscoverySource||'',
+      watchQueryCount:Number(d.meta?.watchQueryCount)||0,
       durationMs:Number(d.meta?.durationMs)||elapsed,
       snapshot,
       checkedAt:new Date().toISOString()
@@ -2790,12 +2841,28 @@ function renderStock(){
   const scanGames=['Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece'];
   const connection=inventoryConnectionSummary(),backendOnline=inventoryBackendOnline()||inventoryBackendConnected(),liveProviders=liveInventoryProviders();
   const nearbyCount=(state.nearbyStores||[]).length;
+  const coverage=stockCoverageSummary();
+  const watchScanQueries=stockWatchQueriesForScan();
   const retailerCheckCount=new Set([...(state.areaRetailerCheckResults||[]).map(x=>x.retailer),...(state.nearbyStores||[]).map(x=>retailerFamily(x.name||x.brand||'')).filter(Boolean)]).size;
   $('stock').innerHTML=`
     <div class="page-title"><div><h1>Inventory Radar</h1><p>Verified live inventory when an authorized source is connected, plus nearby retailer checks everywhere else.</p></div><span class="badge ${connection.mode==='live'?'primary':connection.mode==='checks'?'signal-gold':''}">${backendOnline?'● INVENTORY SERVICE ONLINE':'○ SETUP REQUIRED'}</span></div>
     <div class="panel inventory-source-truth ${connection.mode}"><div class="inventory-source-icon">${connection.mode==='live'?'●':connection.mode==='checks'?'↗':'!'}</div><div class="grow"><div class="eyebrow">SOURCE MODE</div><strong>${esc(connection.title)}</strong><span>${esc(connection.detail)}</span></div><b>${esc(connection.badge)}</b></div>
+    <div class="panel stock-command-panel">
+      <div class="section-head">
+        <div><div class="eyebrow">VAULTSIGNAL • STOCK COMMAND</div><h2>Inventory intelligence, not manual searching</h2><p>VaultSignal scans your area once, prioritizes watched products, groups live results by physical store and shows exactly where each result came from.</p></div>
+        <span class="badge primary">${stockScanModeLabel()}</span>
+      </div>
+      <div class="stock-command-grid">
+        <div><span>Live inventory feeds</span><strong>${coverage.liveProviders}</strong><small>${coverage.liveNames.length?esc(coverage.liveNames.join(', ')):'Waiting for authorized retailer feeds'}</small></div>
+        <div><span>Store discovery</span><strong>${coverage.discoveryConfigured?'PRO':'DEV'}</strong><small>${esc(coverage.discoveryName)}</small></div>
+        <div><span>Active product watches</span><strong>${watchScanQueries.length}</strong><small>${watchScanQueries.length?'Included automatically in scans':'Add watches for precise scans'}</small></div>
+        <div><span>Last scan</span><strong>${latestAreaScanSpeed()}</strong><small>${last?.storeDiscoverySource?esc(last.storeDiscoverySource):'No scan source recorded'}</small></div>
+      </div>
+      ${watchScanQueries.length?`<div class="watch-query-strip">${watchScanQueries.map(q=>`<span>${esc(q)}</span>`).join('')}</div>`:
+      `<div class="notice"><span>◎</span><span><b>Precision tip:</b> add exact sealed products to Stock Watches. VaultSignal will include up to 8 watched product names automatically in each area scan.</span></div>`}
+    </div>
     <div class="panel area-radar-hero">
-      <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL INVENTORY RADAR</div><h2>Scan my area</h2><p>Choose ZIP, radius and TCGs. One fast scan checks connected stock feeds and nearby retailers in parallel.</p></div><span class="badge ${connection.mode==='live'?'primary':'signal-gold'}">${areaScanBusy?'SCANNING…':esc(connection.badge)}</span></div>
+      <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL INVENTORY RADAR</div><h2>Scan my area</h2><p>Choose ZIP, radius and TCGs. VaultSignal scans nearby stores, category inventory and your watched products in one backend request.</p></div><span class="badge ${connection.mode==='live'?'primary':'signal-gold'}">${areaScanBusy?'SCANNING…':esc(connection.badge)}</span></div>
       <div class="form-grid"><label class="field"><span>ZIP code</span><input id="stockZip" inputmode="numeric" value="${esc(state.settings.zip||'')}" placeholder="28752"></label><label class="field"><span>Radius</span><select id="stockRadius">${[5,10,15,25,50,75,100].map(v=>`<option value="${v}" ${v===radius?'selected':''}>${v} miles</option>`).join('')}</select></label></div>
       <div class="area-game-selector">${scanGames.map(g=>`<button class="${areaScanGames().includes(g)?'on':''}" onclick='toggleAreaGame(${JSON.stringify(g)})'>${esc(g)}</button>`).join('')}</div>
       <div class="action-row radar-actions"><button class="btn primary area-scan-btn" ${areaScanBusy?'disabled':''} onclick="runAreaInventoryScan(false)">${areaScanBusy?'Finding stores + stock…':'◉ SCAN MY AREA'}</button><button class="btn" onclick="saveStockArea()">Save area</button><button class="btn" onclick="useMyLocation()">⌖ Use location</button></div>
@@ -2804,7 +2871,7 @@ function renderStock(){
     <div class="stat-grid compact-stats"><div class="stat-card"><span>Verified stores</span><strong>${groups.length}</strong><small>${liveProviders.length?liveProviders.map(x=>x.name).join(', '):'No authorized live feed yet'}</small></div><div class="stat-card"><span>Mapped nearby stores</span><strong>${nearbyCount}</strong><small>${nearbyCount?`${radius} mile area`:"Map lookup returned none • retailer checks still work"}</small></div><div class="stat-card"><span>Retailer checks</span><strong>${retailerCheckCount}</strong><small>Direct retailer handoffs</small></div><div class="stat-card"><span>Last scan speed</span><strong>${latestAreaScanSpeed()}</strong><small>Single backend scan</small></div></div>
     ${retailerCheckCount?`<div class="panel quick-check-panel"><div class="section-head"><div><div class="eyebrow">CHECK RETAILERS NOW</div><h2>${retailerCheckCount} retailer check${retailerCheckCount===1?'':'s'} ready</h2><p>These open the retailer's own current search/availability flow. They do not claim inventory is in stock.</p></div></div>${renderQuickRetailerChecks()}</div>`:''}
     ${groups.length?`<div class="panel"><div class="section-head"><div><div class="eyebrow">VERIFIED LIVE INVENTORY</div><h2>Provider-confirmed stores</h2><p>Only authorized live inventory results appear here.</p></div><button class="link-btn" onclick="clearAreaInventory()">Clear</button></div><div class="area-store-grid">${groups.map(renderAreaStoreCard).join('')}</div></div><div class="panel" id="areaStoreDetail">${renderAreaStoreDetail()}</div>`:`<div class="panel verified-empty-panel"><div class="section-head"><div><div class="eyebrow">VERIFIED LIVE INVENTORY</div><h2>No verified live store result</h2><p>${liveProviders.length?'The connected live source returned no matching inventory in this scan.':'No authorized live store-inventory provider is configured yet. VaultSignal will not pretend a store is in stock.'}</p></div></div></div>`}
-    <div class="panel retailer-check-panel"><div class="section-head"><div><div class="eyebrow">NEARBY RETAILER CHECKS</div><h2>Stores you can check now</h2><p>Real nearby store locations with direct retailer/map handoffs. These are not labeled in stock without a verified feed.</p></div><button class="btn" onclick="findNearbyStores()">Refresh stores</button></div>${renderNearbyStoreChecks()}</div>
+    <div class="panel retailer-check-panel"><div class="section-head"><div><div class="eyebrow">NEARBY RETAILER CHECKS</div><h2>Nearby stores + retailer verification</h2><p>Real nearby store locations with direct retailer/map handoffs. These are not labeled in stock without a verified feed.</p></div><button class="btn" onclick="findNearbyStores()">Refresh stores</button></div>${renderNearbyStoreChecks()}</div>
     <div class="panel pulse-panel"><div class="section-head"><div><div class="eyebrow">INVENTORY PULSE</div><h2>Verified-source changes</h2><p>Compares authorized provider results between scans.</p></div>${state.inventoryPulseEvents.length?`<button class="link-btn" onclick="clearInventoryPulse()">Clear</button>`:''}</div>${renderInventoryPulse()}</div>
     <div class="panel specific-search-panel"><div class="section-head"><div><div class="eyebrow">EXACT PRODUCT CHECK</div><h2>Check one exact product</h2><p>Search by product, UPC or SKU. Unsupported retailers return retailer checks instead of fake stock.</p></div><button class="btn" onclick="toggleSpecificProductSearch()">${stockSpecificSearchOpen?'Hide':'Open search'}</button></div>${stockSpecificSearchOpen?`<div class="form-grid"><label class="field full"><span>Product / UPC / SKU</span><input id="stockQuery" value="${esc(stockQuery)}" placeholder="Prismatic Evolutions ETB"></label><label class="field"><span>TCG</span><select id="stockGame">${games.map(g=>`<option ${g===stockGame?'selected':''}>${g}</option>`).join('')}</select></label><label class="field"><span>Max price</span><input id="stockMaxPrice" type="number" min="0" step=".01" placeholder="49.99"></label></div><div style="margin:11px 0 7px" class="eyebrow">RETAILERS</div><div class="retailer-grid">${retailers.map(r=>`<button class="retailer-chip ${selectedRetailers.has(r)?'on':''}" onclick='toggleRetailer(${JSON.stringify(r)})'>${esc(r)}</button>`).join('')}</div><div class="action-row" style="margin-top:11px"><button class="btn primary live-search-btn" onclick="runInventorySearch()">◎ CHECK PRODUCT</button><button class="btn green" onclick="saveStockWatch()">＋ Save watch</button></div><div style="margin-top:10px">${renderInventoryResults()}</div>`:''}</div>
     <div class="panel inventory-provider-panel"><div class="section-head"><div><div class="eyebrow">SOURCE STATUS</div><h2>What VaultSignal can actually verify</h2><p>Backend connectivity and live inventory are shown separately.</p></div><button class="btn" onclick="checkInventoryBackendHealth(true).then(()=>renderStock())">Refresh status</button></div>${retailerCapabilityMarkup()}</div>

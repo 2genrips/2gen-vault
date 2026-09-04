@@ -5,6 +5,7 @@
  * Secrets:
  *   BESTBUY_API_KEY          - Best Buy Developer API key
  *   PRICECHARTING_API_TOKEN   - PriceCharting API token
+ *   GOOGLE_PLACES_API_KEY      - Optional Google Places API key for production-grade store discovery
  *
  * Vars:
  *   ALLOWED_ORIGIN   - e.g. https://2genrips.github.io
@@ -16,7 +17,7 @@
  *   GET /area-scan?zip=28761&radius=25&games=Pokemon,Lorcana
  */
 
-const VERSION = "10.3.0";
+const VERSION = "10.4.0";
 const BESTBUY_BASE = "https://api.bestbuy.com/v1";
 const MAX_PRODUCT_MATCHES = 4;
 const CACHE_TTL_SECONDS = 120;
@@ -347,29 +348,99 @@ function workerRetailerFamily(name=""){
   if(n.includes("family dollar"))return "Family Dollar";
   return "";
 }
-async function nearbyStoresForArea(location,radius,cache){
-  const cacheKey=new Request(`https://cache.vaultsignal.local/stores/${location.zip}/${Math.round(radius)}`);
-  const cached=await cache.match(cacheKey);
-  if(cached)return await cached.json();
 
+function storeDiscoveryStatus(env){
+  if(env.GOOGLE_PLACES_API_KEY){
+    return {
+      id:"google_places",
+      name:"Google Places",
+      mode:"production_places_api",
+      configured:true,
+      description:"Production-grade retailer location discovery is configured."
+    };
+  }
+  return {
+    id:"osm_dev",
+    name:"OpenStreetMap development fallback",
+    mode:"development_fallback",
+    configured:false,
+    description:"Development fallback only. Use a production places provider before commercial scale."
+  };
+}
+function retailFamilyFromGoogleName(name=""){return workerRetailerFamily(name)}
+async function googlePlacesChainSearch(chain,location,radius,env){
+  const meters=Math.min(50000,Math.max(1000,Math.round(radius*1609.344)));
+  const body={
+    textQuery:chain,
+    pageSize:10,
+    locationBias:{
+      circle:{
+        center:{latitude:location.lat,longitude:location.lon},
+        radius:meters
+      }
+    }
+  };
+  const r=await withTimeout("https://places.googleapis.com/v1/places:searchText",{
+    method:"POST",
+    headers:{
+      "content-type":"application/json",
+      "X-Goog-Api-Key":env.GOOGLE_PLACES_API_KEY,
+      "X-Goog-FieldMask":"places.id,places.displayName,places.formattedAddress,places.location,places.businessStatus,places.googleMapsUri"
+    },
+    body:JSON.stringify(body)
+  },5500);
+  if(!r.ok)throw new Error(`Google Places ${chain} lookup ${r.status}`);
+  const d=await r.json();
+  return (d.places||[]).map(p=>{
+    const lat=Number(p.location?.latitude),lon=Number(p.location?.longitude);
+    if(!Number.isFinite(lat)||!Number.isFinite(lon))return null;
+    const name=p.displayName?.text||chain;
+    const family=retailFamilyFromGoogleName(name)||chain;
+    const dist=distanceMiles(location.lat,location.lon,lat,lon);
+    if(dist>radius+3)return null;
+    return {
+      id:p.id||`${family}|${lat}|${lon}`,
+      name,family,brand:family,operator:"",
+      address:p.formattedAddress||"",
+      lat,lon,distanceMiles:dist,
+      shop:"",
+      website:p.googleMapsUri||"",
+      source:"Google Places"
+    };
+  }).filter(Boolean);
+}
+async function googlePlacesRetailers(location,radius,env){
+  const chains=["Walmart","Target","Best Buy","GameStop","Sam's Club","Costco","Walgreens","CVS","Dollar General","Family Dollar"];
+  const chunks=await Promise.all(chains.map(chain=>
+    googlePlacesChainSearch(chain,location,radius,env).catch(()=>[])
+  ));
+  const seen=new Set();
+  return chunks.flat().filter(x=>{
+    const key=`${x.family}|${Number(x.lat).toFixed(5)}|${Number(x.lon).toFixed(5)}`;
+    if(seen.has(key))return false;
+    seen.add(key);return true;
+  }).sort((a,b)=>a.distanceMiles-b.distanceMiles).slice(0,60);
+}
+async function osmBroadRetailerDiscovery(location,radius){
   const meters=Math.round(radius*1609.344);
-  const regex="Walmart|Target|Best Buy|GameStop|Sam's Club|Costco|Walgreens|CVS|Dollar General|Family Dollar";
-  const q=`[out:json][timeout:7];(
-    nwr(around:${meters},${location.lat},${location.lon})["name"~"${regex}",i];
-    nwr(around:${meters},${location.lat},${location.lon})["brand"~"${regex}",i];
-    nwr(around:${meters},${location.lat},${location.lon})["operator"~"${regex}",i];
+  const q=`[out:json][timeout:8][maxsize:8388608];(
+    nwr(around:${meters},${location.lat},${location.lon})["shop"~"^(supermarket|department_store|variety_store|convenience|chemist|electronics|toys|games|video_games)$"];
+    nwr(around:${meters},${location.lat},${location.lon})["name"~"Walmart|Target|Best Buy|GameStop|Sam's Club|Costco|Walgreens|CVS|Dollar General|Family Dollar",i];
+    nwr(around:${meters},${location.lat},${location.lon})["brand"~"Walmart|Target|Best Buy|GameStop|Sam's Club|Costco|Walgreens|CVS|Dollar General|Family Dollar",i];
   );out center tags;`;
 
   const endpoints=["https://overpass.kumi.systems/api/interpreter","https://overpass-api.de/api/interpreter"];
   let elements=[];
-
   for(const ep of endpoints){
     try{
       const r=await withTimeout(ep,{
         method:"POST",
-        headers:{"content-type":"application/x-www-form-urlencoded;charset=UTF-8"},
+        headers:{
+          "content-type":"application/x-www-form-urlencoded;charset=UTF-8",
+          "User-Agent":"VaultSignal/10.4"
+        },
         body:"data="+encodeURIComponent(q)
-      },6500);
+      },7000);
       if(!r.ok)continue;
       const d=await r.json();
       if(Array.isArray(d.elements)&&d.elements.length){elements=d.elements;break;}
@@ -377,33 +448,53 @@ async function nearbyStoresForArea(location,radius,cache){
   }
 
   const seen=new Set();
-  const rows=elements.map(e=>{
+  return elements.map(e=>{
     const t=e.tags||{};
-    const lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;
+    const lat=Number(e.lat??e.center?.lat),lon=Number(e.lon??e.center?.lon);
     if(!Number.isFinite(lat)||!Number.isFinite(lon))return null;
-    const name=t.name||t.brand||t.operator||"Retailer";
-    const family=workerRetailerFamily(name)||workerRetailerFamily(t.brand||"")||workerRetailerFamily(t.operator||"");
+    const rawName=t.name||t.brand||t.operator||"";
+    const family=workerRetailerFamily(rawName)||workerRetailerFamily(t.brand||"")||workerRetailerFamily(t.operator||"");
     if(!family)return null;
     const dist=distanceMiles(location.lat,location.lon,lat,lon);
-    if(dist>radius+1)return null;
-    const key=`${family}|${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}`;
+    if(dist>radius+2)return null;
+    const key=`${family}|${lat.toFixed(4)}|${lon.toFixed(4)}`;
     if(seen.has(key))return null;
     seen.add(key);
     return {
-      id:key,name,family,
-      brand:t.brand||"",
+      id:key,
+      name:rawName||family,
+      family,
+      brand:t.brand||family,
       operator:t.operator||"",
       address:[t["addr:housenumber"],t["addr:street"],t["addr:city"],t["addr:state"],t["addr:postcode"]].filter(Boolean).join(", "),
-      lat:Number(lat),lon:Number(lon),distanceMiles:dist,
-      shop:t.shop||"",website:t.website||t["contact:website"]||"",
-      source:"OpenStreetMap"
+      lat,lon,distanceMiles:dist,
+      shop:t.shop||"",
+      website:t.website||t["contact:website"]||"",
+      source:"OpenStreetMap development fallback"
     };
-  }).filter(Boolean).sort((a,b)=>a.distanceMiles-b.distanceMiles).slice(0,40);
+  }).filter(Boolean).sort((a,b)=>a.distanceMiles-b.distanceMiles).slice(0,60);
+}
+
+async function nearbyStoresForArea(location,radius,cache,env){
+  const provider=storeDiscoveryStatus(env);
+  const cacheKey=new Request(`https://cache.vaultsignal.local/stores/${provider.id}/${location.zip}/${Math.round(radius)}`);
+  const cached=await cache.match(cacheKey);
+  if(cached){
+    const rows=await cached.json();
+    return {rows,provider};
+  }
+
+  let rows=[];
+  if(env.GOOGLE_PLACES_API_KEY){
+    rows=await googlePlacesRetailers(location,radius,env);
+  }else{
+    rows=await osmBroadRetailerDiscovery(location,radius);
+  }
 
   await cache.put(cacheKey,new Response(JSON.stringify(rows),{
     headers:{"content-type":"application/json","cache-control":"public,max-age=900"}
   }));
-  return rows;
+  return {rows,provider};
 }
 function areaGameQuery(game){
   const q={
@@ -423,28 +514,42 @@ async function fastAreaScan(url,env){
   const radius=boundedNumber(url.searchParams.get("radius"),1,100,25);
   const games=(url.searchParams.get("games")||"Pokemon").split(",").map(x=>safeText(x,40)).filter(Boolean).slice(0,5);
   const retailers=selectedRetailers(url);
+  const watchQueries=(url.searchParams.get("watchQueries")||"")
+    .split("||").map(x=>safeText(x,100)).filter(Boolean).slice(0,8);
   const cache=caches.default;
   const errors=[];
 
   const location=await geocodeZip(zip,cache);
-  const liveTasks=[];
 
+  const searchPairs=[];
+  for(const game of games){
+    searchPairs.push({game,q:areaGameQuery(game),kind:"category"});
+  }
+  for(const q of watchQueries){
+    const lower=q.toLowerCase();
+    const game=games.find(g=>lower.includes(g.toLowerCase()))||games[0]||"Pokemon";
+    searchPairs.push({game,q,kind:"watch"});
+  }
+
+  const liveTasks=[];
   if(env.BESTBUY_API_KEY && bestBuySelected(retailers)){
-    for(const game of games){
+    for(const item of searchPairs.slice(0,12)){
       const args={
-        q:areaGameQuery(game),zip,radius,game,
+        q:item.q,zip,radius,game:item.game,
         sku:"",upc:"",bestBuySku:"",productId:"",retailers
       };
       liveTasks.push(
         bestBuyResults(args,env,cache)
-          .catch(e=>{errors.push({provider:"Best Buy",game,error:e.message||"Best Buy lookup failed"});return [];})
+          .then(rows=>rows.map(x=>({...x,scanKind:item.kind,scanQuery:item.q})))
+          .catch(e=>{errors.push({provider:"Best Buy",game:item.game,query:item.q,error:e.message||"Best Buy lookup failed"});return [];})
       );
     }
   }
 
-  const [nearbyStores,liveChunks]=await Promise.all([
-    nearbyStoresForArea(location,radius,cache).catch(e=>{
-      errors.push({provider:"Store discovery",error:e.message||"Store discovery failed"});return [];
+  const [storeDiscovery,liveChunks]=await Promise.all([
+    nearbyStoresForArea(location,radius,cache,env).catch(e=>{
+      errors.push({provider:"Store discovery",error:e.message||"Store discovery failed"});
+      return {rows:[],provider:storeDiscoveryStatus(env)};
     }),
     Promise.all(liveTasks)
   ]);
@@ -456,7 +561,12 @@ async function fastAreaScan(url,env){
     retailerChecks.push(...retailerFallbackResults({
       q:areaGameQuery(game),
       retailers
-    }).map(x=>({...x,game})));
+    }).map(x=>({...x,game,scanKind:"category"})));
+  }
+  for(const q of watchQueries.slice(0,4)){
+    retailerChecks.push(...retailerFallbackResults({
+      q,retailers
+    }).map(x=>({...x,game:games[0]||"Pokemon",scanKind:"watch",scanQuery:q})));
   }
 
   return {
@@ -464,15 +574,19 @@ async function fastAreaScan(url,env){
     data:{
       version:VERSION,
       location,
-      nearbyStores,
+      nearbyStores:storeDiscovery.rows,
+      storeDiscovery:storeDiscovery.provider,
       results,
       retailerChecks:dedupe(retailerChecks),
       providers:providerStatus(env),
       meta:{
         zip,radius,games,
+        watchQueryCount:watchQueries.length,
         liveResultCount:results.length,
-        nearbyStoreCount:nearbyStores.length,
+        nearbyStoreCount:storeDiscovery.rows.length,
         retailerCheckCount:retailerChecks.length,
+        storeDiscoverySource:storeDiscovery.provider.name,
+        storeDiscoveryMode:storeDiscovery.provider.mode,
         errors,
         durationMs:Date.now()-started,
         checkedAt:new Date().toISOString()
@@ -497,6 +611,7 @@ export default {
       return json({
         ok:true,version:VERSION,message:"VaultSignal Inventory Worker is online",
         providers:providerStatus(env),
+        storeDiscovery:storeDiscoveryStatus(env),
         pricingProviders:[priceChartingStatus(env)],
         checkedAt:new Date().toISOString()
       },200,origin);

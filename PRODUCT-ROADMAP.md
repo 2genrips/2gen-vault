@@ -1,6 +1,6 @@
 # VaultSignal — Product Roadmap
 
-## Current build: v10.3 Stock Intelligence Network
+## Current build: v10.4 Stock Command
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -398,3 +398,13 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - professional store stock feed
 - product / price / source / freshness display
 - exact quantity only when supplied by provider
+
+
+## v10.4 completed
+- Stock Command dashboard
+- watched products automatically included in area scans
+- category + exact watch scans in one backend request
+- broader development store discovery
+- optional production Google Places connector
+- store-discovery source visible in scan history
+- production/store-discovery architecture separated from live inventory feeds
