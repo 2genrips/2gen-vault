@@ -1,12 +1,12 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault by 2GEN RIPS \u2014 Two Generations. One Collection.",
+  "description": "2GEN Vault by 2GEN RIPS \u2014 inventory finder, collection tracker, sealed tracker, portfolio and collector toolkit.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#08090c",
-  "theme_color": "#0d0d0f",
+  "background_color": "#07090d",
+  "theme_color": "#090b10",
   "orientation": "portrait",
   "icons": [
     {
