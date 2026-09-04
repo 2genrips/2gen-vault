@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v5.0 Real Inventory Engine
+## Current build: v6.0 Nearby Inventory Radar
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -319,3 +319,17 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Inventory search history
 - Best Buy attribution support
 - No-retailer-secret GitHub Pages architecture
+
+
+## v6.0 completed
+- ZIP/radius-first Stock tab
+- SCAN MY AREA workflow
+- automatic multi-TCG discovery queries
+- verified inventory grouped by store
+- store inventory drill-down
+- product count / lowest price / low-stock summary per store
+- directions from store detail
+- nearby unsupported retailers separated as CHECK RETAILER
+- exact product search moved to secondary workflow
+- area scan history
+- accuracy hotfix for retailer handoff cards
