@@ -1,4 +1,4 @@
-# 2GEN Vault — Restock Radar v0.7 (GitHub Pages)
+# 2GEN Vault — Smart Products v0.8 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -164,3 +164,40 @@ New watches can store:
 - maximum price
 - retailer list
 - radius
+
+
+## New in v0.8 — Smart Product Pages
+
+Sealed product tracking is no longer just a quantity list.
+
+Each product can now have its own page connecting:
+
+- Game / TCG
+- Set / release
+- Product type
+- MSRP
+- Your target buy price
+- Best observed inventory price
+- Current inventory sightings
+- Your Restock Radar watch
+- Owned sealed quantity
+- Average cost basis
+- Current tracked sealed value
+- Purchase workflow
+- Opening history
+- Quick watch creation
+- Quick add-to-vault
+
+### Product database
+
+The app includes starter sealed-product templates and lets you create your own products without waiting for a third-party product API.
+
+When we later connect a legal sealed-product catalog/API, these pages are already ready for real product IDs, images and release metadata.
+
+### Find → Product Page → Buy → Vault → Open
+
+Inventory results and community reports can now open/create the matching smart product page.
+
+Your sealed vault can also jump back into a product page.
+
+Opening a sealed item records it in Opening History so you can track how much sealed inventory you actually open over time.

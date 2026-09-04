@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault by 2GEN RIPS \u2014 Collector OS with Stock Finder, Hunt Mode, collection, sealed, budget, grading and trade tools.",
+  "description": "2GEN Vault by 2GEN RIPS \u2014 collector OS with Smart Product Pages, Restock Radar, sealed vault, stock finder and collector tools.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

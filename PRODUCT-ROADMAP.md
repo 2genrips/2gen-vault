@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v0.7 Restock Radar
+## Current build: v0.8 Smart Product Pages
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -83,3 +83,15 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Hot Drops ranking
 - Watch priority + desired quantity
 - Better nearby store metadata
+
+
+## v0.8 completed
+- Smart sealed-product database
+- Dedicated product detail pages
+- MSRP + target buy price
+- Inventory sightings tied to products
+- Product-to-Restock-Radar workflow
+- Sealed holdings tied to product pages
+- Opening log/history
+- Inventory/community report -> product page
+- Custom product creation
