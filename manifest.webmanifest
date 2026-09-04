@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault v5.0.1 \u2014 Real Inventory Engine hotfix with connected 2GEN Cloudflare inventory worker.",
+  "description": "2GEN Vault v5.0.2 \u2014 Real Inventory Engine with corrected retailer-check labeling and no false distance/confidence.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

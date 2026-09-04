@@ -871,3 +871,9 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   .inventory-product-img{width:46px;height:64px}
   .inventory-source-line{display:block}.inventory-source-line a{display:block;margin-top:4px}
 }
+
+/* v5.0.2 retailer-check accuracy hotfix */
+.retailer-check-card{border-color:rgba(241,199,91,.18)}
+.retailer-check-note{display:grid;grid-template-columns:28px 1fr;gap:8px;align-items:start;margin:10px 0;padding:10px;border:1px solid rgba(241,199,91,.18);border-radius:12px;background:rgba(241,199,91,.035)}
+.retailer-check-note>span{width:26px;height:26px;display:grid;place-items:center;border-radius:8px;border:1px solid rgba(241,199,91,.2);color:#efd47d}
+.retailer-check-note strong{font-size:7.5px}.retailer-check-note p{font-size:6.5px;color:var(--muted);line-height:1.45;margin:4px 0 0}
