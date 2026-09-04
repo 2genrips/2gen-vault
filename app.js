@@ -43,6 +43,11 @@ const seed = {
   contentQueue: [],
   actionSnoozes: {},
   notificationInbox: [],
+  acquisitionQueue: [],
+  vaultIQSettings: {
+    reserveCash:25,
+    maxDuplicateCopies:2
+  },
   showcaseSettings: {
     title:'2GEN Vault Showcase',
     bio:'Two Generations. One Collection.',
@@ -97,6 +102,7 @@ let currentTab = 'home';
 let vaultTab = 'cards';
 let toolsTab = 'scanner';
 let discoverMode = 'live';
+let discoverGame = 'Pokemon';
 let discoverResults = [];
 let activeCardDetail = null;
 let setExplorerResults = [];
@@ -114,6 +120,7 @@ let cameraPreview = '';
 let scannerSearchResults = [];
 let scannerBusy = false;
 let scannerLastQuery = '';
+let scannerGame = 'Pokemon';
 let scannerOcrBusy = false;
 let scannerOcrText = '';
 let scannerOcrConfidence = null;
@@ -125,11 +132,13 @@ let tradeGiveDraft = [];
 let tradeReceiveDraft = [];
 let tradeSearchResults = [];
 let tradeSearchBusy = false;
+let tradeSearchGame = 'Pokemon';
 let sellDraftSource = null;
 let sellMarketplace = 'Local / Cash';
 let activeCollectorProfileId = 'collector-household';
 let watchtowerLastEvaluatedAt = null;
 let showcasePreviewProfileId = null;
+let vaultIQFocusCard = null;
 let toastTimer;
 
 function $(id){ return document.getElementById(id); }
@@ -374,12 +383,148 @@ function uniqueCollectionCards(){
   }
   return [...m.values()];
 }
+
+const LIVE_CARD_PROVIDERS = {
+  Pokemon:{key:'pokemontcg',label:'Pokémon TCG',price:'TCGplayer market fields'},
+  Lorcana:{key:'lorcast',label:'Lorcast',price:'USD / foil fields'},
+  Magic:{key:'scryfall',label:'Scryfall',price:'USD / foil fields'},
+  'Yu-Gi-Oh!':{key:'ygoprodeck',label:'YGOPRODeck',price:'set-price reference'}
+};
+function providerForGame(game){
+  return LIVE_CARD_PROVIDERS[game]||null;
+}
+function liveProviderSupported(card){
+  return ['pokemontcg','lorcast','scryfall','ygoprodeck'].includes(card?.provider);
+}
+function liveLorcanaCardFromApi(c){
+  const normal=Number(c?.prices?.usd);
+  const foil=Number(c?.prices?.usd_foil);
+  const market=Number.isFinite(normal)&&normal>0?normal:(Number.isFinite(foil)&&foil>0?foil:undefined);
+  return {
+    id:`lorcast-${c.id}`,provider:'lorcast',providerId:c.id,game:'Lorcana',
+    name:[c.name,c.version].filter(Boolean).join(' — '),
+    baseName:c.name||'',version:c.version||'',
+    set:c.set?.name||'Unknown set',setId:c.set?.id||'',setCode:c.set?.code||'',
+    releaseDate:c.released_at||'',number:c.collector_number||'',rarity:String(c.rarity||'').replace(/_/g,' '),
+    artist:(c.illustrators||[]).join(', '),
+    image:c.image_uris?.digital?.small||c.image_uris?.digital?.normal||'',
+    market,low:market,
+    finish: normal>0?'Normal':foil>0?'Foil':'',
+    providerPrices:{usd:Number.isFinite(normal)?normal:null,usdFoil:Number.isFinite(foil)?foil:null},
+    url:c.tcgplayer_id?`https://www.tcgplayer.com/search/lorcana/product?productLineName=lorcana&q=${encodeURIComponent(c.name||'')}&view=grid`:''
+  };
+}
+function liveMagicCardFromApi(c){
+  const normal=Number(c?.prices?.usd);
+  const foil=Number(c?.prices?.usd_foil);
+  const market=Number.isFinite(normal)&&normal>0?normal:(Number.isFinite(foil)&&foil>0?foil:undefined);
+  const face=c.image_uris || c.card_faces?.find(f=>f.image_uris)?.image_uris || {};
+  return {
+    id:`scryfall-${c.id}`,provider:'scryfall',providerId:c.id,game:'Magic',
+    name:c.name||'Unknown card',set:c.set_name||'Unknown set',setId:c.set||'',setCode:c.set||'',
+    releaseDate:c.released_at||'',number:c.collector_number||'',rarity:c.rarity||'',
+    artist:c.artist||'',image:face.small||face.normal||'',
+    market,low:market,finish:normal>0?'Nonfoil':foil>0?'Foil':'',
+    providerPrices:{usd:Number.isFinite(normal)?normal:null,usdFoil:Number.isFinite(foil)?foil:null},
+    url:c.scryfall_uri||''
+  };
+}
+function liveYgoPrintsFromApi(c){
+  const vendor=Array.isArray(c.card_prices)?c.card_prices[0]||{}:{};
+  const vendorTcg=Number(vendor.tcgplayer_price);
+  const sets=Array.isArray(c.card_sets)&&c.card_sets.length?c.card_sets:[null];
+  return sets.map((s,idx)=>{
+    const setPrice=Number(s?.set_price);
+    const market=Number.isFinite(setPrice)&&setPrice>0?setPrice:(Number.isFinite(vendorTcg)&&vendorTcg>0?vendorTcg:undefined);
+    return {
+      id:`ygopro-${c.id}-${s?.set_code||idx}`,provider:'ygoprodeck',providerId:String(c.id),
+      providerSetCode:s?.set_code||'',game:'Yu-Gi-Oh!',name:c.name||'Unknown card',
+      set:s?.set_name||'Unknown printing',setId:s?.set_code||'',setCode:s?.set_code||'',
+      releaseDate:'',number:s?.set_code||'',rarity:s?.set_rarity||'',
+      artist:'',
+      // YGOPRODeck asks developers not to continuously hotlink its card images.
+      // This static Pages build therefore leaves image blank instead of hammering their image CDN.
+      image:'',
+      market,low:market,
+      providerPrices:{
+        setPrice:Number.isFinite(setPrice)?setPrice:null,
+        tcgplayer:Number.isFinite(vendorTcg)?vendorTcg:null
+      },
+      url:''
+    };
+  });
+}
+async function universalSearchCards(game,q,limit=24){
+  const clean=String(q||'').trim().replace(/"/g,'');
+  if(!clean) return [];
+
+  if(game==='Pokemon'){
+    const numberLike=/^[a-z0-9-]{1,15}$/i.test(clean)&&/\d/.test(clean);
+    const query=numberLike?`(name:"${clean}" OR number:"${clean}")`:`name:"${clean}"`;
+    let r=await fetch(`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(query)}&pageSize=${Math.min(50,limit)}&orderBy=-set.releaseDate`);
+    if(!r.ok && numberLike){
+      r=await fetch(`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(`number:"${clean}"`)}&pageSize=${Math.min(50,limit)}&orderBy=-set.releaseDate`);
+    }
+    if(!r.ok) throw new Error(`Pokémon card API returned ${r.status}`);
+    const d=await r.json();
+    return (d.data||[]).map(livePokemonCardFromApi).slice(0,limit);
+  }
+
+  if(game==='Lorcana'){
+    const r=await fetch(`https://api.lorcast.com/v0/cards/search?q=${encodeURIComponent(clean)}&unique=prints`);
+    if(!r.ok) throw new Error(`Lorcana card API returned ${r.status}`);
+    const d=await r.json();
+    return (d.results||[]).map(liveLorcanaCardFromApi).slice(0,limit);
+  }
+
+  if(game==='Magic'){
+    const r=await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(clean)}&unique=prints&order=released&dir=desc`);
+    if(!r.ok) throw new Error(`Magic card API returned ${r.status}`);
+    const d=await r.json();
+    return (d.data||[]).map(liveMagicCardFromApi).slice(0,limit);
+  }
+
+  if(game==='Yu-Gi-Oh!'){
+    const r=await fetch(`https://db.ygoprodeck.com/api/v7/cardinfo.php?fname=${encodeURIComponent(clean)}&num=20&offset=0`);
+    if(!r.ok) throw new Error(`Yu-Gi-Oh! card API returned ${r.status}`);
+    const d=await r.json();
+    return (d.data||[]).flatMap(liveYgoPrintsFromApi).slice(0,limit);
+  }
+
+  throw new Error(`${game} live search is not connected yet. Use manual tracking for now.`);
+}
+async function refreshUniversalCard(card){
+  if(card.provider==='pokemontcg'){
+    const r=await fetch(`https://api.pokemontcg.io/v2/cards/${encodeURIComponent(card.providerId||card.id)}`);
+    if(!r.ok)throw new Error(`Pokémon lookup ${r.status}`);
+    const d=await r.json();return livePokemonCardFromApi(d.data);
+  }
+  if(card.provider==='lorcast'){
+    const r=await fetch(`https://api.lorcast.com/v0/cards/${encodeURIComponent(card.setCode||card.setId)}/${encodeURIComponent(card.number)}`);
+    if(!r.ok)throw new Error(`Lorcana lookup ${r.status}`);
+    return liveLorcanaCardFromApi(await r.json());
+  }
+  if(card.provider==='scryfall'){
+    const r=await fetch(`https://api.scryfall.com/cards/${encodeURIComponent(card.providerId||String(card.id).replace(/^scryfall-/,''))}`);
+    if(!r.ok)throw new Error(`Magic lookup ${r.status}`);
+    return liveMagicCardFromApi(await r.json());
+  }
+  if(card.provider==='ygoprodeck'){
+    const r=await fetch(`https://db.ygoprodeck.com/api/v7/cardinfo.php?name=${encodeURIComponent(card.name)}`);
+    if(!r.ok)throw new Error(`Yu-Gi-Oh! lookup ${r.status}`);
+    const d=await r.json();
+    const prints=(d.data||[]).flatMap(liveYgoPrintsFromApi);
+    return prints.find(x=>x.providerSetCode===card.providerSetCode)||prints[0]||card;
+  }
+  throw new Error('This card does not have a live refresh provider.');
+}
+
 function livePokemonCardFromApi(c){
   const ps=Object.values(c.tcgplayer?.prices||{});
   const market=ps.find(p=>typeof p.market==='number')?.market;
   const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
   return {
-    id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,
+    id:c.id,provider:'pokemontcg',providerId:c.id,game:'Pokemon',name:c.name,
     set:c.set?.name||'Unknown set',setId:c.set?.id||'',
     setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,
     setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',
@@ -390,12 +535,8 @@ function livePokemonCardFromApi(c){
     url:c.tcgplayer?.url||''
   };
 }
-async function fetchLiveCardById(cardId){
-  const r=await fetch(`https://api.pokemontcg.io/v2/cards/${encodeURIComponent(cardId)}`);
-  if(!r.ok) throw new Error(`Card lookup ${r.status}`);
-  const d=await r.json();
-  if(!d?.data) throw new Error('Card data missing');
-  return livePokemonCardFromApi(d.data);
+async function fetchLiveCardById(card){
+  return refreshUniversalCard(card);
 }
 function applyLivePriceToVault(card){
   for(const i of state.collection||[]){
@@ -420,8 +561,8 @@ function applyLivePriceToVault(card){
 }
 async function refreshVaultPrices(){
   if(marketRefreshBusy) return;
-  const cards=uniqueCollectionCards().filter(c=>c.game==='Pokemon' && c.provider==='pokemontcg');
-  if(!cards.length){toast('No live Pokémon cards in the Vault yet');return;}
+  const cards=uniqueCollectionCards().filter(liveProviderSupported);
+  if(!cards.length){toast('No live-provider cards in the Vault yet');return;}
 
   marketRefreshBusy=true;
   renderTools();
@@ -433,7 +574,7 @@ async function refreshVaultPrices(){
     const status=$('marketRefreshStatus');
     if(status) status.textContent=`Refreshing ${idx+1}/${cards.length} • ${card.name}`;
     try{
-      const live=await fetchLiveCardById(card.id);
+      const live=await fetchLiveCardById(card);
       captureCardPrice(live,'Vault price refresh');
       applyLivePriceToVault(live);
       ok++;
@@ -441,7 +582,7 @@ async function refreshVaultPrices(){
       failed++;
     }
     // Gentle pacing for the public API.
-    if(idx<cards.length-1) await new Promise(r=>setTimeout(r,120));
+    if(idx<cards.length-1) await new Promise(r=>setTimeout(r,160));
   }
 
   state.priceRefreshLog.unshift({
@@ -696,7 +837,7 @@ function renderHome(){
       <div class="eyebrow">2GEN RIPS PRESENTS</div>
       <h1>${esc(state.settings.brand)}</h1>
       <p>${esc(state.settings.tagline)}</p>
-      <p class="sub">Find stock • Build your vault • Track value • Collect smarter</p>
+      <p class="sub">Find stock • Scan cards • Track live values • Decide smarter • Trade • Sell</p>
       <div class="hero-badges">
         <span class="badge primary">◆ COLLECTOR OS</span>
         <span class="badge">◎ ${state.stockWatches.length} STOCK WATCHES</span>
@@ -730,6 +871,7 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('actions')"><span class="big-icon">✓</span><b>Action Center</b><span>${homeActionCounts.total} priorities • ${homeActionCounts.high} high • know what to do next.</span></button>
         <button class="quick-card" onclick="openTool('watchtower')"><span class="big-icon">◉</span><b>Watchtower</b><span>${homeWatchtowerUnread} unread alerts • ${homeWatchtowerHigh} high priority.</span></button>
         <button class="quick-card" onclick="openTool('showcase')"><span class="big-icon">★</span><b>Showcase Studio</b><span>Build a privacy-safe Collection Passport and shareable collector page.</span></button>
+        <button class="quick-card" onclick="openTool('vaultiq')"><span class="big-icon">IQ</span><b>VaultIQ</b><span>Rank what to buy next using your budget, wishlist, targets, sets and stock watches.</span></button>
       </div>
     </div>
 
@@ -1549,49 +1691,46 @@ async function restoreVaultFromCloud(){
 }
 
 function renderDiscover(){
+  const liveGames=Object.keys(LIVE_CARD_PROVIDERS);
+  const provider=providerForGame(discoverGame);
   $('discover').innerHTML = `
-    <div class="page-title"><div><h1>Card Search</h1><p>Discover cards, open full card pages, track raw/graded copies and jump into set checklists.</p></div></div>
+    <div class="page-title"><div><h1>Universal Card Search</h1><p>Live multi-TCG discovery, market references, VaultIQ scoring and one-tap collection tracking.</p></div></div>
     ${activeCardDetail?`<div class="panel card-detail-panel">${renderCardDetail(activeCardDetail)}</div>`:''}
     <div class="segmented">
-      <button class="${discoverMode==='live'?'active':''}" onclick="setDiscoverMode('live')">Live Pokémon</button>
-      <button class="${discoverMode==='demo'?'active':''}" onclick="setDiscoverMode('demo')">Multi-TCG demo</button>
+      <button class="${discoverMode==='live'?'active':''}" onclick="setDiscoverMode('live')">Live Network</button>
+      <button class="${discoverMode==='demo'?'active':''}" onclick="setDiscoverMode('demo')">Demo / Manual</button>
       <button onclick="openTool('sets')">Set Explorer</button>
     </div>
-    <form class="searchbar" onsubmit="doCardSearch(event)"><span>⌕</span><input id="cardSearchQ" placeholder="${discoverMode==='live'?'Charizard, Pikachu, Mew...':'Search game, card, set...'}"><button class="btn primary">Search</button></form>
-    <div class="notice" style="margin-top:9px"><span>ℹ</span><span>${discoverMode==='live'?'Live Pokémon search uses the public Pokémon TCG data source when available. Card and set pages are normalized so more TCG providers can be added later.':'Demo data is clearly labeled and exists only to test the multi-TCG experience.'}</span></div>
+
+    ${discoverMode==='live'?`<div class="provider-tabs">${liveGames.map(g=>`<button class="${discoverGame===g?'active':''}" onclick='setDiscoverGame(${JSON.stringify(g)})'><b>${esc(g)}</b><span>${esc(LIVE_CARD_PROVIDERS[g].label)}</span></button>`).join('')}</div>`:''}
+
+    <form class="searchbar" onsubmit="doCardSearch(event)"><span>⌕</span><input id="cardSearchQ" placeholder="${discoverMode==='live'?`Search ${esc(discoverGame)} card name / number...`:'Search game, card, set...'}"><button class="btn primary">Search</button></form>
+    <div class="notice" style="margin-top:9px"><span>ℹ</span><span>${discoverMode==='live'
+      ? `${esc(discoverGame)} is connected through ${esc(provider?.label||'a live provider')}. Prices are reference fields supplied by that provider when available and are not guaranteed sale values.`
+      : 'Demo/manual mode remains available for games and products that do not yet have a connected live provider.'}</span></div>
     <div class="result-grid">${discoverResults.map(cardResultMarkup).join('')}</div>`;
 }
-function setDiscoverMode(m){ discoverMode=m; discoverResults=m==='demo'?demoCards:[]; renderDiscover(); }
+function setDiscoverMode(m){discoverMode=m;discoverResults=m==='demo'?demoCards:[];renderDiscover()}
+function setDiscoverGame(g){discoverGame=g;discoverResults=[];activeCardDetail=null;renderDiscover()}
 async function doCardSearch(e){
   e.preventDefault();
   const q=$('cardSearchQ')?.value.trim()||'';
-  if(!q){ discoverResults=discoverMode==='demo'?demoCards:[]; renderDiscover(); return; }
+  if(!q){discoverResults=discoverMode==='demo'?demoCards:[];renderDiscover();return;}
   if(discoverMode==='demo'){
     const z=q.toLowerCase();
     discoverResults=demoCards.filter(c=>`${c.name} ${c.set} ${c.game} ${c.number} ${c.rarity}`.toLowerCase().includes(z));
-    renderDiscover(); return;
+    renderDiscover();return;
   }
-  toast('Searching live card data…');
+  toast(`Searching live ${discoverGame} data…`);
   try{
-    const safe=q.replace(/"/g,'');
-    const url=`https://api.pokemontcg.io/v2/cards?q=name:%22${encodeURIComponent(safe)}%22&pageSize=24&orderBy=-set.releaseDate`;
-    const r=await fetch(url);
-    if(!r.ok) throw new Error(`Card API returned ${r.status}`);
-    const d=await r.json();
-    discoverResults=(d.data||[]).map(c=>{
-      const ps=Object.values(c.tcgplayer?.prices||{});
-      const market=ps.find(p=>typeof p.market==='number')?.market;
-      const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
-      return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',supertype:c.supertype||'',subtypes:c.subtypes||[],image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
-    });
-    discoverResults.forEach(c=>captureCardPrice(c,'Card search'));
-    saveState();
-    renderDiscover(); toast(`${discoverResults.length} cards found`);
-  }catch(e){ discoverResults=[]; renderDiscover(); toast(e.message||'Card search failed'); }
+    discoverResults=await universalSearchCards(discoverGame,q,24);
+    discoverResults.forEach(c=>captureCardPrice(c,'Universal Card Search'));
+    saveState();renderDiscover();toast(`${discoverResults.length} ${discoverGame} cards found`);
+  }catch(e){discoverResults=[];renderDiscover();toast(e.message||'Card search failed')}
 }
 function cardResultMarkup(c){
   const owned=totalOwnedForCard(c.id);
-  return `<article class="card-result">${cardArt(c)}<div><div class="eyebrow">${esc(c.game)} • ${esc(c.set)}</div><h3>${esc(c.name)}</h3><div class="tiny">${esc(c.number||'—')} ${c.rarity?'• '+esc(c.rarity):''}${owned?` • <span class="good">${owned} owned</span>`:''}</div><div class="price-row"><strong>${money(Number(c.market))}</strong>${typeof c.low==='number'?`<span>Low ${money(c.low)}</span>`:''}</div><div class="action-row"><button class="btn primary" onclick='openCardDetail(${JSON.stringify(c).replace(/'/g,"&#39;")})'>Details</button><button class="btn" onclick='addCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>＋ Raw</button><button class="btn" onclick='addGradedCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>◇ Graded</button><button class="btn" onclick='addWishlist(${JSON.stringify(c).replace(/'/g,"&#39;")})'>♡</button>${c.url?`<a class="btn" href="${esc(c.url)}" target="_blank" rel="noreferrer">Market ↗</a>`:''}</div></div></article>`;
+  return `<article class="card-result">${cardArt(c)}<div><div class="eyebrow">${esc(c.game)} • ${esc(c.set)}</div><h3>${esc(c.name)}</h3><div class="tiny">${esc(c.number||'—')} ${c.rarity?'• '+esc(c.rarity):''}${owned?` • <span class="good">${owned} owned</span>`:''}</div><div class="price-row"><strong>${money(Number(c.market))}</strong>${typeof c.low==='number'?`<span>Low ${money(c.low)}</span>`:''}</div><div class="action-row"><button class="btn primary" onclick='openCardDetail(${JSON.stringify(c).replace(/'/g,"&#39;")})'>Details</button><button class="btn iq-btn" onclick='openVaultIQCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>IQ</button><button class="btn" onclick='addCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>＋ Raw</button><button class="btn" onclick='addGradedCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>◇ Graded</button><button class="btn" onclick='addWishlist(${JSON.stringify(c).replace(/'/g,"&#39;")})'>♡</button>${c.url?`<a class="btn" href="${esc(c.url)}" target="_blank" rel="noreferrer">Market ↗</a>`:''}</div></div></article>`;
 }
 function addCard(card){
   ensureCollectionSchema();
@@ -1832,6 +1971,7 @@ function renderTools(){
     <div class="tool-menu">
       ${toolButton('watchtower','◉','Watchtower','Collector alert inbox')}
       ${toolButton('actions','✓','Action Center','Smart collector priorities')}
+      ${toolButton('vaultiq','IQ','VaultIQ','Personal buy decisions')}
       ${toolButton('market','↗','Market Pulse','Live price tracking')}
       ${toolButton('analytics','⌁','Dashboard Pro','Collection analytics')}
       ${toolButton('rips','✦','Rip Sessions','Openings & pull analytics')}
@@ -1855,6 +1995,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='vaultiq') return renderVaultIQTool();
   if(toolsTab==='showcase') return renderShowcaseStudio();
   if(toolsTab==='watchtower') return renderWatchtowerTool();
   if(toolsTab==='actions') return renderActionCenterTool();
@@ -1880,6 +2021,236 @@ function renderToolBody(){
 
 
 
+
+function ensureVaultIQSchema(){
+  if(!Array.isArray(state.acquisitionQueue)) state.acquisitionQueue=[];
+  state.vaultIQSettings={reserveCash:25,maxDuplicateCopies:2,...(state.vaultIQSettings||{})};
+}
+function vaultIQBudgetLeft(){
+  return Math.max(0,(Number(state.settings.monthlyBudget)||0)-monthSpend()-(Number(state.vaultIQSettings.reserveCash)||0));
+}
+function cardWishlistMatch(card){
+  return (state.wishlist||[]).find(w=>w.card?.id===card.id);
+}
+function cardPriceAlertMatch(card){
+  return (state.priceAlerts||[]).find(a=>a.card?.id===card.id);
+}
+function uniqueOwnedInSet(card){
+  if(!card?.setId && !card?.set)return {owned:0,total:Number(card?.setPrintedTotal||card?.setTotal||0),pct:0};
+  const same=(state.collection||[]).filter(i=>(card.setId&&i.card?.setId===card.setId)||(!card.setId&&i.card?.set===card.set));
+  const owned=new Set(same.map(i=>i.card?.id||i.card?.number||i.card?.name)).size;
+  const total=Number(card.setPrintedTotal||card.setTotal||0);
+  return {owned,total,pct:total?owned/total*100:0};
+}
+function vaultIQCardScore(card,offerPrice=null){
+  ensureVaultIQSchema();
+  const market=Number(card?.market)||0;
+  const price=offerPrice===null||offerPrice===undefined?market:Math.max(0,Number(offerPrice)||0);
+  const owned=totalOwnedForCard(card?.id);
+  const wish=cardWishlistMatch(card);
+  const alert=cardPriceAlertMatch(card);
+  const set=uniqueOwnedInSet(card);
+  const budget=vaultIQBudgetLeft();
+  let score=38;
+  const reasons=[];
+
+  if(wish){score+=22;reasons.push('On your wishlist +22')}
+  if(owned===0){score+=12;reasons.push('New to your Vault +12')}
+  else if(owned===1){score+=3;reasons.push('Only one copy owned +3')}
+  else if(owned>=Number(state.vaultIQSettings.maxDuplicateCopies||2)){score-=14;reasons.push(`${owned} copies already owned −14`)}
+
+  if(alert){
+    const target=Number(alert.target)||0;
+    if(target>0 && price>0 && price<=target){score+=18;reasons.push(`At/below your price target +18`)}
+    else if(target>0 && price>target){score-=5;reasons.push(`Above your price target −5`)}
+  }
+
+  if(set.total && set.pct>=90 && set.pct<100){score+=13;reasons.push(`Helps a ${set.pct.toFixed(0)}% complete set +13`)}
+  else if(set.total && set.pct>=70 && set.pct<100){score+=7;reasons.push(`Helps set progress +7`)}
+
+  if(market>0 && price>0){
+    const ratio=price/market;
+    if(ratio<=.85){score+=18;reasons.push(`Offer is ≥15% below market reference +18`)}
+    else if(ratio<=.95){score+=12;reasons.push(`Offer is below market reference +12`)}
+    else if(ratio<=1.05){score+=5;reasons.push(`Offer is near market reference +5`)}
+    else if(ratio>=1.20){score-=15;reasons.push(`Offer is ≥20% above market reference −15`)}
+    else if(ratio>1.05){score-=6;reasons.push(`Offer is above market reference −6`)}
+  }
+
+  if(price>0 && budget>0){
+    if(price<=budget*.35){score+=10;reasons.push('Fits comfortably in remaining hobby budget +10')}
+    else if(price<=budget){score+=4;reasons.push('Fits remaining hobby budget +4')}
+    else{score-=18;reasons.push('Exceeds remaining hobby budget −18')}
+  }else if(price>0 && budget===0){
+    score-=12;reasons.push('No spendable hobby budget left −12')
+  }
+
+  score=Math.max(0,Math.min(100,Math.round(score)));
+  const label=score>=82?'Excellent collector fit':score>=68?'Strong collector fit':score>=52?'Consider':score>=38?'Watch':'Pass for now';
+  return {score,label,reasons,market,price,owned,wish:!!wish,alert,set,budget};
+}
+function vaultIQProductScore(watch){
+  ensureVaultIQSchema();
+  const catalog=findCatalogMatches(watch.product||'')[0]||null;
+  const stats=catalog?productStats(catalog):null;
+  const radar=watchRadar(watch);
+  const best=stats?.bestObserved;
+  const target=Number(watch.maxPrice)||Number(catalog?.target)||0;
+  const msrp=Number(catalog?.msrp)||0;
+  const price=best!==null&&best!==undefined?Number(best):(target||msrp||0);
+  const budget=vaultIQBudgetLeft();
+  let score=35;
+  const reasons=[];
+  const pri=watch.priority||'High';
+  if(pri==='High'){score+=18;reasons.push('High-priority watch +18')}
+  else if(pri==='Medium'){score+=10;reasons.push('Medium-priority watch +10')}
+  else{score+=4;reasons.push('Low-priority watch +4')}
+
+  if(price>0&&target>0){
+    if(price<=target){score+=20;reasons.push('Observed/reference price meets your max +20')}
+    else{score-=8;reasons.push('Price is above your max −8')}
+  }else if(price>0&&msrp>0&&price<=msrp){
+    score+=10;reasons.push('At/below MSRP reference +10')
+  }
+  score+=Math.min(15,Math.round(radar.score*.15));
+  reasons.push(`Restock Radar ${radar.score} contributes +${Math.min(15,Math.round(radar.score*.15))}`);
+
+  const owned=stats?.ownedQty||0;
+  if(owned===0){score+=8;reasons.push('No sealed copies owned +8')}
+  else if(owned>=3){score-=8;reasons.push(`${owned} sealed copies already owned −8`)}
+
+  if(price>0&&budget>0){
+    if(price<=budget*.4){score+=9;reasons.push('Comfortable budget fit +9')}
+    else if(price<=budget){score+=3;reasons.push('Fits budget +3')}
+    else{score-=15;reasons.push('Exceeds remaining budget −15')}
+  }
+  score=Math.max(0,Math.min(100,Math.round(score)));
+  const label=score>=82?'Excellent hunt fit':score>=68?'Strong hunt fit':score>=52?'Consider':score>=38?'Watch':'Pass for now';
+  return {score,label,reasons,price,target,msrp,budget,radar,owned,catalog,stats};
+}
+function vaultIQCandidates(){
+  const out=[];
+  for(const w of state.wishlist||[]){
+    const iq=vaultIQCardScore(w.card);
+    out.push({uid:`wish-${w.uid}`,type:'card',name:w.card?.name||'Card',subtitle:`${w.card?.game||''} • ${w.card?.set||''}`,price:iq.price,iq,card:w.card,source:'Wishlist'});
+  }
+  for(const w of state.stockWatches||[]){
+    const iq=vaultIQProductScore(w);
+    out.push({uid:`watch-${w.uid}`,type:'product',name:w.product,subtitle:`${w.game||''} • ${w.priority||'High'} priority`,price:iq.price,iq,watch:w,source:'Stock Watch'});
+  }
+  return out.sort((a,b)=>b.iq.score-a.iq.score);
+}
+function vaultIQPlan(){
+  const budget=vaultIQBudgetLeft();
+  let remaining=budget;
+  const picks=[];
+  for(const c of vaultIQCandidates()){
+    const price=Number(c.price)||0;
+    if(c.iq.score<52||price<=0||price>remaining)continue;
+    picks.push(c);remaining-=price;
+    if(picks.length>=5)break;
+  }
+  return {budget,remaining,picks};
+}
+function openVaultIQCard(card){
+  vaultIQFocusCard=card;
+  toolsTab='vaultiq';
+  switchTab('tools');
+}
+function queueVaultIQCard(card){
+  ensureVaultIQSchema();
+  if(state.acquisitionQueue.some(x=>x.type==='card'&&x.card?.id===card.id)){toast('Already in acquisition queue');return;}
+  const iq=vaultIQCardScore(card);
+  state.acquisitionQueue.unshift({uid:uid(),type:'card',name:card.name,card,price:iq.price,status:'Watching',createdAt:new Date().toISOString()});
+  saveState();renderTools();toast('Added to acquisition queue');
+}
+function queueVaultIQWatch(watchId){
+  ensureVaultIQSchema();
+  const w=state.stockWatches.find(x=>x.uid===watchId);if(!w)return;
+  if(state.acquisitionQueue.some(x=>x.type==='product'&&x.watchId===watchId)){toast('Already in acquisition queue');return;}
+  const iq=vaultIQProductScore(w);
+  state.acquisitionQueue.unshift({uid:uid(),type:'product',watchId,name:w.product,price:iq.price,status:'Watching',createdAt:new Date().toISOString()});
+  saveState();renderTools();toast('Added to acquisition queue');
+}
+function updateAcquisitionStatus(id,status){
+  const q=state.acquisitionQueue.find(x=>x.uid===id);if(!q)return;
+  q.status=status;q.updatedAt=new Date().toISOString();saveState();renderTools();
+}
+function removeAcquisitionItem(id){
+  state.acquisitionQueue=state.acquisitionQueue.filter(x=>x.uid!==id);saveState();renderTools();
+}
+function editVaultIQSettings(){
+  const reserve=prompt('Keep how much of your monthly budget reserved/unspent?',String(state.vaultIQSettings.reserveCash||25));
+  if(reserve!==null)state.vaultIQSettings.reserveCash=Math.max(0,Number(reserve)||0);
+  const dupes=prompt('Start penalizing card acquisition after how many copies?',String(state.vaultIQSettings.maxDuplicateCopies||2));
+  if(dupes!==null)state.vaultIQSettings.maxDuplicateCopies=Math.max(1,Number(dupes)||1);
+  saveState();renderTools();
+}
+function vaultIQDealCheck(){
+  if(!vaultIQFocusCard){toast('Open VaultIQ from a card search result first');return;}
+  const price=prompt('What price are you being offered?',String(Number(vaultIQFocusCard.market)||0));
+  if(price===null)return;
+  vaultIQFocusCard={...vaultIQFocusCard,_dealPrice:Math.max(0,Number(price)||0)};
+  renderTools();
+}
+function renderVaultIQScore(iq){
+  return `<div class="iq-score ${iq.score>=68?'strong':iq.score>=52?'consider':'watch'}"><strong>${iq.score}</strong><span>COLLECTOR FIT</span><b>${esc(iq.label)}</b></div>`;
+}
+function renderVaultIQTool(){
+  ensureVaultIQSchema();
+  const candidates=vaultIQCandidates();
+  const plan=vaultIQPlan();
+  const focus=vaultIQFocusCard;
+  const focusIQ=focus?vaultIQCardScore(focus,focus._dealPrice??null):null;
+  const budget=vaultIQBudgetLeft();
+
+  return `<div class="panel vaultiq-hero">
+    <div class="section-head"><div><div class="eyebrow">2GEN VAULTIQ</div><h2>Personal collector decision engine</h2><p>Combines your collection, wishlist, targets, stock watches, budget, duplicate count and set progress to answer: “Is this a good fit for <em>my</em> collection?”</p></div><button class="btn" onclick="editVaultIQSettings()">⚙ IQ rules</button></div>
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Spendable budget</span><strong>${money(budget)}</strong><small>${money(Number(state.vaultIQSettings.reserveCash)||0)} kept in reserve</small></div>
+      <div class="stat-card"><span>Ranked targets</span><strong>${candidates.length}</strong><small>Wishlist + stock watches</small></div>
+      <div class="stat-card"><span>Strong fits</span><strong>${candidates.filter(x=>x.iq.score>=68).length}</strong><small>Personalized, not investment advice</small></div>
+      <div class="stat-card"><span>Acquisition queue</span><strong>${state.acquisitionQueue.length}</strong><small>Things you are actively watching</small></div>
+    </div>
+    <div class="notice warn" style="margin-top:10px"><span>!</span><span>VaultIQ is a <b>collector-fit score</b>, not a promise of profit or a financial recommendation. It explains every point it adds or subtracts.</span></div>
+  </div>
+
+  ${focus?`<div class="panel iq-focus-panel">
+    <div class="section-head"><div><div class="eyebrow">DEAL CHECK</div><h2>${esc(focus.name)}</h2><p>${esc(focus.game)} • ${esc(focus.set)} • ${esc(focus.number||'')}</p></div>${renderVaultIQScore(focusIQ)}</div>
+    <div class="iq-focus-grid">
+      ${cardArt(focus)}
+      <div class="grow">
+        <div class="meta-grid">
+          <div class="meta"><span>Market reference</span><strong>${money(Number(focus.market))}</strong></div>
+          <div class="meta"><span>Offer / evaluated price</span><strong>${money(focusIQ.price)}</strong></div>
+          <div class="meta"><span>Copies owned</span><strong>${focusIQ.owned}</strong></div>
+          <div class="meta"><span>Budget after reserve</span><strong>${money(focusIQ.budget)}</strong></div>
+        </div>
+        <div class="iq-reasons">${focusIQ.reasons.map(r=>`<span>${esc(r)}</span>`).join('')}</div>
+        <div class="action-row" style="margin-top:10px"><button class="btn primary" onclick="vaultIQDealCheck()">Check another price</button><button class="btn" onclick='queueVaultIQCard(${JSON.stringify(focus).replace(/'/g,"&#39;")})'>＋ Acquisition Queue</button><button class="btn" onclick='addWishlist(${JSON.stringify(focus).replace(/'/g,"&#39;")})'>♡ Wishlist</button></div>
+      </div>
+    </div>
+  </div>`:''}
+
+  <div class="analytics-grid">
+    <div class="panel">
+      <div class="section-head"><div><div class="eyebrow">NEXT HUNT PLAN</div><h2>Best-fit buys inside your budget</h2><p>Greedy plan using current reference prices and your remaining hobby budget.</p></div></div>
+      ${plan.picks.length?plan.picks.map((c,idx)=>`<div class="iq-plan-row"><div class="iq-rank">${idx+1}</div><div class="grow"><strong>${esc(c.name)}</strong><span>${esc(c.source)} • ${esc(c.subtitle)}</span></div><div class="right"><b>${c.iq.score}</b><strong>${money(c.price)}</strong></div></div>`).join(''):`<div class="empty">No strong-fit candidates currently fit your spendable budget. Add wishlist cards or stock watches.</div>`}
+      <div class="kpi-line" style="margin-top:10px"><span>Budget left after plan</span><strong>${money(plan.remaining)}</strong></div>
+    </div>
+
+    <div class="panel">
+      <div class="section-head"><div><h2>Top collector targets</h2><p>Highest VaultIQ scores across cards you want and sealed products you watch.</p></div></div>
+      ${candidates.length?candidates.slice(0,8).map(c=>`<div class="iq-candidate-row"><div class="iq-mini ${c.iq.score>=68?'strong':''}">${c.iq.score}</div><div class="grow"><strong>${esc(c.name)}</strong><span>${esc(c.source)} • ${esc(c.iq.label)} • ${c.price?money(c.price):'price unknown'}</span></div><div class="right">${c.type==='card'?`<button class="btn" onclick='openVaultIQCard(${JSON.stringify(c.card).replace(/'/g,"&#39;")})'>Analyze</button>`:`<button class="btn" onclick="queueVaultIQWatch('${c.watch.uid}')">Queue</button>`}</div></div>`).join(''):`<div class="empty">Your wishlist and stock watches will feed this ranking automatically.</div>`}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>Acquisition Queue</h2><p>Your intentional buy list, separate from the broader wishlist.</p></div></div>
+    ${state.acquisitionQueue.length?state.acquisitionQueue.map(q=>`<div class="acq-row"><div class="thumb square"><b>${q.type==='card'?'◆':'◈'}</b></div><div class="grow"><strong>${esc(q.name)}</strong><span>${esc(q.type)} • ${money(Number(q.price))} reference • ${esc(q.status)}</span></div><div class="right"><select onchange="updateAcquisitionStatus('${q.uid}',this.value)">${['Watching','Ready','Acquired','Skipped'].map(s=>`<option ${s===q.status?'selected':''}>${s}</option>`).join('')}</select><button class="remove" onclick="removeAcquisitionItem('${q.uid}')">Remove</button></div></div>`).join(''):`<div class="empty">Use IQ buttons in Universal Search or queue a stock watch.</div>`}
+  </div>`;
+}
+
 function renderMarketPulseTool(){
   ensurePriceHistorySchema();
   const cards=uniqueCollectionCards();
@@ -1903,7 +2274,7 @@ function renderMarketPulseTool(){
       <button class="btn primary" onclick="refreshVaultPrices()" ${marketRefreshBusy?'disabled':''}>${marketRefreshBusy?'Refreshing…':'↻ Refresh Vault Prices'}</button>
     </div>
     <div class="stat-grid compact-stats">
-      <div class="stat-card"><span>Live cards in Vault</span><strong>${cards.filter(c=>c.provider==='pokemontcg').length}</strong><small>Eligible for provider refresh</small></div>
+      <div class="stat-card"><span>Live cards in Vault</span><strong>${cards.filter(liveProviderSupported).length}</strong><small>Eligible for provider refresh</small></div>
       <div class="stat-card"><span>Cards with history</span><strong>${trackedHistory}</strong><small>Local snapshot series</small></div>
       <div class="stat-card"><span>Price targets</span><strong>${state.priceAlerts.length}</strong><small>${targets.filter(x=>x.status.hit).length} currently hit</small></div>
       <div class="stat-card"><span>Last refresh</span><strong>${lastRefresh?humanAge(lastRefresh.finished):'—'}</strong><small>${lastRefresh?`${lastRefresh.updated} updated`:'Not run yet'}</small></div>
@@ -2150,22 +2521,17 @@ function openRipQuickScanner(sessionId){
 }
 async function promptRipCardSearch(sessionId){
   activeRipSessionId=sessionId;
-  const q=(prompt('Card name to search','')||'').trim();if(!q)return;
-  toast('Searching live card data…');
+  const s=ripSessionById(sessionId);if(!s)return;
+  const q=(prompt(`${s.game} card name / number to search`,'')||'').trim();if(!q)return;
+  if(!providerForGame(s.game)){
+    toast(`${s.game} live search is not connected yet. Use Smart Scanner/manual tracking.`);
+    return;
+  }
+  toast(`Searching live ${s.game} data…`);
   try{
-    const safe=q.replace(/"/g,'');
-    const r=await fetch(`https://api.pokemontcg.io/v2/cards?q=name:%22${encodeURIComponent(safe)}%22&pageSize=20&orderBy=-set.releaseDate`);
-    if(!r.ok)throw new Error(`Card API returned ${r.status}`);
-    const d=await r.json();
-    ripCardSearchResults=(d.data||[]).map(c=>{
-      const ps=Object.values(c.tcgplayer?.prices||{});
-      const market=ps.find(p=>typeof p.market==='number')?.market;
-      const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
-      return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
-    });
+    ripCardSearchResults=await universalSearchCards(s.game,q,20);
     ripCardSearchResults.forEach(c=>captureCardPrice(c,'Rip Session search'));
-    saveState();
-    renderTools();toast(`${ripCardSearchResults.length} matches`);
+    saveState();renderTools();toast(`${ripCardSearchResults.length} matches`);
   }catch(e){ripCardSearchResults=[];renderTools();toast(e.message||'Search failed')}
 }
 function addPullToSession(sessionId,card){
@@ -2536,25 +2902,19 @@ async function autoIdentifyFromPhoto(){
     const tokens=likelyNameTokens(scannerOcrText);
     const queryTerms=tokens.slice(0,7);
 
-    // Search several likely text tokens and optionally the card number.
+    // Search several likely OCR clues through the selected live provider.
     const candidateMap=new Map();
     const queries=[];
-    if(numberHint) queries.push(`number:"${numberHint.replace(/"/g,'')}"`);
-    for(const token of queryTerms.slice(0,5)) queries.push(`name:"${token.replace(/"/g,'')}"`);
+    if(numberHint)queries.push(numberHint);
+    for(const token of queryTerms.slice(0,5))queries.push(token);
 
     for(const q of queries.slice(0,6)){
       try{
-        const r=await fetch(`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=40&orderBy=-set.releaseDate`);
-        if(!r.ok) continue;
-        const d=await r.json();
-        for(const c of d.data||[]){
-          const ps=Object.values(c.tcgplayer?.prices||{});
-          const market=ps.find(p=>typeof p.market==='number')?.market;
-          const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
-          const card={id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
+        const cards=await universalSearchCards(scannerGame,q,25);
+        for(const card of cards){
           const score=candidateScore(card,scannerOcrText,numberHint);
           const prior=candidateMap.get(card.id);
-          if(!prior || score>prior.autoScore) candidateMap.set(card.id,{...card,autoScore:score});
+          if(!prior || score>prior.autoScore)candidateMap.set(card.id,{...card,autoScore:score});
         }
       }catch{}
     }
@@ -2564,7 +2924,7 @@ async function autoIdentifyFromPhoto(){
       .slice(0,12);
 
     if(!scannerAutoCandidates.length){
-      throw new Error('Text was read, but no confident Pokémon card matches were found. Use manual Identify instead.');
+      throw new Error(`Text was read, but no confident ${scannerGame} card matches were found. Use Manual Identify instead.`);
     }
 
     scannerSearchResults=scannerAutoCandidates;
@@ -2675,38 +3035,25 @@ function reviewScannerSettings(){
   if(binder!==null && binderNames().includes(binder.trim())) state.scannerSettings.preferredBinder=binder.trim();
   saveState();renderTools();toast('Scanner settings saved');
 }
+function setScannerGame(game){
+  scannerGame=game;
+  scannerSearchResults=[];
+  scannerAutoCandidates=[];
+  scannerLastQuery='';
+  renderTools();
+}
 async function scannerSearch(event){
-  if(event) event.preventDefault();
+  if(event)event.preventDefault();
   const q=($('scannerSearchQ')?.value||scannerLastQuery||'').trim();
   if(!q){toast('Enter a card name, set, or card number');return;}
   scannerLastQuery=q;scannerBusy=true;renderTools();
   try{
-    const clean=q.replace(/"/g,'').trim();
-    const numberLike=/^[a-z0-9-]{1,12}$/i.test(clean) && /\d/.test(clean);
-    const query = numberLike
-      ? `(name:"${clean}" OR number:"${clean}")`
-      : `name:"${clean}"`;
-    let url=`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(query)}&pageSize=30&orderBy=-set.releaseDate`;
-    let r=await fetch(url);
-    if(!r.ok && numberLike){
-      url=`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(`number:"${clean}"`)}&pageSize=30&orderBy=-set.releaseDate`;
-      r=await fetch(url);
-    }
-    if(!r.ok) throw new Error(`Card API returned ${r.status}`);
-    const d=await r.json();
+    scannerSearchResults=await universalSearchCards(scannerGame,q,30);
     scannerLastMarketLookupAt=new Date().toISOString();
-    scannerSearchResults=(d.data||[]).map(c=>{
-      const ps=Object.values(c.tcgplayer?.prices||{});
-      const market=ps.find(p=>typeof p.market==='number')?.market;
-      const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
-      return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
-    });
     scannerSearchResults.forEach(c=>captureCardPrice(c,'Smart Scanner'));
-    saveState();
-    toast(`${scannerSearchResults.length} possible matches`);
+    saveState();toast(`${scannerSearchResults.length} ${scannerGame} possible matches`);
   }catch(e){
-    scannerSearchResults=[];
-    toast(e.message||'Scanner search failed');
+    scannerSearchResults=[];toast(e.message||'Scanner search failed');
   }finally{
     scannerBusy=false;renderTools();
   }
@@ -2826,9 +3173,10 @@ function renderScannerTool(){
       </div>
 
       <div>
+        <div class="scanner-game-tabs">${Object.keys(LIVE_CARD_PROVIDERS).map(g=>`<button class="${scannerGame===g?'active':''}" onclick='setScannerGame(${JSON.stringify(g)})'>${esc(g)}</button>`).join('')}</div>
         <form class="searchbar" onsubmit="scannerSearch(event)">
           <span>⌕</span>
-          <input id="scannerSearchQ" value="${esc(scannerLastQuery)}" placeholder="Manual fallback: card name or number">
+          <input id="scannerSearchQ" value="${esc(scannerLastQuery)}" placeholder="Manual fallback: ${esc(scannerGame)} card name or number">
           <button class="btn primary" ${scannerBusy?'disabled':''}>${scannerBusy?'Searching…':'Manual Identify'}</button>
         </form>
 
@@ -3080,20 +3428,16 @@ function clearTradeBuilder(){
   if((tradeGiveDraft.length||tradeReceiveDraft.length) && !confirm('Clear the current trade builder?')) return;
   tradeGiveDraft=[];tradeReceiveDraft=[];tradeSearchResults=[];renderTools();
 }
+function setTradeSearchGame(game){tradeSearchGame=game;tradeSearchResults=[];renderTools()}
 async function tradeCardSearch(e){
   e.preventDefault();
   const q=$('tradeSearchQ')?.value.trim()||'';
   if(!q){toast('Enter a card name');return;}
   tradeSearchBusy=true;renderTools();
   try{
-    const safe=q.replace(/"/g,'');
-    const r=await fetch(`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(`name:"${safe}"`)}&pageSize=20&orderBy=-set.releaseDate`);
-    if(!r.ok) throw new Error(`Card API returned ${r.status}`);
-    const d=await r.json();
-    tradeSearchResults=(d.data||[]).map(livePokemonCardFromApi);
+    tradeSearchResults=await universalSearchCards(tradeSearchGame,q,20);
     tradeSearchResults.forEach(c=>captureCardPrice(c,'Trade Lab search'));
-    saveState();
-    toast(`${tradeSearchResults.length} trade matches`);
+    saveState();toast(`${tradeSearchResults.length} ${tradeSearchGame} trade matches`);
   }catch(e){
     tradeSearchResults=[];toast(e.message||'Trade search failed');
   }finally{
@@ -3716,7 +4060,7 @@ function buildActionCenter(includeSnoozed=false){
   }
 
   // Price-refresh freshness.
-  const liveCards=uniqueCollectionCards().filter(c=>c.game==='Pokemon'&&c.provider==='pokemontcg');
+  const liveCards=uniqueCollectionCards().filter(liveProviderSupported);
   const lastRefresh=state.priceRefreshLog?.[0]?.finished;
   const refreshDays=daysSince(lastRefresh);
   if(liveCards.length && (refreshDays===null || refreshDays>7)){
@@ -4528,7 +4872,8 @@ function renderTradesTool(){
 
       ${state.wishlist.length?`<div class="subpanel wishlist-trade-box"><div class="eyebrow">YOUR WISHLIST</div>${state.wishlist.slice(0,8).map(w=>`<div class="compact-row">${cardArt(w.card)}<div class="grow"><strong>${esc(w.card.name)}</strong><span>${esc(w.card.set)} • ${money(Number(w.card.market))}</span></div><button class="btn" onclick="addWishlistTradeItem('${w.uid}')">Add</button></div>`).join('')}</div>`:''}
 
-      <form class="searchbar" onsubmit="tradeCardSearch(event)" style="margin-top:10px"><span>⌕</span><input id="tradeSearchQ" placeholder="Search a Pokémon card to receive"><button class="btn primary" ${tradeSearchBusy?'disabled':''}>${tradeSearchBusy?'Searching…':'Search'}</button></form>
+      <div class="provider-tabs mini-provider-tabs">${Object.keys(LIVE_CARD_PROVIDERS).map(g=>`<button class="${tradeSearchGame===g?'active':''}" onclick='setTradeSearchGame(${JSON.stringify(g)})'><b>${esc(g)}</b></button>`).join('')}</div>
+      <form class="searchbar" onsubmit="tradeCardSearch(event)" style="margin-top:10px"><span>⌕</span><input id="tradeSearchQ" placeholder="Search a ${esc(tradeSearchGame)} card to receive"><button class="btn primary" ${tradeSearchBusy?'disabled':''}>${tradeSearchBusy?'Searching…':'Search'}</button></form>
       ${tradeSearchResults.length?`<div class="trade-search-results">${tradeSearchResults.slice(0,8).map(c=>`<div class="compact-row">${cardArt(c)}<div class="grow"><strong>${esc(c.name)}</strong><span>${esc(c.set)} • ${esc(c.number||'')} • ${money(Number(c.market))}</span></div><button class="btn primary" onclick='addTradeSearchResult(${JSON.stringify(c).replace(/'/g,"&#39;")})'>Add</button></div>`).join('')}</div>`:''}
 
       <div class="trade-draft-list">${tradeReceiveDraft.length?tradeReceiveDraft.map(i=>renderTradeDraftItem(i,'receive')).join(''):`<div class="empty">Nothing on their side yet.</div>`}</div>
@@ -4594,7 +4939,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,setShowcaseProfile,toggleShowcaseFeatured,editShowcaseText,toggleShowcaseSetting,downloadShowcaseHtml,downloadShowcaseJson,shareShowcase,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,setDiscoverGame,setScannerGame,setTradeSearchGame,openVaultIQCard,queueVaultIQCard,queueVaultIQWatch,updateAcquisitionStatus,removeAcquisitionItem,editVaultIQSettings,vaultIQDealCheck,setShowcaseProfile,toggleShowcaseFeatured,editShowcaseText,toggleShowcaseSetting,downloadShowcaseHtml,downloadShowcaseJson,shareShowcase,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -4615,6 +4960,7 @@ if('serviceWorker' in navigator){
 ensureCollectionSchema();
 ensurePriceHistorySchema();
 ensureWatchtowerSchema();
+ensureVaultIQSchema();
 ensureShowcaseSchema();
 ensureActionSchema();
 ensureFamilySchema();

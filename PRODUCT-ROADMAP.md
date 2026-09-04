@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v2.0 Showcase Studio
+## Current build: v3.0 VaultIQ + Universal Live Network
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -252,3 +252,25 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Mobile Web Share summary
 - Rip Session double-finish bug fix
 - Sealed opening stale-navigation bug fix
+
+
+## v3.0 completed
+- Universal normalized card-provider layer
+- Live Pokémon search
+- Live Lorcana search + pricing
+- Live Magic search + pricing
+- Live Yu-Gi-Oh! search + print reference pricing
+- Multi-provider Market Pulse refresh
+- Multi-TCG Smart Scanner selector
+- Multi-TCG OCR-assisted candidate search
+- Multi-TCG Rip Session search
+- Multi-TCG Trade Lab incoming search
+- VaultIQ collector-fit scoring engine
+- Deal Check with entered offer price
+- Personalized budget fit
+- Duplicate-copy penalty
+- Wishlist / target boosts
+- Set-completion context
+- Restock Radar / sealed-product scoring
+- Next Hunt Plan
+- Acquisition Queue

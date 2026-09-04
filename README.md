@@ -1,4 +1,4 @@
-# 2GEN Vault — Showcase Studio v2.0 (GitHub Pages)
+# 2GEN Vault — VaultIQ + Universal Live Network v3.0
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -880,3 +880,98 @@ A finished Rip Session can no longer be added to the Vault again accidentally.
 
 ### Sealed opening navigation
 Declining to start a new Rip Session no longer jumps back into a previously active Rip Session.
+
+
+## v3.0 — the major jump
+
+Version 3 turns 2GEN Vault from a collection tracker into a more complete collector decision system.
+
+## Universal Live Card Network
+
+Live card search is now provider-adapter based instead of Pokémon-only.
+
+Connected in this build:
+
+- Pokémon — Pokémon TCG API
+- Disney Lorcana — Lorcast
+- Magic: The Gathering — Scryfall
+- Yu-Gi-Oh! — YGOPRODeck
+
+One Piece, Sports and other games remain available for manual/demo tracking until a provider that fits the app's reliability/licensing requirements is connected.
+
+All provider data is normalized into the same internal card shape so Vault, Trade Lab, Sell Lab, Watchtower, Dashboard Pro and price history can work across games.
+
+### Provider-specific care
+
+Yu-Gi-Oh! image URLs are intentionally not hotlinked in this GitHub Pages build because YGOPRODeck asks developers not to continuously hotlink their image CDN.
+
+## Multi-TCG Market Pulse
+
+Bulk Vault price refresh can now update supported cards from multiple connected providers instead of only Pokémon.
+
+The app keeps local price snapshots exactly as before.
+
+## Multi-TCG Smart Scanner
+
+Smart Scanner now has a game selector.
+
+Manual Identify and OCR-assisted Auto Identify can search:
+
+- Pokémon
+- Lorcana
+- Magic
+- Yu-Gi-Oh!
+
+The user still confirms the exact printing before adding it.
+
+## Multi-TCG Rip Sessions
+
+A Rip Session now searches the live provider that matches the session's game when one is connected.
+
+This is especially useful for 2GEN RIPS opening Pokémon and Lorcana.
+
+## Multi-TCG Trade Lab
+
+The incoming-card search inside Trade Lab now includes a game selector and uses the universal provider layer.
+
+## VaultIQ
+
+VaultIQ is a transparent personalized collector-fit engine.
+
+It combines:
+
+- wishlist status
+- card price targets
+- current reference market price
+- an entered deal price
+- copies already owned
+- set completion
+- remaining monthly hobby budget
+- a configurable cash reserve
+- stock-watch priority
+- Restock Radar
+- observed sealed prices
+- sealed quantity already owned
+
+It produces a 0–100 **Collector Fit** score with every adjustment explained.
+
+It is deliberately NOT presented as an investment recommendation or guaranteed-profit score.
+
+### Next Hunt Plan
+
+VaultIQ ranks wishlist cards and stock watches and creates a simple next-buy plan that fits inside the user's spendable hobby budget.
+
+### Acquisition Queue
+
+Users can move a card/product from broad wishlist/watch status into a focused acquisition queue:
+
+- Watching
+- Ready
+- Acquired
+- Skipped
+
+### Deal Check
+
+Any live card search result now has an **IQ** button.
+
+Open it, enter the price being offered, and VaultIQ recalculates the personalized fit score using that exact price.
