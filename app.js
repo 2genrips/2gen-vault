@@ -556,8 +556,11 @@ function livePokemonCardFromApi(c){
     setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',
     number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',
     supertype:c.supertype||'',subtypes:c.subtypes||[],
+    hp:c.hp||'',
+    attacks:Array.isArray(c.attacks)?c.attacks.map(a=>({name:a.name||'',damage:a.damage||'',text:a.text||''})):[],
     image:c.images?.small||c.images?.large||'',
     market,low:lows.length?Math.min(...lows):undefined,
+    providerPrices:c.tcgplayer?.prices||{},
     url:c.tcgplayer?.url||''
   };
 }
@@ -3872,16 +3875,67 @@ function likelyNameTokens(text=''){
     .filter(x=>x.length>=3 && x.length<=22 && !stop.has(x.toLowerCase()) && !/^\d+$/.test(x))
     .slice(0,24);
 }
+function scannerEditDistance(a='',b=''){
+  a=String(a).toLowerCase();b=String(b).toLowerCase();
+  const row=Array.from({length:b.length+1},(_,i)=>i);
+  for(let i=1;i<=a.length;i++){
+    let prev=row[0];row[0]=i;
+    for(let j=1;j<=b.length;j++){
+      const tmp=row[j];
+      row[j]=Math.min(row[j]+1,row[j-1]+1,prev+(a[i-1]===b[j-1]?0:1));
+      prev=tmp;
+    }
+  }
+  return row[b.length];
+}
+function scannerWordSimilarity(a='',b=''){
+  const longest=Math.max(String(a).length,String(b).length);
+  if(!longest)return 0;
+  return 1-scannerEditDistance(a,b)/longest;
+}
+function extractLikelyHp(text=''){
+  const t=String(text);
+  const hp=t.match(/\bHP\s*([3-9]\d|[12]\d\d|300)\b/i);
+  if(hp)return hp[1];
+  const top=t.slice(0,Math.min(180,t.length));
+  const vals=[...top.matchAll(/\b([3-9]\d|[12]\d\d|300)\b/g)].map(m=>m[1]);
+  return vals[0]||'';
+}
 function candidateScore(card,ocrText,numberHint){
   const hay=normalizeOcrText(ocrText).toLowerCase();
+  const words=likelyNameTokens(ocrText).map(x=>x.toLowerCase());
   const name=String(card.name||'').toLowerCase();
   let score=0;
-  const nameParts=name.split(/\s+/).filter(Boolean);
-  nameParts.forEach(p=>{ if(p.length>2 && hay.includes(p)) score+=18; });
-  if(hay.includes(name)) score+=35;
-  if(numberHint && String(card.number||'').toLowerCase()===String(numberHint).toLowerCase()) score+=40;
-  if(card.set && hay.includes(String(card.set).toLowerCase())) score+=8;
-  if(card.rarity && hay.includes(String(card.rarity).toLowerCase())) score+=5;
+
+  if(hay.includes(name))score+=42;
+  for(const part of name.split(/\s+/).filter(Boolean)){
+    if(part.length<=2)continue;
+    if(hay.includes(part))score+=18;
+    else{
+      const best=Math.max(0,...words.map(w=>scannerWordSimilarity(part,w)));
+      if(best>=.82)score+=14;
+      else if(best>=.70)score+=8;
+    }
+  }
+
+  if(numberHint && String(card.number||'').toLowerCase()===String(numberHint).toLowerCase())score+=48;
+
+  const hp=extractLikelyHp(ocrText);
+  if(hp && String(card.hp||'')===String(hp))score+=12;
+
+  for(const attack of card.attacks||[]){
+    const attackName=String(attack.name||'').toLowerCase();
+    if(attackName && hay.includes(attackName))score+=20;
+    else{
+      const parts=attackName.split(/\s+/).filter(x=>x.length>2);
+      const hits=parts.filter(x=>hay.includes(x)).length;
+      if(parts.length && hits===parts.length)score+=14;
+      else if(hits)score+=5*hits;
+    }
+  }
+
+  if(card.set && hay.includes(String(card.set).toLowerCase()))score+=8;
+  if(card.rarity && hay.includes(String(card.rarity).toLowerCase()))score+=5;
   return Math.min(100,score);
 }
 
@@ -3939,7 +3993,7 @@ async function openLiveScannerCamera(){
   modal.innerHTML=`
     <div class="scanner-camera-shell">
       <div class="scanner-camera-topbar">
-        <div><b>2GEN Card Camera</b><span>Fill the frame with one card</span></div>
+        <div><b>2GEN Card Camera</b><span>Fill the card outline — this exact area will be scanned</span></div>
         <button type="button" class="scanner-camera-close" onclick="closeLiveScannerCamera()">×</button>
       </div>
       <div class="scanner-live-stage">
@@ -3947,7 +4001,7 @@ async function openLiveScannerCamera(){
         <div class="scanner-card-guide"><i></i></div>
         <div id="scannerCameraMessage" class="scanner-camera-message">Waiting for camera permission…</div>
       </div>
-      <div class="scanner-camera-tips">Keep the card flat • use even light • reduce glare • make the name and collector number readable</div>
+      <div class="scanner-camera-tips">Fill the outline with the card • keep it flat • reduce glare • make the name + collector number readable</div>
       <div class="scanner-camera-controls">
         <button type="button" class="btn" onclick="closeLiveScannerCamera();openScannerFilePicker()">Gallery</button>
         <button type="button" id="scannerCaptureBtn" class="scanner-shutter" onclick="captureLiveScannerFrame()" disabled aria-label="Take photo"></button>
@@ -4037,6 +4091,7 @@ async function retryLiveScannerCamera(){
 
 async function captureLiveScannerFrame(){
   const video=document.getElementById('scannerLiveVideo');
+  const guide=document.querySelector('#scannerCameraModal .scanner-card-guide');
   if(!video || !video.videoWidth || !video.videoHeight){
     toast('Camera is not ready yet');
     return;
@@ -4046,26 +4101,44 @@ async function captureLiveScannerFrame(){
   if(btn)btn.disabled=true;
 
   try{
-    const maxSide=1800;
-    const scale=Math.min(1,maxSide/Math.max(video.videoWidth,video.videoHeight));
+    // Map the visible card guide through object-fit:cover back into source-video pixels.
+    const vr=video.getBoundingClientRect();
+    const gr=guide?.getBoundingClientRect();
+    const sourceW=video.videoWidth,sourceH=video.videoHeight;
+    const coverScale=Math.max(vr.width/sourceW,vr.height/sourceH);
+    const renderedW=sourceW*coverScale,renderedH=sourceH*coverScale;
+    const cropLeft=(renderedW-vr.width)/2;
+    const cropTop=(renderedH-vr.height)/2;
+
+    let sx=0,sy=0,sw=sourceW,sh=sourceH;
+    if(gr && vr.width>0 && vr.height>0){
+      sx=Math.max(0,((gr.left-vr.left)+cropLeft)/coverScale);
+      sy=Math.max(0,((gr.top-vr.top)+cropTop)/coverScale);
+      sw=Math.min(sourceW-sx,gr.width/coverScale);
+      sh=Math.min(sourceH-sy,gr.height/coverScale);
+    }
+
+    // Small padding so card borders / collector number are not clipped.
+    const px=sw*.035,py=sh*.025;
+    sx=Math.max(0,sx-px);sy=Math.max(0,sy-py);
+    sw=Math.min(sourceW-sx,sw+px*2);sh=Math.min(sourceH-sy,sh+py*2);
+
+    const maxSide=1900;
+    const scale=Math.min(1,maxSide/Math.max(sw,sh));
     const canvas=document.createElement('canvas');
-    canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
-    canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+    canvas.width=Math.max(1,Math.round(sw*scale));
+    canvas.height=Math.max(1,Math.round(sh*scale));
     const ctx=canvas.getContext('2d',{alpha:false});
-    ctx.fillStyle='#fff';
-    ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.drawImage(video,0,0,canvas.width,canvas.height);
-    cameraPreview=canvas.toDataURL('image/jpeg',.92);
+    ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(video,sx,sy,sw,sh,0,0,canvas.width,canvas.height);
+    cameraPreview=canvas.toDataURL('image/jpeg',.94);
 
     closeLiveScannerCamera();
-    scannerBestMatch=null;
-    scannerOcrText='';
-    scannerOcrConfidence=null;
-    scannerAutoCandidates=[];
-    scannerSearchResults=[];
+    scannerBestMatch=null;scannerOcrText='';scannerOcrConfidence=null;
+    scannerAutoCandidates=[];scannerSearchResults=[];
     renderTools();
 
-    await new Promise(r=>setTimeout(r,80));
+    await new Promise(r=>setTimeout(r,100));
     await autoIdentifyFromPhoto(true);
   }catch(e){
     toast(e.message||'Could not capture the card photo');
@@ -4114,34 +4187,212 @@ function scannerBestMatchMarkup(){
     <div class="action-row"><button class="btn primary" onclick='selectAutoMatch(${JSON.stringify(card).replace(/'/g,"&#39;")})'>Confirm match</button><button class="btn" onclick='queueCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>＋ Queue</button>${card.url?`<a class="btn" href="${esc(card.url)}" target="_blank" rel="noreferrer">Market source ↗</a>`:''}</div></div>`;
 }
 
+
+async function scannerLoadImage(dataUrl){
+  return await new Promise((resolve,reject)=>{
+    const i=new Image();i.onload=()=>resolve(i);i.onerror=()=>reject(new Error('Could not prepare card image.'));i.src=dataUrl;
+  });
+}
+async function scannerFocusedOcrImage(dataUrl){
+  const img=await scannerLoadImage(dataUrl);
+  const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
+
+  // Stack the title, attack/text area and collector-number/footer at higher scale.
+  // These are the most useful areas for identifying a trading card.
+  const regions=[
+    {x:.02,y:.00,w:.96,h:.23,scale:2.25},
+    {x:.03,y:.37,w:.94,h:.39,scale:1.55},
+    {x:.02,y:.72,w:.96,h:.28,scale:2.0}
+  ];
+  const widths=regions.map(r=>Math.round(w*r.w*r.scale));
+  const heights=regions.map(r=>Math.round(h*r.h*r.scale));
+  const canvas=document.createElement('canvas');
+  canvas.width=Math.min(2200,Math.max(...widths));
+  canvas.height=Math.min(3000,heights.reduce((a,b)=>a+b,0)+80);
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  let y=0;
+  regions.forEach((r,idx)=>{
+    const sx=Math.round(w*r.x),sy=Math.round(h*r.y),sw=Math.round(w*r.w),sh=Math.round(h*r.h);
+    const dw=Math.min(canvas.width,Math.round(sw*r.scale)),dh=Math.round(sh*r.scale);
+    ctx.drawImage(img,sx,sy,sw,sh,0,y,dw,dh);
+    y+=dh;
+    ctx.fillStyle='#fff';ctx.fillRect(0,y,canvas.width,24);y+=24;
+  });
+
+  const imageData=ctx.getImageData(0,0,canvas.width,Math.min(y,canvas.height));
+  const d=imageData.data;
+  for(let i=0;i<d.length;i+=4){
+    const gray=Math.round(d[i]*.299+d[i+1]*.587+d[i+2]*.114);
+    const c=Math.max(0,Math.min(255,Math.round((gray-128)*1.55+128)));
+    d[i]=d[i+1]=d[i+2]=c;
+  }
+  ctx.putImageData(imageData,0,0);
+  return canvas.toDataURL('image/jpeg',.94);
+}
+function scannerTitleTokens(text=''){
+  const stop=new Set(['basic','stage','trainer','energy','pokemon','ability','weakness','resistance','retreat','illus','illustration','common','uncommon','rare','holo','card']);
+  return likelyNameTokens(text)
+    .filter(t=>!stop.has(t.toLowerCase()))
+    .filter(t=>!/^(metal|colorless|fire|grass|water|psychic|darkness|lightning|fighting|dragon|fairy)$/i.test(t))
+    .slice(0,12);
+}
+async function pokemonScannerRawSearch(lucene,limit=40){
+  const url=`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(lucene)}&pageSize=${Math.min(50,limit)}&orderBy=-set.releaseDate`;
+  const r=await fetch(url);
+  if(!r.ok)throw new Error(`Pokémon live lookup returned ${r.status}`);
+  const d=await r.json();
+  return (d.data||[]).map(livePokemonCardFromApi);
+}
+function scannerAttackClues(text=''){
+  const normalized=normalizeOcrText(text);
+  const candidates=[];
+  const commonPairs=[
+    'Metal Claw','Iron Head','Tackle','Scratch','Bite','Ember','Water Gun','Thunder Shock',
+    'Quick Attack','Vine Whip','Razor Leaf','Psychic','Confusion','Headbutt','Take Down'
+  ];
+  for(const p of commonPairs)if(normalized.toLowerCase().includes(p.toLowerCase()))candidates.push(p);
+  const words=scannerTitleTokens(normalized);
+  for(let i=0;i<words.length-1;i++){
+    const pair=`${words[i]} ${words[i+1]}`;
+    if(pair.length>=7)candidates.push(pair);
+  }
+  for(const w of words)if(w.length>=4)candidates.push(w);
+  return [...new Set(candidates)].slice(0,10);
+}
+async function pokemonScannerCandidatesFromOcr(text='',numberHint=''){
+  const tokens=scannerTitleTokens(text);
+  const map=new Map();
+  let successfulCalls=0,lastError=null;
+
+  const add=cards=>{
+    for(const card of cards||[]){
+      const score=candidateScore(card,text,numberHint);
+      const prior=map.get(card.id);
+      if(!prior||score>prior.autoScore)map.set(card.id,{...card,autoScore:score});
+    }
+  };
+  const run=async q=>{
+    try{add(await pokemonScannerRawSearch(q,45));successfulCalls++;}
+    catch(e){lastError=e;}
+  };
+
+  // Collector number is often the best exact-printing clue.
+  if(numberHint)await run(`number:${numberHint}`);
+
+  // Try OCR words as names, plus tolerant prefix wildcards for OCR mistakes
+  // such as "Ferroseea" vs "Ferroseed".
+  for(const token of tokens.slice(0,6)){
+    if(token.length>=4)await run(`name:${token.replace(/[^A-Za-z0-9'-]/g,'')}`);
+    if(token.length>=5){
+      const prefix=token.replace(/[^A-Za-z]/g,'').slice(0,Math.min(5,token.length));
+      if(prefix.length>=4)await run(`name:${prefix}*`);
+    }
+    if(map.size>=12)break;
+  }
+
+  // If the card name was missed by OCR, attacks can still identify it.
+  if(map.size<6){
+    for(const clue of scannerAttackClues(text).slice(0,5)){
+      const safe=clue.replace(/"/g,'');
+      await run(clue.includes(' ')?`attacks.name:"${safe}"`:`attacks.name:${safe}`);
+      if(map.size>=12)break;
+    }
+  }
+
+  // HP + a readable attack is a useful fallback for modern Pokémon layouts.
+  const hp=extractLikelyHp(text);
+  if(map.size<4 && hp){
+    for(const clue of scannerAttackClues(text).slice(0,3)){
+      const safe=clue.replace(/"/g,'');
+      await run(`hp:${hp} attacks.name:${safe.includes(' ')?`"${safe}"`:safe}`);
+      if(map.size>=8)break;
+    }
+  }
+
+  if(!successfulCalls && lastError)throw lastError;
+  return [...map.values()].sort((a,b)=>b.autoScore-a.autoScore);
+}
+
 async function autoIdentifyFromPhoto(autoRun=false){
   if(!cameraPreview){toast('Take or choose a card photo first');return;}
   if(scannerOcrBusy)return;
-  scannerOcrBusy=true;scannerOcrText='';scannerOcrConfidence=null;scannerAutoCandidates=[];scannerBestMatch=null;renderTools();
+
+  scannerOcrBusy=true;
+  scannerOcrText='';scannerOcrConfidence=null;scannerAutoCandidates=[];scannerBestMatch=null;
+  renderTools();
+
   try{
-    toast(autoRun?'Scanning card and retrieving live value…':'Reading card text…');
-    const T=await loadTesseract(),ocrImage=await scannerOcrImage(cameraPreview);
-    const result=await T.recognize(ocrImage,'eng',{logger:m=>{if(m?.status==='recognizing text'&&typeof m.progress==='number'){const el=$('ocrProgressText');if(el)el.textContent=`Reading card… ${Math.round(m.progress*100)}%`;}}});
-    scannerOcrText=normalizeOcrText(result?.data?.text||'');const conf=Number(result?.data?.confidence);scannerOcrConfidence=Number.isFinite(conf)?conf:null;
-    if(!scannerOcrText)throw new Error('No readable text found. Retake closer with less glare.');
-    const numberHint=extractLikelyCardNumber(scannerOcrText),tokens=likelyNameTokens(scannerOcrText),queries=[];
-    if(numberHint)queries.push(numberHint);for(const t of tokens.slice(0,6))queries.push(t);
-    if(!queries.length)throw new Error('Not enough identifying text was readable.');
-    const candidateMap=new Map();
-    for(const q of queries.slice(0,7)){
-      try{
-        const cards=await universalSearchCards(scannerGame,q,30);
-        for(const card of cards){const score=candidateScore(card,scannerOcrText,numberHint),prior=candidateMap.get(card.id);if(!prior||score>prior.autoScore)candidateMap.set(card.id,{...card,autoScore:score});}
-      }catch{}
+    toast(autoRun?'Reading the card and checking live value…':'Reading card…');
+    const T=await loadTesseract();
+    const focused=await scannerFocusedOcrImage(cameraPreview);
+
+    const result=await T.recognize(focused,'eng',{logger:m=>{
+      if(m?.status==='recognizing text'&&typeof m.progress==='number'){
+        const el=$('ocrProgressText');
+        if(el)el.textContent=`Reading card… ${Math.round(m.progress*100)}%`;
+      }
+    }});
+
+    const raw=result?.data?.text||'';
+    scannerOcrText=normalizeOcrText(raw);
+    const conf=Number(result?.data?.confidence);
+    scannerOcrConfidence=Number.isFinite(conf)?conf:null;
+
+    if(!scannerOcrText)throw new Error('No readable card text was found. Fill the card guide and reduce glare.');
+
+    const numberHint=extractLikelyCardNumber(scannerOcrText);
+    let ranked=[];
+
+    if(scannerGame==='Pokemon'){
+      ranked=await pokemonScannerCandidatesFromOcr(scannerOcrText,numberHint);
+    }else{
+      const tokens=scannerTitleTokens(scannerOcrText);
+      const candidateMap=new Map();
+      const queries=[];if(numberHint)queries.push(numberHint);queries.push(...tokens.slice(0,7));
+      for(const q of queries){
+        try{
+          const cards=await universalSearchCards(scannerGame,q,30);
+          for(const card of cards){
+            const score=candidateScore(card,scannerOcrText,numberHint);
+            const prior=candidateMap.get(card.id);
+            if(!prior||score>prior.autoScore)candidateMap.set(card.id,{...card,autoScore:score});
+          }
+        }catch{}
+      }
+      ranked=[...candidateMap.values()].sort((a,b)=>b.autoScore-a.autoScore);
     }
-    let ranked=[...candidateMap.values()].sort((a,b)=>b.autoScore-a.autoScore).slice(0,10);
-    if(!ranked.length)throw new Error(`No ${scannerGame} match was found. Try Manual Identify or retake the photo.`);
-    const refreshed=[];for(const c of ranked.slice(0,5))refreshed.push(await refreshScannerCandidate(c));
-    ranked=[...refreshed,...ranked.slice(5)].sort((a,b)=>b.autoScore-a.autoScore);
-    scannerAutoCandidates=ranked;scannerSearchResults=ranked;scannerBestMatch=ranked[0]||null;ranked.forEach(c=>captureCardPrice(c,'Scanner live-value lookup'));scannerLastMarketLookupAt=new Date().toISOString();saveState();
-    if(scannerBestMatch){const v=Number(scannerBestMatch.market);toast(Number.isFinite(v)?`Best match: ${scannerBestMatch.name} • ${money(v)} market reference`:`Best match: ${scannerBestMatch.name} • value unavailable`);}
-  }catch(e){scannerAutoCandidates=[];scannerSearchResults=[];scannerBestMatch=null;toast(e.message||'Card scan failed')}
-  finally{scannerOcrBusy=false;renderTools();}
+
+    ranked=ranked.slice(0,12);
+    if(!ranked.length)throw new Error(`I read the photo but could not match a ${scannerGame} printing. Fill more of the card guide and try again.`);
+
+    const refreshed=[];
+    for(const c of ranked.slice(0,5))refreshed.push(await refreshScannerCandidate(c));
+    ranked=[...refreshed,...ranked.slice(5)]
+      .map(c=>({...c,autoScore:c.autoScore??candidateScore(c,scannerOcrText,numberHint)}))
+      .sort((a,b)=>b.autoScore-a.autoScore);
+
+    scannerAutoCandidates=ranked;
+    scannerSearchResults=ranked;
+    scannerBestMatch=ranked[0]||null;
+    ranked.forEach(c=>captureCardPrice(c,'Scanner live-value lookup'));
+    scannerLastMarketLookupAt=new Date().toISOString();
+    saveState();
+
+    if(scannerBestMatch){
+      const v=Number(scannerBestMatch.market);
+      toast(Number.isFinite(v)
+        ?`Found ${scannerBestMatch.name} • ${money(v)} market reference`
+        :`Found ${scannerBestMatch.name} • exact provider value unavailable`);
+    }
+  }catch(e){
+    scannerAutoCandidates=[];scannerSearchResults=[];scannerBestMatch=null;
+    toast(e.message||'Card scan failed');
+  }finally{
+    scannerOcrBusy=false;
+    renderTools();
+  }
 }
 function autoConfidenceLabel(card){
   const s=Number(card.autoScore)||0;
@@ -4347,7 +4598,7 @@ function renderScannerTool(){
     <div class="scanner-game-tabs scanner-game-tabs-top">${Object.keys(LIVE_CARD_PROVIDERS).map(g=>`<button class="${scannerGame===g?'active':''}" onclick='setScannerGame(${JSON.stringify(g)})'>${esc(g)}</button>`).join('')}</div>
     ${activeRip?`<div class="notice good"><span>✦</span><span>Active Rip Session: <b>${esc(activeRip.name)}</b>.</span></div>`:''}
     <div class="scanner-workspace scanner-camera-workspace"><div>
-      <div class="scanbox scanner-camera-box">${cameraPreview?`<img src="${cameraPreview}" alt="Card preview">`:`<span class="camera-glyph">◉</span><b>Center one card in the frame</b><span>Use even light • avoid glare • keep card name and collector number readable</span>`}</div>
+      <div class="scanbox scanner-camera-box">${cameraPreview?`<img src="${cameraPreview}" alt="Card preview">`:`<span class="camera-glyph">◉</span><b>Fill the card outline when taking the photo</b><span>Use even light • avoid glare • keep card name and collector number readable</span>`}</div>
       <div class="scanner-camera-actions"><button class="btn primary camera-main-btn" onclick="openScannerCamera('camera')" ${scannerPhotoBusy||scannerOcrBusy?'disabled':''}>📷 TAKE CARD PHOTO</button><button class="btn" onclick="openScannerCamera('gallery')" ${scannerPhotoBusy||scannerOcrBusy?'disabled':''}>▧ Gallery</button>${cameraPreview?`<button class="btn auto-btn" onclick="autoIdentifyFromPhoto(false)" ${scannerOcrBusy?'disabled':''}>${scannerOcrBusy?'Reading…':'✦ Identify & live value'}</button><button class="btn" onclick="clearScannerPhoto()">Clear</button>`:''}</div>
       <div class="scanner-auto-note"><span>✓</span><span>A photo automatically starts identification. You still confirm the exact printing before adding it.</span></div>${scannerOcrBusy?`<div class="ocr-progress"><i></i><span id="ocrProgressText">Reading card…</span></div>`:''}
     </div><div>

@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault v7.2.1 \u2014 Android camera permission-flow hotfix. Keeps the scanner camera open while the OS permission dialog is shown.",
+  "description": "2GEN Vault v7.3 \u2014 card-guide cropping, focused OCR, fuzzy Pok\u00e9mon name matching, collector-number and attack matching, and live-provider value refresh.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

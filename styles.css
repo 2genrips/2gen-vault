@@ -971,3 +971,25 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   .scanner-camera-controls .btn{padding:8px 6px;font-size:8px}
   .scanner-card-guide{inset:8% 8%}
 }
+
+
+/* v7.3 — card-shaped capture guide + recognition feedback */
+.scanner-card-guide{
+  inset:auto!important;
+  width:min(76%,430px);
+  aspect-ratio:2.5/3.5;
+  height:auto;
+  left:50%;
+  top:50%;
+  transform:translate(-50%,-50%);
+  border-radius:18px;
+}
+.scanner-camera-tips{font-weight:650}
+.scanner-best-value:before{
+  content:"LIVE PROVIDER MATCH";
+  display:block;
+  font-size:5.5px;
+  letter-spacing:.1em;
+  color:#83e8c4;
+  margin-bottom:5px;
+}

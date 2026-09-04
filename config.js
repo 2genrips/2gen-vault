@@ -44,5 +44,5 @@ window.TWOGEN_CONFIG = {
   inventoryApiBase: "https://2gen-vault-inventory.willingpaige.workers.dev",
   supabaseUrl: "",
   supabaseAnonKey: "",
-  appVersion: "7.2.1"
+  appVersion: "7.3.0"
 };
