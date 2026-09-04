@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault v7.5 \u2014 Scanner Command Center with correctly centered card frame, camera zoom/torch controls, PriceCharting-first pricing matrix, scan history and scan-another workflow.",
+  "description": "2GEN Vault v7.5.1 \u2014 Android scanner frame centering hotfix with CSS cache bust.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

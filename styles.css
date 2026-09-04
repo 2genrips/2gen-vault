@@ -975,7 +975,6 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
 
 /* v7.3 — card-shaped capture guide + recognition feedback */
 .scanner-card-guide{
-  inset:auto!important;
   width:min(76%,430px);
   aspect-ratio:2.5/3.5;
   height:auto;
@@ -1033,7 +1032,6 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   top:50%!important;
   right:auto!important;
   bottom:auto!important;
-  inset:auto!important;
   width:min(72vw,390px)!important;
   height:auto!important;
   aspect-ratio:2.5/3.5!important;
@@ -1093,4 +1091,27 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   .scanner-camera-toolrow{grid-template-columns:1fr 1fr}
   .scanner-camera-toolrow>span{grid-column:1/-1;grid-row:1}
   .scanner-source-grid{grid-template-columns:1fr}
+}
+
+
+/* v7.5.1 — FINAL Android centering override
+   Do NOT use inset shorthand here; it resets left/top. */
+html body #scannerCameraModal .scanner-camera-shell .scanner-live-stage .scanner-card-guide{
+  position:absolute!important;
+  left:50%!important;
+  top:50%!important;
+  right:auto!important;
+  bottom:auto!important;
+  transform:translate(-50%,-50%)!important;
+  margin:0!important;
+  width:min(76vw,360px)!important;
+  height:auto!important;
+  max-height:68vh!important;
+  aspect-ratio:2.5/3.5!important;
+  box-sizing:border-box!important;
+}
+html body #scannerCameraModal .scanner-camera-shell .scanner-live-stage .scanner-card-guide>b{
+  left:50%!important;
+  right:auto!important;
+  transform:translateX(-50%)!important;
 }
