@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault by 2GEN RIPS \u2014 Collector OS with Market Pulse live price snapshots, Auto Identify Beta, Smart Scanner, Dashboard Pro, Rip Sessions and Stock Finder.",
+  "description": "2GEN Vault by 2GEN RIPS \u2014 Collector OS with Trade Lab, Market Pulse, Auto Identify Beta, Smart Scanner, Dashboard Pro, Rip Sessions and Stock Finder.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

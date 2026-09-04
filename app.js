@@ -94,6 +94,10 @@ let scannerAutoCandidates = [];
 let scannerLastMarketLookupAt = null;
 let marketRefreshBusy = false;
 let marketSelectedCardId = null;
+let tradeGiveDraft = [];
+let tradeReceiveDraft = [];
+let tradeSearchResults = [];
+let tradeSearchBusy = false;
 let toastTimer;
 
 function $(id){ return document.getElementById(id); }
@@ -682,6 +686,7 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('rips')"><span class="big-icon">✦</span><b>Rip sessions</b><span>Track openings, pulls, value, hits, ROI and set progress.</span></button>
         <button class="quick-card" onclick="openTool('analytics')"><span class="big-icon">⌁</span><b>Dashboard Pro</b><span>Growth, spending, allocation, positions, sets and rip performance.</span></button>
         <button class="quick-card" onclick="openTool('market')"><span class="big-icon">↗</span><b>Market Pulse</b><span>Refresh live card pricing, track snapshots and watch price targets.</span></button>
+        <button class="quick-card" onclick="openTool('trades')"><span class="big-icon">⇄</span><b>Trade Lab</b><span>Build deals from your Vault and wishlist with reference-value balancing.</span></button>
       </div>
     </div>
 
@@ -1780,7 +1785,7 @@ function renderTools(){
       ${toolButton('stockreport','◎','Stock report','Log store inventory')}
       ${toolButton('budget','$','Budget','Spending & purchases')}
       ${toolButton('grading','◇','Grading','Submission tracker')}
-      ${toolButton('trades','⇄','Trades','Trade history')}
+      ${toolButton('trades','⇄','Trade Lab','Fair-trade builder')}
       ${toolButton('alerts','!','Alerts','Price targets')}
       ${toolButton('account','☁','Account','Cloud sync & profile')}
       ${toolButton('settings','⚙','Settings','Backup & integrations')}
@@ -2881,13 +2886,332 @@ function advanceGrading(id){
   const g=state.grading.find(x=>x.uid===id);if(!g)return;const statuses=['Preparing','Submitted','Received','Grading','Shipped back','Complete'];const v=prompt('Status:',g.status);if(v===null)return;g.status=v;saveState();renderTools()
 }
 function removeGrading(id){state.grading=state.grading.filter(x=>x.uid!==id);saveState();renderTools()}
+
+function tradeDraftValue(items){
+  return (items||[]).reduce((n,i)=>n+(Number(i.valueEach)||0)*(Number(i.qty)||0),0);
+}
+function tradeItemLabel(i){
+  return i.label || i.card?.name || 'Trade item';
+}
+function tradeAnalysis(){
+  const out=tradeDraftValue(tradeGiveDraft);
+  const incoming=tradeDraftValue(tradeReceiveDraft);
+  const delta=incoming-out;
+  const base=Math.max(out,incoming,1);
+  const differencePct=Math.abs(delta)/base*100;
+  const fairness=Math.max(0,100-differencePct);
+  const label=differencePct<=5?'Balanced':differencePct<=12?'Close':differencePct<=22?'Review':'Wide gap';
+  const need=Math.abs(delta);
+  const weaker=delta>0?'You are receiving more':delta<0?'You are giving more':'Even';
+  return {out,incoming,delta,differencePct,fairness,label,need,weaker};
+}
+function tradeItemMarketFreshness(i){
+  if(!i.card?.id) return '';
+  const h=priceHistoryFor(i.card.id);
+  const last=h[h.length-1];
+  return last?.ts ? ` • price ${humanAge(last.ts)}` : '';
+}
+function ownedTradeOptions(){
+  const rows=[];
+  for(const i of state.collection||[]){
+    rows.push({
+      type:'collection',
+      sourceId:i.uid,
+      label:`${i.card?.name} • ${i.card?.set||''} • ${i.format||'Raw'} • owned ${i.qty}`,
+      valueEach:Number(i.card?.market)||0
+    });
+  }
+  for(const i of state.sealed||[]){
+    rows.push({
+      type:'sealed',
+      sourceId:i.uid,
+      label:`${i.name} • Sealed • owned ${i.qty}`,
+      valueEach:Number(i.current)||0
+    });
+  }
+  return rows;
+}
+function addOwnedTradeItem(){
+  const select=$('tradeOwnedSelect');
+  if(!select?.value){toast('Choose something from your Vault');return;}
+  const [type,id]=select.value.split('|');
+  const qty=Math.max(1,Number($('tradeOwnedQty')?.value)||1);
+
+  if(type==='collection'){
+    const src=state.collection.find(x=>x.uid===id);if(!src)return;
+    const allowed=Math.min(qty,Number(src.qty)||1);
+    tradeGiveDraft.push({
+      uid:uid(),source:'collection',sourceId:src.uid,card:src.card,
+      label:src.card?.name||'Card',qty:allowed,valueEach:Number(src.card?.market)||0,
+      format:src.format||'Raw',condition:src.condition||'Near Mint'
+    });
+  }else if(type==='sealed'){
+    const src=state.sealed.find(x=>x.uid===id);if(!src)return;
+    const allowed=Math.min(qty,Number(src.qty)||1);
+    tradeGiveDraft.push({
+      uid:uid(),source:'sealed',sourceId:src.uid,
+      label:src.name,game:src.game,qty:allowed,valueEach:Number(src.current)||0
+    });
+  }
+  renderTools();toast('Added to your side');
+}
+function addWishlistTradeItem(id){
+  const w=state.wishlist.find(x=>x.uid===id);if(!w)return;
+  tradeReceiveDraft.push({
+    uid:uid(),source:'wishlist',sourceId:w.uid,card:w.card,
+    label:w.card?.name||'Card',qty:1,valueEach:Number(w.card?.market)||0
+  });
+  renderTools();toast('Wishlist card added');
+}
+function addDuplicateTradeItem(collectionUid){
+  const src=state.collection.find(x=>x.uid===collectionUid);if(!src)return;
+  const already=tradeGiveDraft.filter(x=>x.source==='collection'&&x.sourceId===src.uid).reduce((n,x)=>n+(Number(x.qty)||0),0);
+  const extras=Math.max(0,(Number(src.qty)||0)-1-already);
+  if(extras<=0){toast('No extra copy left to add');return;}
+  tradeGiveDraft.push({
+    uid:uid(),source:'collection',sourceId:src.uid,card:src.card,
+    label:src.card?.name||'Card',qty:1,valueEach:Number(src.card?.market)||0,
+    format:src.format||'Raw',condition:src.condition||'Near Mint'
+  });
+  renderTools();toast('Duplicate added to trade');
+}
+function addManualTradeItem(side){
+  const label=(prompt(side==='give'?'What are you giving?':'What are you receiving?','')||'').trim();
+  if(!label)return;
+  const qty=Math.max(1,Number(prompt('Quantity','1'))||1);
+  const valueEach=Math.max(0,Number(prompt('Reference value EACH','0'))||0);
+  const item={uid:uid(),source:'manual',label,qty,valueEach};
+  (side==='give'?tradeGiveDraft:tradeReceiveDraft).push(item);
+  renderTools();
+}
+function addCashAdjustment(side){
+  const amount=Math.max(0,Number(prompt(side==='give'?'Cash you are adding':'Cash they are adding','0'))||0);
+  if(!amount)return;
+  const item={uid:uid(),source:'cash',label:'Cash adjustment',qty:1,valueEach:amount};
+  (side==='give'?tradeGiveDraft:tradeReceiveDraft).push(item);
+  renderTools();
+}
+function removeTradeDraftItem(side,id){
+  if(side==='give') tradeGiveDraft=tradeGiveDraft.filter(x=>x.uid!==id);
+  else tradeReceiveDraft=tradeReceiveDraft.filter(x=>x.uid!==id);
+  renderTools();
+}
+function changeTradeDraftQty(side,id){
+  const arr=side==='give'?tradeGiveDraft:tradeReceiveDraft;
+  const item=arr.find(x=>x.uid===id);if(!item)return;
+  const q=prompt('Quantity',String(item.qty||1));if(q===null)return;
+  item.qty=Math.max(1,Number(q)||1);
+  renderTools();
+}
+function changeTradeDraftValue(side,id){
+  const arr=side==='give'?tradeGiveDraft:tradeReceiveDraft;
+  const item=arr.find(x=>x.uid===id);if(!item)return;
+  const v=prompt('Reference value EACH',String(item.valueEach||0));if(v===null)return;
+  item.valueEach=Math.max(0,Number(v)||0);
+  renderTools();
+}
+function clearTradeBuilder(){
+  if((tradeGiveDraft.length||tradeReceiveDraft.length) && !confirm('Clear the current trade builder?')) return;
+  tradeGiveDraft=[];tradeReceiveDraft=[];tradeSearchResults=[];renderTools();
+}
+async function tradeCardSearch(e){
+  e.preventDefault();
+  const q=$('tradeSearchQ')?.value.trim()||'';
+  if(!q){toast('Enter a card name');return;}
+  tradeSearchBusy=true;renderTools();
+  try{
+    const safe=q.replace(/"/g,'');
+    const r=await fetch(`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(`name:"${safe}"`)}&pageSize=20&orderBy=-set.releaseDate`);
+    if(!r.ok) throw new Error(`Card API returned ${r.status}`);
+    const d=await r.json();
+    tradeSearchResults=(d.data||[]).map(livePokemonCardFromApi);
+    tradeSearchResults.forEach(c=>captureCardPrice(c,'Trade Lab search'));
+    saveState();
+    toast(`${tradeSearchResults.length} trade matches`);
+  }catch(e){
+    tradeSearchResults=[];toast(e.message||'Trade search failed');
+  }finally{
+    tradeSearchBusy=false;renderTools();
+  }
+}
+function addTradeSearchResult(card){
+  tradeReceiveDraft.push({
+    uid:uid(),source:'live',card,label:card.name,qty:1,valueEach:Number(card.market)||0
+  });
+  renderTools();toast('Added to receive side');
+}
+function renderTradeDraftItem(item,side){
+  return `<div class="trade-draft-item">
+    ${item.card?cardArt(item.card):`<div class="trade-cash-icon">${item.source==='cash'?'$':'⇄'}</div>`}
+    <div class="grow">
+      <strong>${esc(tradeItemLabel(item))}</strong>
+      <span>${item.card?`${esc(item.card.set||'')} • ${esc(item.card.number||'')}`:esc(item.source==='cash'?'Cash adjustment':'Manual item')}${tradeItemMarketFreshness(item)}</span>
+      <div class="trade-item-meta"><span>Qty ${item.qty}</span><span>${money(Number(item.valueEach))} ea.</span><span>${money((Number(item.valueEach)||0)*(Number(item.qty)||0))} total</span></div>
+    </div>
+    <div class="right">
+      <button class="link-btn" onclick="changeTradeDraftQty('${side}','${item.uid}')">Qty</button>
+      <button class="link-btn" onclick="changeTradeDraftValue('${side}','${item.uid}')">Value</button>
+      <button class="remove" onclick="removeTradeDraftItem('${side}','${item.uid}')">Remove</button>
+    </div>
+  </div>`;
+}
+function tradeSummaryText(){
+  const a=tradeAnalysis();
+  const give=tradeGiveDraft.map(i=>`${i.qty}x ${tradeItemLabel(i)} (${money((Number(i.valueEach)||0)*(Number(i.qty)||0))})`).join(', ')||'Nothing';
+  const receive=tradeReceiveDraft.map(i=>`${i.qty}x ${tradeItemLabel(i)} (${money((Number(i.valueEach)||0)*(Number(i.qty)||0))})`).join(', ')||'Nothing';
+  return `2GEN Vault Trade Check\nYou give: ${give}\nValue out: ${money(a.out)}\nYou receive: ${receive}\nValue in: ${money(a.incoming)}\nDifference: ${a.delta>=0?'+':''}${money(a.delta)}\nReference balance: ${a.label} (${a.fairness.toFixed(1)}%)\n\nValues are market references and may vary by condition, exact printing, grade and marketplace.`;
+}
+async function copyTradeSummary(){
+  const text=tradeSummaryText();
+  try{
+    await navigator.clipboard.writeText(text);
+    toast('Trade summary copied');
+  }catch{
+    prompt('Copy this trade summary:',text);
+  }
+}
+function applyTradeToVault(){
+  // Remove outgoing linked inventory.
+  for(const item of tradeGiveDraft){
+    if(item.source==='collection'){
+      const src=state.collection.find(x=>x.uid===item.sourceId);
+      if(src){
+        src.qty=Math.max(0,(Number(src.qty)||0)-(Number(item.qty)||0));
+      }
+    }else if(item.source==='sealed'){
+      const src=state.sealed.find(x=>x.uid===item.sourceId);
+      if(src){
+        src.qty=Math.max(0,(Number(src.qty)||0)-(Number(item.qty)||0));
+      }
+    }
+  }
+  state.collection=state.collection.filter(x=>(Number(x.qty)||0)>0);
+  state.sealed=state.sealed.filter(x=>(Number(x.qty)||0)>0);
+
+  // Add incoming cards when we have a real card object.
+  for(const item of tradeReceiveDraft){
+    if(!item.card) continue;
+    const binder=state.scannerSettings?.preferredBinder||binderNames()[0]||'Main Binder';
+    const existing=state.collection.find(x=>x.card?.id===item.card.id&&(x.format||'Raw')==='Raw'&&x.location===binder&&x.condition==='Near Mint');
+    if(existing){
+      existing.qty=(Number(existing.qty)||0)+(Number(item.qty)||0);
+    }else{
+      state.collection.unshift({
+        uid:uid(),card:item.card,qty:Number(item.qty)||1,condition:'Near Mint',
+        cost:Number(item.valueEach)||0,location:binder,format:'Raw',
+        grader:'',grade:'',cert:'',language:'English',variant:'Standard'
+      });
+    }
+    state.wishlist=state.wishlist.filter(w=>w.card?.id!==item.card.id);
+  }
+}
+function saveTradeProposal(status='Proposed'){
+  if(!tradeGiveDraft.length && !tradeReceiveDraft.length){toast('Build a trade first');return;}
+  const partner=$('tradePartnerPro')?.value.trim()||'';
+  const date=$('tradeDatePro')?.value||todayInput();
+  const notes=$('tradeNotesPro')?.value.trim()||'';
+  const a=tradeAnalysis();
+
+  if(status==='Completed'){
+    if(!confirm('Complete this trade and update your Vault inventory?'))return;
+    applyTradeToVault();
+  }
+
+  state.trades.unshift({
+    uid:uid(),partner,date,status,notes,
+    giveItems:structuredClone(tradeGiveDraft),
+    receiveItems:structuredClone(tradeReceiveDraft),
+    give:tradeGiveDraft.map(i=>`${i.qty}x ${tradeItemLabel(i)}`).join(', '),
+    receive:tradeReceiveDraft.map(i=>`${i.qty}x ${tradeItemLabel(i)}`).join(', '),
+    valueOut:a.out,valueIn:a.incoming,
+    fairness:a.fairness,createdAt:new Date().toISOString()
+  });
+
+  tradeGiveDraft=[];tradeReceiveDraft=[];tradeSearchResults=[];
+  saveState();renderTools();toast(status==='Completed'?'Trade completed and Vault updated':'Trade proposal saved');
+}
+function renderTradeHistoryRow(t){
+  const status=t.status||'Completed';
+  const fairness=Number.isFinite(Number(t.fairness))?Number(t.fairness):null;
+  return `<div class="trade-history-row">
+    <div class="trade-cash-icon">⇄</div>
+    <div class="grow">
+      <strong>${esc(t.partner||'Trade')} <span class="trade-status ${status.toLowerCase()}">${esc(status)}</span></strong>
+      <span>Gave: ${esc(t.give||'—')} • Got: ${esc(t.receive||'—')} • ${esc(t.date||'')}</span>
+      ${t.notes?`<span>${esc(t.notes)}</span>`:''}
+    </div>
+    <div class="right">
+      <strong class="${Number(t.valueIn)>=Number(t.valueOut)?'good':'bad'}">${Number(t.valueIn)>=Number(t.valueOut)?'+':''}${money((Number(t.valueIn)||0)-(Number(t.valueOut)||0))}</strong>
+      ${fairness!==null?`<small>${fairness.toFixed(1)}% balance</small>`:''}
+      <button class="remove" onclick="removeTrade('${t.uid}')">Delete</button>
+    </div>
+  </div>`;
+}
+
 function renderTradesTool(){
-  return `<div class="panel"><div class="section-head"><div><h2>Trade journal</h2><p>Track what you gave up versus what you received.</p></div></div><div class="form-grid"><label class="field"><span>Trade partner</span><input id="tradePartner" placeholder="Name / handle"></label><label class="field"><span>Date</span><input id="tradeDate" type="date" value="${todayInput()}"></label><label class="field full"><span>You gave</span><input id="tradeGive" placeholder="Cards / products"></label><label class="field full"><span>You received</span><input id="tradeReceive" placeholder="Cards / products"></label><label class="field"><span>Value out</span><input id="tradeOut" type="number" step=".01" min="0"></label><label class="field"><span>Value in</span><input id="tradeIn" type="number" step=".01" min="0"></label></div><button class="btn primary" style="margin-top:10px" onclick="addTrade()">＋ Log trade</button></div>
-  <div class="panel">${state.trades.length?state.trades.map(t=>`<div class="compact-row"><div class="thumb square"><b>⇄</b></div><div class="grow"><strong>${esc(t.partner||'Trade')}</strong><span>Gave: ${esc(t.give)} • Got: ${esc(t.receive)} • ${esc(t.date)}</span></div><div class="right"><strong class="${t.valueIn>=t.valueOut?'good':'bad'}">${money(t.valueIn-t.valueOut)}</strong><button class="remove" onclick="removeTrade('${t.uid}')">Delete</button></div></div>`).join(''):`<div class="empty">No trades logged yet.</div>`}</div>`;
+  const a=tradeAnalysis();
+  const owned=ownedTradeOptions();
+  const duplicates=state.collection.filter(i=>(Number(i.qty)||0)>1).slice(0,10);
+  return `<div class="panel trade-lab-hero">
+    <div class="section-head"><div><div class="eyebrow">2GEN TRADE LAB</div><h2>Fair-trade builder</h2><p>Build both sides from your Vault, wishlist or live card data, then compare reference values before making a deal.</p></div><button class="btn" onclick="clearTradeBuilder()">Clear builder</button></div>
+
+    <div class="trade-score-grid">
+      <div class="trade-value-card"><span>You give</span><strong>${money(a.out)}</strong><small>${tradeGiveDraft.reduce((n,i)=>n+(Number(i.qty)||0),0)} item${tradeGiveDraft.reduce((n,i)=>n+(Number(i.qty)||0),0)===1?'':'s'}</small></div>
+      <div class="trade-fairness ${a.fairness>=95?'balanced':a.fairness>=85?'close':'review'}"><span>Reference balance</span><strong>${a.fairness.toFixed(1)}%</strong><b>${esc(a.label)}</b></div>
+      <div class="trade-value-card"><span>You receive</span><strong>${money(a.incoming)}</strong><small>${tradeReceiveDraft.reduce((n,i)=>n+(Number(i.qty)||0),0)} item${tradeReceiveDraft.reduce((n,i)=>n+(Number(i.qty)||0),0)===1?'':'s'}</small></div>
+    </div>
+
+    <div class="trade-balance-note ${a.delta>=0?'good-side':'give-side'}">
+      <b>${esc(a.weaker)}</b>
+      <span>${a.need?`${money(a.need)} reference-value difference.`:'Both sides are even at the current entered values.'}</span>
+    </div>
+
+    <div class="notice warn" style="margin-top:10px"><span>!</span><span>Trade Lab compares <b>reference market values</b>. Condition, grading, exact variant, liquidity, fees and what each collector actually wants can make a perfectly reasonable trade differ from the numbers.</span></div>
+  </div>
+
+  <div class="trade-builder-grid">
+    <div class="panel">
+      <div class="section-head"><div><h2>Your side</h2><p>Add cards or sealed products you own.</p></div><div class="action-row"><button class="btn" onclick="addManualTradeItem('give')">＋ Manual</button><button class="btn" onclick="addCashAdjustment('give')">$ Cash</button></div></div>
+      ${owned.length?`<div class="trade-add-row"><select id="tradeOwnedSelect">${owned.map(o=>`<option value="${esc(o.type+'|'+o.sourceId)}">${esc(o.label)} • ${money(o.valueEach)}</option>`).join('')}</select><input id="tradeOwnedQty" type="number" min="1" value="1"><button class="btn primary" onclick="addOwnedTradeItem()">Add</button></div>`:`<div class="empty">No cards or sealed products in your Vault yet.</div>`}
+      <div class="trade-draft-list">${tradeGiveDraft.length?tradeGiveDraft.map(i=>renderTradeDraftItem(i,'give')).join(''):`<div class="empty">Nothing on your side yet.</div>`}</div>
+
+      ${duplicates.length?`<div class="subpanel" style="margin-top:10px"><div class="section-head"><div><h2>Duplicate suggestions</h2><p>Extra copies that may be easier to trade.</p></div></div>${duplicates.map(i=>`<div class="compact-row">${cardArt(i.card)}<div class="grow"><strong>${esc(i.card.name)}</strong><span>${esc(i.card.set)} • ${i.qty} owned • ${money(Number(i.card.market))} ea.</span></div><button class="btn" onclick="addDuplicateTradeItem('${i.uid}')">Add extra</button></div>`).join('')}</div>`:''}
+    </div>
+
+    <div class="panel">
+      <div class="section-head"><div><h2>Their side</h2><p>Add wishlist cards, search live cards, or enter another item manually.</p></div><div class="action-row"><button class="btn" onclick="addManualTradeItem('receive')">＋ Manual</button><button class="btn" onclick="addCashAdjustment('receive')">$ Cash</button></div></div>
+
+      ${state.wishlist.length?`<div class="subpanel wishlist-trade-box"><div class="eyebrow">YOUR WISHLIST</div>${state.wishlist.slice(0,8).map(w=>`<div class="compact-row">${cardArt(w.card)}<div class="grow"><strong>${esc(w.card.name)}</strong><span>${esc(w.card.set)} • ${money(Number(w.card.market))}</span></div><button class="btn" onclick="addWishlistTradeItem('${w.uid}')">Add</button></div>`).join('')}</div>`:''}
+
+      <form class="searchbar" onsubmit="tradeCardSearch(event)" style="margin-top:10px"><span>⌕</span><input id="tradeSearchQ" placeholder="Search a Pokémon card to receive"><button class="btn primary" ${tradeSearchBusy?'disabled':''}>${tradeSearchBusy?'Searching…':'Search'}</button></form>
+      ${tradeSearchResults.length?`<div class="trade-search-results">${tradeSearchResults.slice(0,8).map(c=>`<div class="compact-row">${cardArt(c)}<div class="grow"><strong>${esc(c.name)}</strong><span>${esc(c.set)} • ${esc(c.number||'')} • ${money(Number(c.market))}</span></div><button class="btn primary" onclick='addTradeSearchResult(${JSON.stringify(c).replace(/'/g,"&#39;")})'>Add</button></div>`).join('')}</div>`:''}
+
+      <div class="trade-draft-list">${tradeReceiveDraft.length?tradeReceiveDraft.map(i=>renderTradeDraftItem(i,'receive')).join(''):`<div class="empty">Nothing on their side yet.</div>`}</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>Deal details</h2><p>Save a proposal first, or complete the deal and update your Vault automatically.</p></div></div>
+    <div class="form-grid">
+      <label class="field"><span>Trade partner</span><input id="tradePartnerPro" placeholder="Name / handle"></label>
+      <label class="field"><span>Date</span><input id="tradeDatePro" type="date" value="${todayInput()}"></label>
+      <label class="field full"><span>Notes</span><textarea id="tradeNotesPro" placeholder="Condition notes, meetup, shipping, cash difference..."></textarea></label>
+    </div>
+    <div class="action-row" style="margin-top:10px">
+      <button class="btn" onclick="copyTradeSummary()">Copy summary</button>
+      <button class="btn" onclick="saveTradeProposal('Proposed')">Save proposal</button>
+      <button class="btn primary" onclick="saveTradeProposal('Completed')">✓ Complete + update Vault</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>Trade history</h2><p>Completed deals and saved proposals.</p></div></div>
+    ${state.trades.length?state.trades.map(renderTradeHistoryRow).join(''):`<div class="empty">No trades logged yet.</div>`}
+  </div>`;
 }
 function addTrade(){
-  const give=$('tradeGive')?.value.trim(),receive=$('tradeReceive')?.value.trim();if(!give||!receive){toast('Enter both sides of the trade');return;}
-  state.trades.unshift({uid:uid(),partner:$('tradePartner')?.value.trim()||'',date:$('tradeDate')?.value||todayInput(),give,receive,valueOut:Number($('tradeOut')?.value)||0,valueIn:Number($('tradeIn')?.value)||0});saveState();renderTools()
+  // Compatibility wrapper for older UI or imported backups.
+  saveTradeProposal('Completed');
 }
 function removeTrade(id){state.trades=state.trades.filter(x=>x.uid!==id);saveState();renderTools()}
 function renderAlertsTool(){
@@ -2925,7 +3249,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 

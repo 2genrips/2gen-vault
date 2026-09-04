@@ -1,4 +1,4 @@
-# 2GEN Vault — Market Pulse v1.4 (GitHub Pages)
+# 2GEN Vault — Trade Lab v1.5 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -509,3 +509,66 @@ Bulk Vault refresh intentionally checks supported cards one at a time with light
 ### Accuracy
 Market values are reference fields from the connected card-data source when available.
 They are not guaranteed sale values and can differ by exact printing, condition, grading, marketplace, fees and buyer demand.
+
+
+## New in v1.5 — 2GEN Trade Lab
+
+Trade Lab replaces the basic trade journal with a real deal-building workflow.
+
+### Build your side
+Add directly from:
+- raw/graded cards in your Vault
+- sealed products in your Vault
+- duplicate-card suggestions
+- manual items
+- cash adjustments
+
+### Build their side
+Add from:
+- your wishlist
+- live Pokémon card search
+- manual items
+- cash adjustments
+
+### Reference-value balance
+Trade Lab calculates:
+- total value you give
+- total value you receive
+- dollar difference
+- reference balance percentage
+- Balanced / Close / Review / Wide-gap label
+
+This is a **reference-value tool**, not a declaration that a trade is objectively fair.
+
+A collector may reasonably accept a value difference because of:
+- condition
+- grading
+- exact printing / variant
+- liquidity
+- scarcity
+- personal collection goals
+- transaction fees
+- local availability
+
+### Duplicate suggestions
+Trade Lab surfaces cards where your Vault has more than one copy so extras are easy to add to a deal.
+
+### Wishlist integration
+Wishlist cards can be added directly to the receive side.
+
+### Live incoming-card search
+Search current Pokémon card data from inside Trade Lab and add a live result to the receive side.
+
+### Proposals vs completed trades
+You can:
+- save a deal as Proposed
+- copy a clean text summary
+- complete the deal and automatically update your Vault
+
+When a trade is completed:
+- linked outgoing cards/sealed items are reduced
+- linked incoming cards are added to your preferred binder
+- received wishlist cards are removed from the wishlist
+
+### Price freshness
+When local price-history data exists, Trade Lab shows how recently that item's price was captured.

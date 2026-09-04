@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v1.4 Market Pulse
+## Current build: v1.5 Trade Lab
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -166,3 +166,16 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Refresh-job history
 - Price propagation through collection / wishlist / alerts / rip sessions / scanner queue
 - Card-detail snapshot movement
+
+
+## v1.5 completed
+- Two-sided Trade Lab builder
+- Vault card + sealed outgoing selection
+- Duplicate trade suggestions
+- Wishlist incoming selection
+- Live Pokémon incoming-card search
+- Cash/manual adjustments
+- Reference-value fairness analysis
+- Shareable trade summary
+- Proposed / Completed trade history
+- Completed trade -> automatic Vault inventory update
