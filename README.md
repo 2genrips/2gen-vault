@@ -1,4 +1,4 @@
-# 2GEN Vault — Master Set Lab v0.9 (GitHub Pages)
+# 2GEN Vault — Rip Sessions v1.0 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -250,3 +250,52 @@ For Pokémon sets, Set Explorer can:
 - open individual card details
 
 Other TCGs can use the same set/checklist UI when their providers are connected.
+
+
+## New in v1.0 — Rip Sessions + Pull Analytics
+
+### 2GEN Rip Lab
+Create an opening session for:
+- loose packs
+- tins
+- ETBs
+- collection boxes
+- booster bundles
+- booster boxes
+- any sealed TCG product
+
+Each session tracks:
+- game
+- product
+- number of packs
+- opening cost
+- pull list
+- current pull market value
+- hit count
+- hit-value threshold
+- cards logged
+- ROI
+- sets represented
+
+### Scan / identify workflow
+The camera can capture a card image on-device.
+The app does NOT pretend it can identify the card automatically yet.
+
+After capture, you search live card data and choose the correct match manually.
+This gives us a safe workflow now while preserving a clear path to real computer-vision matching later.
+
+### Pull → Vault
+A finished rip session can add all logged pulls directly into your collection.
+
+### Set progress
+Pull rows can show the set completion impact when set-total data is available.
+
+### Product → Rip Session
+Opening sealed inventory from:
+- Smart Product Pages
+- Sealed Vault
+
+can immediately start a new Rip Session with the product cost already carried over.
+
+### Session export
+Each rip can be exported as JSON for backups, analysis, or future creator/content workflows.

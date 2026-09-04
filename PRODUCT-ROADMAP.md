@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v0.9 Master Set Lab
+## Current build: v1.0 Rip Sessions
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -107,3 +107,15 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Live Pokémon master-set checklist
 - Unique owned / missing / completion %
 - Set-to-card detail workflow
+
+
+## v1.0 completed
+- Rip Session tracker
+- Opening cost vs pull-value analytics
+- Hit threshold / hit count
+- Per-session ROI
+- Camera capture + manual live identification workflow
+- Pull-to-Vault workflow
+- Set-progress impact
+- Smart Product / Sealed Vault -> Rip Session
+- Session export

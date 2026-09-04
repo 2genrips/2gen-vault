@@ -331,3 +331,29 @@ main{max-width:1120px;margin:0 auto;padding:16px 13px 30px}
   .mini-grid.four{grid-template-columns:48px 72px 1fr}.mini-grid.four .field:last-child{grid-column:1/-1}
   .set-hero{align-items:flex-start}
 }
+
+
+/* v1.0 — Rip Sessions + Pull Analytics */
+.rip-hero-panel{
+  background:
+    radial-gradient(circle at 94% 0%,rgba(255,45,45,.12),transparent 28%),
+    radial-gradient(circle at 4% 0%,rgba(159,124,255,.14),transparent 36%),
+    rgba(17,21,29,.96);
+}
+.rip-session-list{display:grid;gap:7px;margin-top:10px}
+.rip-session-row{width:100%;display:grid;grid-template-columns:46px 1fr auto;gap:9px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:9px;background:#0d131b;color:var(--text);text-align:left}
+.rip-session-row.active{border-color:rgba(159,124,255,.55);box-shadow:0 0 0 1px rgba(159,124,255,.12) inset}
+.rip-icon{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(145deg,#35172a,#14244a);border:1px solid var(--line);font-size:20px;color:#d3b6ff}
+.rip-detail{display:grid;gap:11px}
+.rip-preview{max-width:260px;margin:0 auto;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#070b10}
+.rip-preview img{display:block;width:100%;height:auto}
+.rip-pull{display:grid;grid-template-columns:48px 1fr auto;gap:9px;align-items:center;padding:8px;border:1px solid var(--line-soft);border-radius:12px;margin:6px 0;background:#0b1118}
+.rip-pull .thumb{width:48px}
+.rip-pull.hit{border-color:rgba(241,199,91,.28);background:rgba(241,199,91,.035)}
+@media(min-width:760px){
+  .quick-grid{grid-template-columns:repeat(6,1fr)}
+}
+@media(max-width:430px){
+  .rip-session-row{grid-template-columns:42px 1fr auto}.rip-icon{width:42px;height:42px}
+  .rip-pull{grid-template-columns:42px 1fr}.rip-pull .thumb{width:42px}.rip-pull .right{grid-column:2}
+}

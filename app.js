@@ -40,6 +40,7 @@ const seed = {
   setGoals: [],
   productCatalog: [],
   openingLog: [],
+  ripSessions: [],
   inventoryResults: [],
   nearbyStores: [],
   huntRoute: [],
@@ -69,6 +70,9 @@ let setExplorerResults = [];
 let activeSet = null;
 let activeSetCards = [];
 let setExplorerBusy = false;
+let activeRipSessionId = null;
+let ripCardSearchResults = [];
+let ripScannerPreview = '';
 let selectedRetailers = new Set(['Walmart','Target','Best Buy','GameStop','Local Card Shop']);
 let stockGame = 'Pokemon';
 let stockQuery = '';
@@ -127,6 +131,37 @@ function averageCostForCard(cardId){
   if(!qty)return 0;
   return items.reduce((n,i)=>n+(Number(i.cost)||0)*(Number(i.qty)||0),0)/qty;
 }
+
+function ripSessionById(id){
+  return (state.ripSessions||[]).find(s=>s.uid===id)||null;
+}
+function ripSessionStats(session){
+  const pulls=session?.pulls||[];
+  const totalValue=pulls.reduce((n,p)=>n+(Number(p.card?.market)||0)*(Number(p.qty)||0),0);
+  const hitCount=pulls.filter(p=>(Number(p.card?.market)||0)>=(Number(session?.hitThreshold)||5)).reduce((n,p)=>n+(Number(p.qty)||0),0);
+  const cardsPulled=pulls.reduce((n,p)=>n+(Number(p.qty)||0),0);
+  const spent=Number(session?.cost)||0;
+  const roi=spent?((totalValue-spent)/spent*100):0;
+  const uniqueSets=new Set(pulls.map(p=>p.card?.set).filter(Boolean));
+  return {totalValue,hitCount,cardsPulled,spent,roi,uniqueSets:uniqueSets.size};
+}
+function allRipStats(){
+  const sessions=state.ripSessions||[];
+  const totals=sessions.map(ripSessionStats);
+  const spent=totals.reduce((n,x)=>n+x.spent,0);
+  const value=totals.reduce((n,x)=>n+x.totalValue,0);
+  const cards=totals.reduce((n,x)=>n+x.cardsPulled,0);
+  const hits=totals.reduce((n,x)=>n+x.hitCount,0);
+  const roi=spent?((value-spent)/spent*100):0;
+  return {sessions:sessions.length,spent,value,cards,hits,roi};
+}
+function cardOwnedSetProgress(card){
+  const setCards=state.collection.filter(i=>i.card?.set===card.set || (card.setId&&i.card?.setId===card.setId));
+  const unique=new Set(setCards.map(i=>i.card?.id||i.card?.number));
+  const total=Number(card.setPrintedTotal||card.setTotal||0);
+  return {owned:unique.size,total,pct:total?unique.size/total*100:0};
+}
+
 function duplicateSummary(){
   const map=new Map();
   for(const i of state.collection||[]){
@@ -305,6 +340,7 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('products')"><span class="big-icon">◈</span><b>Smart products</b><span>Sealed product pages, targets, sightings, ownership and opening history.</span></button>
         <button class="quick-card" onclick="openTool('scanner')"><span class="big-icon">◉</span><b>Scan a card</b><span>Camera capture now; smart matching is ready for the backend phase.</span></button>
         <button class="quick-card" onclick="openTool('sets')"><span class="big-icon">▦</span><b>Master sets</b><span>Live set checklists, owned progress and missing-card tracking.</span></button>
+        <button class="quick-card" onclick="openTool('rips')"><span class="big-icon">✦</span><b>Rip sessions</b><span>Track openings, pulls, value, hits, ROI and set progress.</span></button>
       </div>
     </div>
 
@@ -1322,11 +1358,19 @@ function addSealed(){
 function openOneSealed(id){
   const i=state.sealed.find(x=>x.uid===id); if(!i) return;
   if(!confirm(`Mark one ${i.name} as opened?`)) return;
+  const cost=Number(i.cost)||0;
   i.qty-=1;
   state.openingLog.unshift({uid:uid(),product:i.name,game:i.game,qty:1,date:todayInput(),notes:'Opened from sealed tracker'});
   state.purchases.unshift({uid:uid(),merchant:'Vault',item:`Opened: ${i.name}`,category:'Opened sealed',amount:0,qty:1,date:todayInput(),notes:'Marked opened from sealed tracker'});
   if(i.qty<=0) state.sealed=state.sealed.filter(x=>x.uid!==id);
-  saveState(); renderVault(); toast('Opening logged');
+  if(confirm('Start a Rip Session for this opening?')){
+    const packs=Math.max(0,Number(prompt('How many packs are you opening?','1'))||0);
+    const session={uid:uid(),name:`${i.name} Opening`,game:i.game,product:i.name,packs,cost,hitThreshold:5,date:todayInput(),notes:'Created from Sealed Vault',pulls:[],createdAt:new Date().toISOString()};
+    state.ripSessions.unshift(session);activeRipSessionId=session.uid;
+  }
+  saveState();
+  if(activeRipSessionId){toolsTab='rips';switchTab('tools')}else renderVault();
+  toast('Opening logged');
 }
 function openSealedProductPage(id){
   const i=state.sealed.find(x=>x.uid===id);if(!i)return;
@@ -1363,6 +1407,7 @@ function renderTools(){
   $('tools').innerHTML = `
     <div class="page-title"><div><h1>Collector Tools</h1><p>The rest of your collecting workflow, all under one roof.</p></div></div>
     <div class="tool-menu">
+      ${toolButton('rips','✦','Rip Sessions','Openings & pull analytics')}
       ${toolButton('sets','▦','Sets','Master-set explorer')}
       ${toolButton('products','◈','Products','Smart sealed pages')}
       ${toolButton('scanner','◉','Scanner','Capture cards')}
@@ -1380,6 +1425,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='rips') return renderRipSessionsTool();
   if(toolsTab==='sets') return renderSetExplorerTool();
   if(toolsTab==='products') return renderProductsTool();
   if(toolsTab==='scanner') return renderScannerTool();
@@ -1393,6 +1439,166 @@ function renderToolBody(){
   return renderSettingsTool();
 }
 
+
+
+function renderRipSessionsTool(){
+  const totals=allRipStats();
+  const active=activeRipSessionId?ripSessionById(activeRipSessionId):null;
+  return `<div class="panel rip-hero-panel">
+    <div class="section-head"><div><div class="eyebrow">2GEN RIP LAB</div><h2>Opening sessions</h2><p>Track what you open, what it cost, what you pulled, and whether the rip added value or set progress.</p></div><button class="btn primary" onclick="createRipSession()">＋ New rip</button></div>
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Sessions</span><strong>${totals.sessions}</strong><small>Logged openings</small></div>
+      <div class="stat-card"><span>Total spent</span><strong>${money(totals.spent)}</strong><small>Opening cost</small></div>
+      <div class="stat-card"><span>Pull value</span><strong>${money(totals.value)}</strong><small>Current market fields</small></div>
+      <div class="stat-card"><span>Overall ROI</span><strong class="${totals.roi>=0?'good':'bad'}">${totals.sessions?totals.roi.toFixed(1)+'%':'—'}</strong><small>${totals.hits} hits • ${totals.cards} cards</small></div>
+    </div>
+    <div class="rip-session-list">${state.ripSessions?.length?state.ripSessions.map(renderRipSessionRow).join(''):`<div class="empty">No opening sessions yet. Start one when you rip packs, tins, ETBs or boxes.</div>`}</div>
+  </div>
+  ${active?`<div class="panel">${renderActiveRipSession(active)}</div>`:''}`;
+}
+function renderRipSessionRow(s){
+  const x=ripSessionStats(s);
+  return `<button class="rip-session-row ${activeRipSessionId===s.uid?'active':''}" onclick="openRipSession('${s.uid}')">
+    <div class="rip-icon">✦</div>
+    <div class="grow"><strong>${esc(s.name)}</strong><span>${esc(s.game)} • ${esc(s.date)} • ${s.packs||0} packs • ${x.cardsPulled} cards</span></div>
+    <div class="right"><strong>${money(x.totalValue)}</strong><small class="${x.roi>=0?'good':'bad'}">${x.spent?x.roi.toFixed(1)+'% ROI':'No cost'}</small></div>
+  </button>`;
+}
+function createRipSession(){
+  const name=(prompt('Session name','Pack Opening')||'').trim();if(!name)return;
+  const game=(prompt('TCG / game','Pokemon')||'Pokemon').trim();
+  const product=(prompt('Product opened (optional)','')||'').trim();
+  const packs=Math.max(0,Number(prompt('How many packs are you opening?','1'))||0);
+  const cost=Math.max(0,Number(prompt('Total cost of this opening','0'))||0);
+  const threshold=Math.max(0,Number(prompt('Count a card as a HIT at what market value?','5'))||5);
+  const session={uid:uid(),name,game,product,packs,cost,hitThreshold:threshold,date:todayInput(),notes:'',pulls:[],createdAt:new Date().toISOString()};
+  state.ripSessions.unshift(session);
+  activeRipSessionId=session.uid;
+  saveState();renderTools();toast('Rip session started');
+}
+function openRipSession(id){activeRipSessionId=id;renderTools()}
+function renderActiveRipSession(s){
+  const x=ripSessionStats(s);
+  return `<div class="rip-detail">
+    <div class="section-head"><div><div class="eyebrow">${esc(s.game)} RIP SESSION</div><h2>${esc(s.name)}</h2><p>${esc(s.date)}${s.product?' • '+esc(s.product):''} • ${s.packs||0} packs • ${money(Number(s.cost)||0)} cost</p></div><div class="radar-score ${x.roi>=0?'warm':'cool'}"><b>${x.spent?x.roi.toFixed(0):'—'}</b><span>ROI %</span></div></div>
+
+    <div class="meta-grid">
+      <div class="meta"><span>Pull value</span><strong>${money(x.totalValue)}</strong></div>
+      <div class="meta"><span>Hits</span><strong>${x.hitCount}</strong></div>
+      <div class="meta"><span>Cards logged</span><strong>${x.cardsPulled}</strong></div>
+      <div class="meta"><span>Unique sets</span><strong>${x.uniqueSets}</strong></div>
+    </div>
+
+    <div class="product-action-grid">
+      <button class="quick-card" onclick="openRipQuickScanner('${s.uid}')"><span class="big-icon">◉</span><b>Scan / identify pull</b><span>Capture a card image, then identify it by live search. Nothing is auto-guessed.</span></button>
+      <button class="quick-card" onclick="promptRipCardSearch('${s.uid}')"><span class="big-icon">⌕</span><b>Search card</b><span>Search live card data and add the pull to this session.</span></button>
+      <button class="quick-card" onclick="editRipSession('${s.uid}')"><span class="big-icon">✎</span><b>Edit session</b><span>Cost, packs, hit threshold and notes.</span></button>
+      <button class="quick-card" onclick="finishRipSession('${s.uid}')"><span class="big-icon">✓</span><b>Finish / add pulls</b><span>Add logged pulls to your Vault in one step.</span></button>
+    </div>
+
+    ${ripScannerPreview?`<div class="subpanel"><div class="section-head"><div><h2>Captured card</h2><p>Photo stays on this device. Use Search to identify the card.</p></div><button class="btn" onclick="clearRipPreview()">Clear</button></div><div class="rip-preview"><img src="${ripScannerPreview}" alt="Captured card"></div></div>`:''}
+
+    ${ripCardSearchResults.length?`<div class="subpanel"><div class="section-head"><div><h2>Card matches</h2><p>Choose the correct card manually.</p></div><button class="link-btn" onclick="clearRipSearch()">Clear</button></div><div class="result-grid">${ripCardSearchResults.map(c=>ripSearchCardMarkup(c,s.uid)).join('')}</div></div>`:''}
+
+    <div class="subpanel">
+      <div class="section-head"><div><h2>Pulls</h2><p>Market value and set progress update as you log cards.</p></div></div>
+      ${s.pulls.length?s.pulls.slice().sort((a,b)=>(Number(b.card?.market)||0)-(Number(a.card?.market)||0)).map(p=>renderRipPull(p,s)).join(''):`<div class="empty">No pulls logged yet.</div>`}
+    </div>
+
+    <div class="action-row">
+      <button class="btn" onclick="exportRipSession('${s.uid}')">Export session</button>
+      <button class="btn red" onclick="deleteRipSession('${s.uid}')">Delete session</button>
+    </div>
+  </div>`;
+}
+function ripSearchCardMarkup(c,sessionId){
+  return `<article class="card-result">${cardArt(c)}<div><div class="eyebrow">${esc(c.game)} • ${esc(c.set)}</div><h3>${esc(c.name)}</h3><div class="tiny">${esc(c.number||'—')} ${c.rarity?'• '+esc(c.rarity):''}</div><div class="price-row"><strong>${money(Number(c.market))}</strong>${typeof c.low==='number'?`<span>Low ${money(c.low)}</span>`:''}</div><div class="action-row"><button class="btn primary" onclick='addPullToSession("${sessionId}", ${JSON.stringify(c).replace(/'/g,"&#39;")})'>＋ Add pull</button><button class="btn" onclick='openCardDetail(${JSON.stringify(c).replace(/'/g,"&#39;")});switchTab("discover")'>Details</button></div></div></article>`;
+}
+function renderRipPull(p,s){
+  const card=p.card;
+  const value=(Number(card?.market)||0)*(Number(p.qty)||0);
+  const hit=value >= (Number(s.hitThreshold)||5);
+  const before=cardOwnedSetProgress(card);
+  return `<div class="rip-pull ${hit?'hit':''}">
+    ${cardArt(card)}
+    <div class="grow"><strong>${esc(card.name)}</strong><span>${esc(card.set)} • ${esc(card.number||'')} • Qty ${p.qty}${hit?' • HIT':''}</span><span>${before.total?`Set now ${before.owned}/${before.total} • ${before.pct.toFixed(1)}%`:''}</span></div>
+    <div class="right"><strong>${money(value)}</strong><div><button class="link-btn" onclick="changePullQty('${s.uid}','${p.uid}')">Qty</button><button class="remove" onclick="removePull('${s.uid}','${p.uid}')">Remove</button></div></div>
+  </div>`;
+}
+function openRipQuickScanner(sessionId){
+  activeRipSessionId=sessionId;
+  $('hiddenCamera').click();
+}
+async function promptRipCardSearch(sessionId){
+  activeRipSessionId=sessionId;
+  const q=(prompt('Card name to search','')||'').trim();if(!q)return;
+  toast('Searching live card data…');
+  try{
+    const safe=q.replace(/"/g,'');
+    const r=await fetch(`https://api.pokemontcg.io/v2/cards?q=name:%22${encodeURIComponent(safe)}%22&pageSize=20&orderBy=-set.releaseDate`);
+    if(!r.ok)throw new Error(`Card API returned ${r.status}`);
+    const d=await r.json();
+    ripCardSearchResults=(d.data||[]).map(c=>{
+      const ps=Object.values(c.tcgplayer?.prices||{});
+      const market=ps.find(p=>typeof p.market==='number')?.market;
+      const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
+      return {id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
+    });
+    renderTools();toast(`${ripCardSearchResults.length} matches`);
+  }catch(e){ripCardSearchResults=[];renderTools();toast(e.message||'Search failed')}
+}
+function addPullToSession(sessionId,card){
+  const s=ripSessionById(sessionId);if(!s)return;
+  const ex=s.pulls.find(p=>p.card?.id===card.id);
+  if(ex)ex.qty+=1;
+  else s.pulls.unshift({uid:uid(),card,qty:1,addedAt:new Date().toISOString()});
+  saveState();renderTools();toast('Pull logged');
+}
+function changePullQty(sessionId,pullId){
+  const s=ripSessionById(sessionId);if(!s)return;
+  const p=s.pulls.find(x=>x.uid===pullId);if(!p)return;
+  const q=prompt('Quantity',String(p.qty));if(q===null)return;
+  p.qty=Math.max(1,Number(q)||1);saveState();renderTools();
+}
+function removePull(sessionId,pullId){
+  const s=ripSessionById(sessionId);if(!s)return;
+  s.pulls=s.pulls.filter(x=>x.uid!==pullId);saveState();renderTools();
+}
+function editRipSession(id){
+  const s=ripSessionById(id);if(!s)return;
+  const packs=prompt('Packs opened',String(s.packs||0));if(packs!==null)s.packs=Math.max(0,Number(packs)||0);
+  const cost=prompt('Total opening cost',String(s.cost||0));if(cost!==null)s.cost=Math.max(0,Number(cost)||0);
+  const threshold=prompt('Hit threshold value',String(s.hitThreshold||5));if(threshold!==null)s.hitThreshold=Math.max(0,Number(threshold)||0);
+  const notes=prompt('Session notes',s.notes||'');if(notes!==null)s.notes=notes;
+  saveState();renderTools();
+}
+function finishRipSession(id){
+  const s=ripSessionById(id);if(!s)return;
+  if(!s.pulls.length){toast('Log pulls first');return;}
+  if(!confirm('Add every logged pull to your Vault?'))return;
+  for(const p of s.pulls){
+    for(let n=0;n<(Number(p.qty)||0);n++) addCard(p.card);
+  }
+  s.finishedAt=new Date().toISOString();
+  saveState();toolsTab='rips';renderTools();toast('Pulls added to Vault');
+}
+function deleteRipSession(id){
+  if(!confirm('Delete this rip session?'))return;
+  state.ripSessions=state.ripSessions.filter(x=>x.uid!==id);
+  if(activeRipSessionId===id)activeRipSessionId=null;
+  saveState();renderTools();
+}
+function exportRipSession(id){
+  const s=ripSessionById(id);if(!s)return;
+  const x=ripSessionStats(s);
+  const payload={...s,analytics:x};
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));
+  a.download=`2gen-rip-${normalizeName(s.name).replace(/\s+/g,'-')||'session'}.json`;
+  a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function clearRipSearch(){ripCardSearchResults=[];renderTools()}
+function clearRipPreview(){ripScannerPreview='';renderTools()}
 
 function renderSetExplorerTool(){
   const ownedSets=new Map();
@@ -1602,13 +1808,19 @@ function logOpeningFromProduct(id){
   const candidates=state.sealed.filter(s=>watchMatchesText({product:p.name},s.name)&&s.qty>0);
   if(!candidates.length){toast('No sealed copies in your vault yet');return;}
   const qty=Math.max(1,Number(prompt('How many are you opening?','1'))||1);
-  let left=qty;
+  let left=qty, spent=0;
   for(const s of candidates){
     if(left<=0)break;
-    const take=Math.min(left,s.qty);s.qty-=take;left-=take;
+    const take=Math.min(left,s.qty);s.qty-=take;left-=take;spent += take*(Number(s.cost)||0);
   }
   state.sealed=state.sealed.filter(s=>s.qty>0);
-  state.openingLog.unshift({uid:uid(),product:p.name,game:p.game,qty:qty-left,date:todayInput(),notes:prompt('Opening notes (optional)','')||''});
+  const actual=qty-left;
+  state.openingLog.unshift({uid:uid(),product:p.name,game:p.game,qty:actual,date:todayInput(),notes:prompt('Opening notes (optional)','')||''});
+  if(actual>0 && confirm('Start a Rip Session for this opening?')){
+    const packs=Math.max(0,Number(prompt('How many packs are inside / being opened?','1'))||0);
+    const session={uid:uid(),name:`${p.name} Opening`,game:p.game,product:p.name,packs,cost:spent,hitThreshold:5,date:todayInput(),notes:'Created from Smart Product page',pulls:[],createdAt:new Date().toISOString()};
+    state.ripSessions.unshift(session);activeRipSessionId=session.uid;toolsTab='rips';
+  }
   saveState();renderTools();toast('Opening logged');
 }
 
@@ -1620,7 +1832,19 @@ function renderScannerTool(){
   </div>`;
 }
 $('hiddenCamera').addEventListener('change',e=>{
-  const f=e.target.files?.[0]; if(!f)return; const r=new FileReader(); r.onload=()=>{cameraPreview=String(r.result||'');renderTools()};r.readAsDataURL(f);
+  const f=e.target.files?.[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{
+    if(toolsTab==='rips'){
+      ripScannerPreview=String(r.result||'');
+      renderTools();
+      setTimeout(()=>{ if(activeRipSessionId) promptRipCardSearch(activeRipSessionId); },50);
+    }else{
+      cameraPreview=String(r.result||'');
+      renderTools();
+    }
+  };
+  r.readAsDataURL(f);
 });
 function renderWishlistTool(){
   return `<div class="panel"><div class="section-head"><div><h2>Wishlist</h2><p>Keep your chase cards organized.</p></div></div>${state.wishlist.length?state.wishlist.map(w=>`<div class="compact-row">${cardArt(w.card)}<div class="grow"><strong>${esc(w.card.name)}</strong><span>${esc(w.card.set)} • Market ${money(Number(w.card.market))}</span></div><div class="right"><button class="remove" onclick="removeWishlist('${w.uid}')">Remove</button></div></div>`).join(''):`<div class="empty">Tap “Watch” on a card in Search.</div>`}</div>`;
@@ -1731,7 +1955,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
