@@ -85,6 +85,11 @@ let cameraPreview = '';
 let scannerSearchResults = [];
 let scannerBusy = false;
 let scannerLastQuery = '';
+let scannerOcrBusy = false;
+let scannerOcrText = '';
+let scannerOcrConfidence = null;
+let scannerAutoCandidates = [];
+let scannerLastMarketLookupAt = null;
 let toastTimer;
 
 function $(id){ return document.getElementById(id); }
@@ -2110,6 +2115,156 @@ function logOpeningFromProduct(id){
 }
 
 
+
+async function loadTesseract(){
+  if(window.Tesseract?.recognize) return window.Tesseract;
+  await new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.async=true;
+    s.onload=resolve;
+    s.onerror=()=>reject(new Error('Could not load the on-device text reader.'));
+    document.head.appendChild(s);
+  });
+  if(!window.Tesseract?.recognize) throw new Error('Text reader did not initialize.');
+  return window.Tesseract;
+}
+function normalizeOcrText(text=''){
+  return String(text)
+    .replace(/[|]/g,'I')
+    .replace(/\s+/g,' ')
+    .replace(/[^\x20-\x7E]/g,' ')
+    .trim();
+}
+function extractLikelyCardNumber(text=''){
+  const compact=String(text).replace(/\s+/g,' ');
+  const patterns=[
+    /\b([A-Z]{0,4}\d{1,4})\s*\/\s*(\d{1,4})\b/i,
+    /\b(\d{1,4})\s*\/\s*(\d{1,4})\b/,
+    /\b([A-Z]{1,4}\d{1,4})\b/i
+  ];
+  for(const p of patterns){
+    const m=compact.match(p);
+    if(m) return String(m[1]).replace(/\s/g,'');
+  }
+  return '';
+}
+function likelyNameTokens(text=''){
+  const stop=new Set([
+    'basic','stage','hp','ability','weakness','resistance','retreat','rule',
+    'pokemon','trainer','energy','damage','card','illustration','rare','ex',
+    'vmax','vstar','gx','attack','during','your','opponents','opponent',
+    'this','that','from','with','into','each','turn','does','times','more'
+  ]);
+  return normalizeOcrText(text)
+    .split(/\s+/)
+    .map(x=>x.replace(/[^A-Za-z0-9'.-]/g,''))
+    .filter(x=>x.length>=3 && x.length<=22 && !stop.has(x.toLowerCase()) && !/^\d+$/.test(x))
+    .slice(0,24);
+}
+function candidateScore(card,ocrText,numberHint){
+  const hay=normalizeOcrText(ocrText).toLowerCase();
+  const name=String(card.name||'').toLowerCase();
+  let score=0;
+  const nameParts=name.split(/\s+/).filter(Boolean);
+  nameParts.forEach(p=>{ if(p.length>2 && hay.includes(p)) score+=18; });
+  if(hay.includes(name)) score+=35;
+  if(numberHint && String(card.number||'').toLowerCase()===String(numberHint).toLowerCase()) score+=40;
+  if(card.set && hay.includes(String(card.set).toLowerCase())) score+=8;
+  if(card.rarity && hay.includes(String(card.rarity).toLowerCase())) score+=5;
+  return Math.min(100,score);
+}
+async function autoIdentifyFromPhoto(){
+  if(!cameraPreview){toast('Take or choose a card photo first');return;}
+  if(scannerOcrBusy)return;
+  scannerOcrBusy=true;
+  scannerOcrText='';
+  scannerOcrConfidence=null;
+  scannerAutoCandidates=[];
+  renderTools();
+  try{
+    toast('Reading card text on your phone…');
+    const T=await loadTesseract();
+    const result=await T.recognize(cameraPreview,'eng',{
+      logger:m=>{
+        if(m?.status==='recognizing text' && typeof m.progress==='number'){
+          const pct=Math.round(m.progress*100);
+          const el=$('ocrProgressText'); if(el) el.textContent=`Reading text… ${pct}%`;
+        }
+      }
+    });
+    const raw=result?.data?.text||'';
+    const conf=Number(result?.data?.confidence);
+    scannerOcrText=normalizeOcrText(raw);
+    scannerOcrConfidence=Number.isFinite(conf)?conf:null;
+    if(!scannerOcrText) throw new Error('No readable card text was found. Try a sharper photo with less glare.');
+
+    const numberHint=extractLikelyCardNumber(scannerOcrText);
+    const tokens=likelyNameTokens(scannerOcrText);
+    const queryTerms=tokens.slice(0,7);
+
+    // Search several likely text tokens and optionally the card number.
+    const candidateMap=new Map();
+    const queries=[];
+    if(numberHint) queries.push(`number:"${numberHint.replace(/"/g,'')}"`);
+    for(const token of queryTerms.slice(0,5)) queries.push(`name:"${token.replace(/"/g,'')}"`);
+
+    for(const q of queries.slice(0,6)){
+      try{
+        const r=await fetch(`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=40&orderBy=-set.releaseDate`);
+        if(!r.ok) continue;
+        const d=await r.json();
+        for(const c of d.data||[]){
+          const ps=Object.values(c.tcgplayer?.prices||{});
+          const market=ps.find(p=>typeof p.market==='number')?.market;
+          const lows=ps.map(p=>p.low).filter(v=>typeof v==='number');
+          const card={id:c.id,provider:'pokemontcg',game:'Pokemon',name:c.name,set:c.set?.name||'Unknown set',setId:c.set?.id||'',setSeries:c.set?.series||'',setPrintedTotal:c.set?.printedTotal||c.set?.total||0,setTotal:c.set?.total||0,releaseDate:c.set?.releaseDate||'',number:c.number||'',rarity:c.rarity||'',artist:c.artist||'',image:c.images?.small||c.images?.large||'',market,low:lows.length?Math.min(...lows):undefined,url:c.tcgplayer?.url||''};
+          const score=candidateScore(card,scannerOcrText,numberHint);
+          const prior=candidateMap.get(card.id);
+          if(!prior || score>prior.autoScore) candidateMap.set(card.id,{...card,autoScore:score});
+        }
+      }catch{}
+    }
+
+    scannerAutoCandidates=[...candidateMap.values()]
+      .sort((a,b)=>b.autoScore-a.autoScore)
+      .slice(0,12);
+
+    if(!scannerAutoCandidates.length){
+      throw new Error('Text was read, but no confident Pokémon card matches were found. Use manual Identify instead.');
+    }
+
+    scannerSearchResults=scannerAutoCandidates;
+    scannerLastMarketLookupAt=new Date().toISOString();
+    toast(`Auto Identify found ${scannerAutoCandidates.length} possible matches`);
+  }catch(e){
+    scannerAutoCandidates=[];
+    toast(e.message||'Auto Identify failed');
+  }finally{
+    scannerOcrBusy=false;
+    renderTools();
+  }
+}
+function autoConfidenceLabel(card){
+  const s=Number(card.autoScore)||0;
+  if(s>=80)return 'HIGH MATCH';
+  if(s>=55)return 'POSSIBLE';
+  return 'LOW MATCH';
+}
+function autoConfidenceClass(card){
+  const s=Number(card.autoScore)||0;
+  if(s>=80)return 'high';
+  if(s>=55)return 'mid';
+  return 'low';
+}
+function selectAutoMatch(card){
+  scannerSearchResults=[card];
+  scannerLastQuery=card.name||'';
+  scannerLastMarketLookupAt=new Date().toISOString();
+  renderTools();
+  toast('Match selected — review before adding');
+}
+
 function scannerOwnedQty(card){
   return totalOwnedForCard(card.id);
 }
@@ -2204,6 +2359,7 @@ async function scannerSearch(event){
     }
     if(!r.ok) throw new Error(`Card API returned ${r.status}`);
     const d=await r.json();
+    scannerLastMarketLookupAt=new Date().toISOString();
     scannerSearchResults=(d.data||[]).map(c=>{
       const ps=Object.values(c.tcgplayer?.prices||{});
       const market=ps.find(p=>typeof p.market==='number')?.market;
@@ -2221,18 +2377,22 @@ async function scannerSearch(event){
 function scannerResultMarkup(card){
   const signal=scannerSetSignal(card);
   const grade=gradingCandidate(card);
-  return `<article class="scanner-match">
+  const hasAuto=typeof card.autoScore==='number';
+  return `<article class="scanner-match ${hasAuto?'auto-match':''}">
     ${cardArt(card)}
     <div class="grow">
       <div class="eyebrow">${esc(card.set)} • ${esc(card.number||'—')}</div>
       <strong>${esc(card.name)}</strong>
-      <span>${esc(card.rarity||'')} • ${money(Number(card.market))}</span>
+      <span>${esc(card.rarity||'')} • <b class="market-value">${money(Number(card.market))}</b>${typeof card.low==='number'?` • low ${money(card.low)}`:''}</span>
       <div class="scanner-flags">
+        ${hasAuto?`<span class="auto-confidence ${autoConfidenceClass(card)}">${card.autoScore}% ${autoConfidenceLabel(card)}</span>`:''}
         <span class="${signal.type}">${esc(signal.label)}</span>
         ${grade.candidate?`<span class="grade-flag">◇ REVIEW FOR GRADING</span>`:''}
       </div>
+      <small class="market-note">Market fields come from the live card data source when available; actual sale value varies by condition, variant and marketplace.</small>
     </div>
     <div class="right">
+      ${hasAuto?`<button class="btn" onclick='selectAutoMatch(${JSON.stringify(card).replace(/'/g,"&#39;")})'>Select match</button>`:''}
       <button class="btn primary" onclick='queueCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>＋ Queue</button>
       <button class="link-btn" onclick='openCardDetail(${JSON.stringify(card).replace(/'/g,"&#39;")});switchTab("discover")'>Details</button>
     </div>
@@ -2296,14 +2456,18 @@ function commitScanQueue(){
   toast(`Vault updated • ${added} new • ${merged} merged`);
 }
 function clearScannerPhoto(){
-  cameraPreview='';renderTools();
+  cameraPreview='';
+  scannerOcrText='';
+  scannerOcrConfidence=null;
+  scannerAutoCandidates=[];
+  renderTools();
 }
 
 function renderScannerTool(){
   ensureScannerSchema();
   const activeRip=activeRipSessionId?ripSessionById(activeRipSessionId):null;
   return `<div class="panel scanner-pro-panel">
-    <div class="section-head"><div><div class="eyebrow">2GEN SMART SCANNER</div><h2>Rapid collection intake</h2><p>Capture, identify, detect duplicates, spot set gaps, suggest a binder and batch-add cards.</p></div><button class="btn" onclick="reviewScannerSettings()">⚙ Scanner rules</button></div>
+    <div class="section-head"><div><div class="eyebrow">2GEN AUTO IDENTIFY BETA</div><h2>Smart Scanner</h2><p>Take a card photo, read visible text on-device, rank likely Pokémon matches, then show live market fields for the match you confirm.</p></div><button class="btn" onclick="reviewScannerSettings()">⚙ Scanner rules</button></div>
 
     <div class="scanner-stats">
       <div><span>Queued</span><strong>${state.scanQueue.reduce((n,q)=>n+(Number(q.qty)||0),0)}</strong></div>
@@ -2312,45 +2476,58 @@ function renderScannerTool(){
       <div><span>Grading review</span><strong>${state.scanQueue.filter(q=>gradingCandidate(q.card).candidate).length}</strong></div>
     </div>
 
-    ${activeRip?`<div class="notice good"><span>✦</span><span>Active Rip Session: <b>${esc(activeRip.name)}</b>. When you commit the queue, you can also add these cards to that session.</span></div>`:''}
+    ${activeRip?`<div class="notice good"><span>✦</span><span>Active Rip Session: <b>${esc(activeRip.name)}</b>. Committed cards can also be added to that opening.</span></div>`:''}
 
     <div class="scanner-workspace">
       <div>
-        <div class="scanbox">${cameraPreview?`<img src="${cameraPreview}" alt="Card preview">`:`<span style="font-size:44px">◉</span><span>Capture one card, then identify it below</span>`}</div>
+        <div class="scanbox">${cameraPreview?`<img src="${cameraPreview}" alt="Card preview">`:`<span style="font-size:44px">◉</span><span>Fill the frame with one card</span>`}</div>
         <div class="action-row">
           <button class="btn primary" onclick="$('hiddenCamera').click()">◉ Take / choose photo</button>
-          ${cameraPreview?`<button class="btn" onclick="clearScannerPhoto()">Clear photo</button>`:''}
+          ${cameraPreview?`<button class="btn auto-btn" onclick="autoIdentifyFromPhoto()" ${scannerOcrBusy?'disabled':''}>${scannerOcrBusy?'Reading…':'✦ Auto Identify Beta'}</button><button class="btn" onclick="clearScannerPhoto()">Clear</button>`:''}
         </div>
+        ${scannerOcrBusy?`<div class="ocr-progress"><i></i><span id="ocrProgressText">Reading text…</span></div>`:''}
       </div>
 
       <div>
         <form class="searchbar" onsubmit="scannerSearch(event)">
           <span>⌕</span>
-          <input id="scannerSearchQ" value="${esc(scannerLastQuery)}" placeholder="Card name or number">
-          <button class="btn primary" ${scannerBusy?'disabled':''}>${scannerBusy?'Searching…':'Identify'}</button>
+          <input id="scannerSearchQ" value="${esc(scannerLastQuery)}" placeholder="Manual fallback: card name or number">
+          <button class="btn primary" ${scannerBusy?'disabled':''}>${scannerBusy?'Searching…':'Manual Identify'}</button>
         </form>
-        <div class="notice" style="margin-top:9px"><span>ℹ</span><span>The photo stays on your phone. This version does <b>not</b> falsely claim automatic image recognition: you choose the correct live card match.</span></div>
+
+        <div class="scanner-accuracy-box">
+          <b>How Auto Identify works</b>
+          <span>1. The photo is processed on your device to read printed text.</span>
+          <span>2. Only extracted text is used to search live Pokémon card data.</span>
+          <span>3. 2GEN Vault ranks possible matches.</span>
+          <span>4. <b>You confirm the exact card</b> before it enters your Vault.</span>
+        </div>
+
+        ${scannerOcrText?`<div class="ocr-readout"><div class="kpi-line"><span>Text-reader confidence</span><strong>${scannerOcrConfidence!==null?scannerOcrConfidence.toFixed(0)+'%':'—'}</strong></div><p>${esc(scannerOcrText.slice(0,300))}${scannerOcrText.length>300?'…':''}</p></div>`:''}
       </div>
     </div>
 
-    ${scannerSearchResults.length?`<div class="subpanel" style="margin-top:11px"><div class="section-head"><div><h2>Possible matches</h2><p>Queue the correct result.</p></div><button class="link-btn" onclick="scannerSearchResults=[];renderTools()">Clear</button></div><div class="scanner-match-list">${scannerSearchResults.map(scannerResultMarkup).join('')}</div></div>`:''}
+    ${scannerSearchResults.length?`<div class="subpanel" style="margin-top:11px"><div class="section-head"><div><h2>${scannerAutoCandidates.length?'Ranked possible matches':'Possible matches'}</h2><p>${scannerAutoCandidates.length?'Confirm the exact printing before adding it.':'Choose the correct live card result.'}</p></div><button class="link-btn" onclick="scannerSearchResults=[];scannerAutoCandidates=[];renderTools()">Clear</button></div>${scannerLastMarketLookupAt?`<div class="market-refresh-note">Market lookup retrieved ${humanAge(scannerLastMarketLookupAt)}.</div>`:''}<div class="scanner-match-list">${scannerSearchResults.map(scannerResultMarkup).join('')}</div></div>`:''}
   </div>
 
   <div class="panel">
-    <div class="section-head"><div><h2>Batch review</h2><p>Review automation suggestions before anything is written to your Vault.</p></div><div class="action-row"><button class="btn red" onclick="clearScanQueue()">Clear</button><button class="btn primary" onclick="commitScanQueue()">✓ Add queue to Vault</button></div></div>
+    <div class="section-head"><div><h2>Batch review</h2><p>Review quantity, cost and binder suggestions before writing anything to your Vault.</p></div><div class="action-row"><button class="btn red" onclick="clearScanQueue()">Clear</button><button class="btn primary" onclick="commitScanQueue()">✓ Add queue to Vault</button></div></div>
     ${renderScanQueue()}
   </div>
 
   <div class="panel">
-    <div class="section-head"><div><h2>What Smart Scanner automates</h2><p>Useful collector assistance without pretending the app knows physical card condition.</p></div></div>
+    <div class="section-head"><div><h2>Collector automation</h2><p>Useful assistance without pretending the camera can determine physical grade or authenticity.</p></div></div>
     <div class="automation-grid">
-      <div><b>Duplicate detection</b><span>Flags cards already in your Vault and shows how many you own.</span></div>
-      <div><b>Set-gap detection</b><span>Flags cards that appear missing from a set when set-total metadata is available.</span></div>
-      <div><b>Binder suggestion</b><span>Suggests the binder containing the most cards from the same set/game.</span></div>
-      <div><b>Grading review flag</b><span>Uses your value threshold and rarity text only. It does not judge centering, surface, edges, or condition from the photo.</span></div>
+      <div><b>Auto Identify Beta</b><span>Reads visible text locally and ranks likely Pokémon card matches. You still confirm the exact printing.</span></div>
+      <div><b>Real market fields</b><span>After identification, available market/low fields come from the live card data provider instead of demo pricing.</span></div>
+      <div><b>Duplicate detection</b><span>Flags cards already in your Vault and shows how many copies are owned.</span></div>
+      <div><b>Set-gap detection</b><span>Flags cards that appear missing from the set when live set metadata is available.</span></div>
+      <div><b>Binder suggestion</b><span>Suggests the binder that already contains the most cards from the same set/game.</span></div>
+      <div><b>Grading review flag</b><span>Uses market threshold/rarity only. It does not judge centering, surface, edges, condition, or authenticity.</span></div>
     </div>
   </div>`;
 }
+
 $('hiddenCamera').addEventListener('change',e=>{
   const f=e.target.files?.[0]; if(!f)return;
   const r=new FileReader();
@@ -2361,8 +2538,12 @@ $('hiddenCamera').addEventListener('change',e=>{
       setTimeout(()=>{ if(activeRipSessionId) promptRipCardSearch(activeRipSessionId); },50);
     }else{
       cameraPreview=String(r.result||'');
+      scannerOcrText='';
+      scannerOcrConfidence=null;
+      scannerAutoCandidates=[];
+      scannerSearchResults=[];
       renderTools();
-      toast('Photo captured — identify the card by search');
+      toast('Photo captured — tap Auto Identify Beta');
     }
   };
   r.readAsDataURL(f);
@@ -2478,7 +2659,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,saveSnapshotNow,scannerSearch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,saveSnapshotNow,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 

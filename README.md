@@ -1,4 +1,4 @@
-# 2GEN Vault — Smart Scanner v1.2 (GitHub Pages)
+# 2GEN Vault — Auto Identify Beta v1.3 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -400,3 +400,59 @@ If a Rip Session is active, committing a scan batch can optionally add the same 
 ### Privacy / accuracy
 Captured images remain local to the browser in this build.
 The app does not upload or falsely auto-identify them.
+
+
+## New in v1.3 — Auto Identify Beta
+
+The camera workflow can now go beyond manual search.
+
+### How it works
+
+1. Take or choose a clear card photo.
+2. Tap **Auto Identify Beta**.
+3. Tesseract.js reads visible printed text locally in the browser.
+4. 2GEN Vault extracts likely name / card-number clues.
+5. Those clues are searched against the live Pokémon card data source.
+6. Possible matches are ranked with a match score.
+7. You confirm the exact card before adding it.
+
+### Market value
+
+After a live card match is found, 2GEN Vault shows the available:
+- market field
+- low field
+
+These are live provider fields when available, not demo prices.
+
+They are market references, not guaranteed sale prices. Real value can differ by:
+- condition
+- exact variant/printing
+- language
+- grading
+- marketplace
+- fees
+- current buyer demand
+
+### Important accuracy rule
+
+The app will NOT automatically commit a card solely because OCR thinks it recognized it.
+
+The user must confirm the exact printing.
+
+This is deliberate because visually similar Pokémon printings can have very different values.
+
+### Privacy
+
+The selected card photo remains on the device for OCR in this build.
+The OCR library is loaded from a CDN and processes the image in-browser.
+Only extracted text is used for live card lookup.
+
+### Best scan conditions
+
+For better Auto Identify results:
+- one card at a time
+- fill most of the frame
+- avoid sleeve glare
+- keep the card flat
+- use bright even light
+- keep the name and collector number readable

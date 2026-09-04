@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v1.2 Smart Scanner
+## Current build: v1.3 Auto Identify Beta
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -145,3 +145,13 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Queue cost/binder/quantity review
 - Smart merge into existing collection entries
 - Optional scanner -> active Rip Session flow
+
+
+## v1.3 completed
+- On-device OCR-assisted card identification
+- Ranked Pokémon card candidates
+- Card-number hint extraction
+- Match-confidence scoring
+- User confirmation before commit
+- Live market / low display after identification
+- Manual identify fallback retained
