@@ -1,4 +1,4 @@
-# 2GEN Vault — VaultIQ + Universal Live Network v3.0
+# 2GEN Vault — Product Command v4.0
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -975,3 +975,88 @@ Users can move a card/product from broad wishlist/watch status into a focused ac
 Any live card search result now has an **IQ** button.
 
 Open it, enter the price being offered, and VaultIQ recalculates the personalized fit score using that exact price.
+
+
+## v4.0 — Product Command
+
+Product inventory is now a first-class part of 2GEN Vault.
+
+### Product identity
+Each retail/sealed product can track:
+- TCG
+- set / release
+- product type
+- UPC / barcode
+- primary SKU / item number
+- retailer-specific item IDs
+- release date
+- pack count
+- MSRP / reference retail
+- target / max buy price
+- desired sealed quantity
+- minimum keep-on-hand quantity
+- notes
+
+Product Command search indexes product names, sets, UPCs, SKUs and retailer item IDs.
+
+### Retail Inventory Board
+Watched products can be viewed in one board with:
+- latest known stock state
+- most recent store
+- sighting age
+- observed price
+- owned vs desired quantity
+- VaultIQ product score
+
+Only inventory observations actually stored by 2GEN Vault are shown.
+
+### Retailer inventory observations
+Product pages group the latest observation per store and show:
+- stock status
+- quantity when known
+- price
+- source
+- freshness
+- transparent 2GEN confidence
+
+Confidence is an in-app heuristic based on source, freshness and confirmations. It is not guaranteed store inventory.
+
+### Stock history + observed restock patterns
+Product Command preserves the underlying stock timeline and summarizes the weekdays/dayparts where in-stock sightings have occurred.
+
+The pattern is observational only. It does not claim a store will restock at those times.
+
+### Sealed inventory lots
+Owned product inventory now supports separate lots with:
+- quantity
+- cost each
+- tracked value each
+- retailer/source
+- purchase date
+- storage location
+- linked product ID
+- UPC
+- SKU
+
+### Product movement
+Purchase, inventory, opening and sale activity is brought into one product movement timeline.
+
+### Direct workflows
+Every product can jump directly into:
+- Restock Radar
+- Stock Finder / Hunt Mode
+- Stock Report
+- Purchase log
+- Sealed inventory
+- Rip Sessions
+- VaultIQ
+
+### Dashboard + Action Center
+Dashboard Pro now includes product inventory totals.
+
+Action Center can surface a product when you still need units and:
+- a recent sighting exists, or
+- an observed price meets your max-buy target.
+
+### Backward compatibility
+Older sealed/product data is migrated locally while keeping the existing browser storage key, reducing the risk of losing an existing 2GEN Vault collection during the v4 update.

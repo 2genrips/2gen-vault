@@ -40,5 +40,5 @@ window.TWOGEN_CONFIG = {
   inventoryApiBase: "",
   supabaseUrl: "",
   supabaseAnonKey: "",
-  appVersion: "3.0.0"
+  appVersion: "4.0.0"
 };

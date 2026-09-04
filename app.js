@@ -71,6 +71,12 @@ const seed = {
   grading: [],
   setGoals: [],
   productCatalog: [],
+  productInventoryEvents: [],
+  productCommandSettings: {
+    game:'All',
+    need:'All',
+    sort:'Priority'
+  },
   openingLog: [],
   ripSessions: [],
   portfolioSnapshots: [],
@@ -841,6 +847,7 @@ function renderHome(){
       <div class="hero-badges">
         <span class="badge primary">◆ COLLECTOR OS</span>
         <span class="badge">◎ ${state.stockWatches.length} STOCK WATCHES</span>
+        <span class="badge">◈ ${(state.productCatalog||[]).length} PRODUCTS</span>
         <span class="badge">⌖ ${state.huntRoute.filter(x=>!x.visited).length} HUNT STOPS</span>
         <span class="badge red">2GEN RIPS</span>
         <span class="badge">${signedIn()?'☁ SYNCED':'☁ GUEST'}</span>
@@ -858,8 +865,8 @@ function renderHome(){
       <div class="section-head"><div><h2>Collector command center</h2><p>Fast access to the things collectors actually use.</p></div></div>
       <div class="quick-grid">
         <button class="quick-card" onclick="switchTab('stock')"><span class="big-icon">◎</span><b>Find inventory</b><span>Nearby stores, live connector, watchlists and stock reports.</span></button>
-        <button class="quick-card" onclick="switchTab('discover')"><span class="big-icon">⌕</span><b>Search cards</b><span>Live Pokémon lookup plus the multi-TCG catalog foundation.</span></button>
-        <button class="quick-card" onclick="openTool('products')"><span class="big-icon">◈</span><b>Smart products</b><span>Sealed product pages, targets, sightings, ownership and opening history.</span></button>
+        <button class="quick-card" onclick="switchTab('discover')"><span class="big-icon">⌕</span><b>Search cards</b><span>Universal live Pokémon, Lorcana, Magic and Yu-Gi-Oh! card network.</span></button>
+        <button class="quick-card" onclick="openTool('products')"><span class="big-icon">◈</span><b>Product Command</b><span>UPC/SKU, retailer stock, sealed lots, goals, sightings, pricing and restock intelligence.</span></button>
         <button class="quick-card" onclick="openTool('scanner')"><span class="big-icon">◉</span><b>Smart Scanner</b><span>Batch intake, duplicates, set gaps, binder suggestions and grading review flags.</span></button>
         <button class="quick-card" onclick="openTool('sets')"><span class="big-icon">▦</span><b>Master sets</b><span>Live set checklists, owned progress and missing-card tracking.</span></button>
         <button class="quick-card" onclick="openTool('rips')"><span class="big-icon">✦</span><b>Rip sessions</b><span>Track openings, pulls, value, hits, ROI and set progress.</span></button>
@@ -923,6 +930,232 @@ function renderHome(){
 
 
 
+
+function ensureProductInventorySchema(){
+  if(!Array.isArray(state.productInventoryEvents)) state.productInventoryEvents=[];
+  state.productCommandSettings={game:'All',need:'All',sort:'Priority',...(state.productCommandSettings||{})};
+  ensureCatalogSeed();
+
+  for(const p of state.productCatalog){
+    if(!p.uid) p.uid=uid();
+    p.game=p.game||'Pokemon';
+    p.name=p.name||'Sealed Product';
+    p.set=p.set||'';
+    p.type=p.type||'Sealed';
+    p.upc=p.upc||'';
+    p.sku=p.sku||'';
+    p.releaseDate=p.releaseDate||'';
+    p.packCount=Math.max(0,Number(p.packCount)||0);
+    p.desiredQty=Math.max(0,Number(p.desiredQty)||0);
+    p.minOnHand=Math.max(0,Number(p.minOnHand)||0);
+    p.retailerSkus=(p.retailerSkus && typeof p.retailerSkus==='object')?p.retailerSkus:{};
+    p.notes=p.notes||'';
+  }
+
+  for(const s of state.sealed||[]){
+    if(!s.productId){
+      const p=state.productCatalog.find(p=>p.game===s.game && watchMatchesText({product:p.name},s.name));
+      if(p) s.productId=p.uid;
+    }
+    s.retailer=s.retailer||'';
+    s.purchaseDate=s.purchaseDate||String(s.addedAt||'').slice(0,10)||'';
+    s.upc=s.upc||'';
+    s.sku=s.sku||'';
+  }
+}
+function productIdentityText(p){
+  const retailerIds=Object.entries(p.retailerSkus||{}).map(([r,id])=>`${r} ${id}`).join(' ');
+  return `${p.game||''} ${p.set||''} ${p.name||''} ${p.type||''} ${p.upc||''} ${p.sku||''} ${p.releaseDate||''} ${retailerIds}`;
+}
+function productMatchesRecord(product,record){
+  if(!product||!record)return false;
+  if(record.productId && (record.productId===product.uid || record.productId===product.id)) return true;
+  const text=record.product||record.name||record.item||'';
+  if(!text)return false;
+  return watchMatchesText({product:product.name},text) && (!record.game || !product.game || record.game===product.game);
+}
+function productObservationRows(product){
+  const rows=[];
+  const add=(r,source)=>{
+    if(!productMatchesRecord(product,r))return;
+    const status=r.status||'';
+    const ts=r.ts||r.updatedAt||r.updated_at||r.created_at||new Date().toISOString();
+    const store=r.store||r.retailer||'Retailer';
+    rows.push({
+      uid:r.uid||r.id||uid(),
+      productId:product.uid,
+      product:r.product||product.name,
+      game:r.game||product.game,
+      store,
+      retailer:r.retailer||r.store||store,
+      status,
+      qty:Number(r.qty??r.quantity)||0,
+      price:Number(r.price)||0,
+      ts,
+      source,
+      confirmations:Number(r.confirmations)||0,
+      soldOutConfirmations:Number(r.soldOutConfirmations)||0,
+      notes:r.notes||'',
+      upc:r.upc||product.upc||'',
+      sku:r.sku||product.sku||''
+    });
+  };
+  (state.stockReports||[]).forEach(r=>add(r,'Your sighting'));
+  (state.communityReports||[]).forEach(r=>add(r,'Community'));
+  (state.inventoryResults||[]).forEach(r=>add(r,'Inventory connector'));
+  return rows.sort((a,b)=>new Date(b.ts)-new Date(a.ts));
+}
+function productObservationConfidence(o){
+  const t=new Date(o.ts||0).getTime();
+  const ageH=Number.isFinite(t)?Math.max(0,(Date.now()-t)/3600000):9999;
+  let base=o.source==='Inventory connector'?78:o.source==='Your sighting'?72:60;
+  if(ageH<=1)base+=17;
+  else if(ageH<=6)base+=11;
+  else if(ageH<=24)base+=5;
+  else if(ageH>72)base-=18;
+  base+=Math.min(8,(Number(o.confirmations)||0)*2);
+  base-=Math.min(18,(Number(o.soldOutConfirmations)||0)*4);
+  return Math.max(10,Math.min(99,Math.round(base)));
+}
+function latestProductStoreRows(product){
+  const m=new Map();
+  for(const o of productObservationRows(product)){
+    const key=normalizeName(o.store||o.retailer||'retailer');
+    if(!m.has(key))m.set(key,o);
+  }
+  return [...m.values()].map(o=>({...o,confidence:productObservationConfidence(o)}))
+    .sort((a,b)=>{
+      const aIn=/in|low/i.test(String(a.status))&&!/out/i.test(String(a.status));
+      const bIn=/in|low/i.test(String(b.status))&&!/out/i.test(String(b.status));
+      return Number(bIn)-Number(aIn) || b.confidence-a.confidence || new Date(b.ts)-new Date(a.ts);
+    });
+}
+function productRestockPattern(product){
+  const obs=productObservationRows(product).filter(o=>!/out/i.test(String(o.status||'')));
+  const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const dayCounts=Array(7).fill(0);
+  const parts={Morning:0,Afternoon:0,Evening:0,Overnight:0};
+  for(const o of obs){
+    const d=new Date(o.ts);
+    if(!Number.isFinite(d.getTime()))continue;
+    dayCounts[d.getDay()]++;
+    const h=d.getHours();
+    const part=h>=5&&h<12?'Morning':h>=12&&h<17?'Afternoon':h>=17&&h<22?'Evening':'Overnight';
+    parts[part]++;
+  }
+  const peakDay=Math.max(...dayCounts)>0?days[dayCounts.indexOf(Math.max(...dayCounts))]:'—';
+  const peakPart=Math.max(...Object.values(parts))>0?Object.entries(parts).sort((a,b)=>b[1]-a[1])[0][0]:'—';
+  return {count:obs.length,days:days.map((name,i)=>({name,count:dayCounts[i]})),peakDay,peakPart};
+}
+function productMovementTimeline(product){
+  const rows=[];
+  for(const s of state.sealed||[]){
+    if(!productMatchesRecord(product,{productId:s.productId,product:s.name,game:s.game}))continue;
+    rows.push({ts:s.addedAt||s.purchaseDate||'',type:'Inventory lot',title:`${s.qty} sealed in inventory`,detail:`${s.retailer||'Source not set'} • ${money((Number(s.cost)||0)*(Number(s.qty)||0))}`});
+  }
+  for(const p of state.purchases||[]){
+    if(productMatchesRecord(product,{product:p.item,game:product.game})){
+      rows.push({ts:p.date||'',type:'Purchase',title:p.item,detail:`${p.merchant||'Merchant'} • ${money(Number(p.amount))}`});
+    }
+  }
+  for(const o of state.openingLog||[]){
+    if(productMatchesRecord(product,{product:o.product,game:o.game})){
+      rows.push({ts:o.date||'',type:'Opened',title:`Opened ${o.qty||1}`,detail:o.notes||'Opening logged'});
+    }
+  }
+  for(const s of state.sales||[]){
+    if(productMatchesRecord(product,{product:s.name,game:s.game})){
+      rows.push({ts:s.soldAt||s.date||'',type:'Sold',title:`Sold ${s.qty||1}`,detail:`Net ${money(Number(s.net))}`});
+    }
+  }
+  for(const e of state.productInventoryEvents||[]){
+    if(e.productId===product.uid)rows.push({ts:e.ts||e.date||'',type:e.type||'Event',title:e.title||e.type||'Event',detail:e.detail||''});
+  }
+  return rows.filter(x=>x.ts).sort((a,b)=>new Date(b.ts)-new Date(a.ts)).slice(0,30);
+}
+function recordProductInventoryEvent(productId,type,title,detail=''){
+  state.productInventoryEvents.unshift({uid:uid(),productId,type,title,detail,ts:new Date().toISOString()});
+  state.productInventoryEvents=state.productInventoryEvents.slice(0,500);
+}
+function productCommandSummary(){
+  ensureProductInventorySchema();
+  const products=state.productCatalog||[];
+  const ownedQty=(state.sealed||[]).reduce((n,x)=>n+(Number(x.qty)||0),0);
+  const ownedCost=(state.sealed||[]).reduce((n,x)=>n+(Number(x.cost)||0)*(Number(x.qty)||0),0);
+  const ownedValue=(state.sealed||[]).reduce((n,x)=>n+(Number(x.current)||0)*(Number(x.qty)||0),0);
+  const watched=products.filter(p=>productStats(p).watch).length;
+  const need=products.filter(p=>productStats(p).gap>0).length;
+  const recent=products.reduce((n,p)=>n+productObservationRows(p).filter(o=>reportAgeMinutes(o.ts)<=1440).length,0);
+  return {products:products.length,ownedQty,ownedCost,ownedValue,gain:ownedValue-ownedCost,watched,need,recent};
+}
+function productInventoryStatus(product){
+  const latest=latestProductStoreRows(product);
+  const fresh=latest.filter(o=>reportAgeMinutes(o.ts)<=360);
+  const available=fresh.filter(o=>!/out/i.test(String(o.status||'')));
+  if(available.length)return {label:'RECENTLY SEEN',tone:'in',count:available.length,best:available.map(x=>x.price).filter(x=>x>0).sort((a,b)=>a-b)[0]||null};
+  if(fresh.length)return {label:'RECENTLY OUT',tone:'out',count:fresh.length,best:null};
+  if(latest.length)return {label:'STALE DATA',tone:'low',count:latest.length,best:null};
+  return {label:'NO DATA',tone:'unknown',count:0,best:null};
+}
+function setProductGameFilter(v){state.productCommandSettings.game=v;saveState();renderTools()}
+function setProductNeedFilter(v){state.productCommandSettings.need=v;saveState();renderTools()}
+function setProductSort(v){state.productCommandSettings.sort=v;saveState();renderTools()}
+function openProductStockReport(id){
+  const p=catalogProductById(id);if(!p)return;
+  window._stockReportPrefill={productId:p.uid,product:p.name,game:p.game,upc:p.upc||'',sku:p.sku||''};
+  stockGame=p.game||'Pokemon';
+  toolsTab='stockreport';renderTools();
+}
+function huntProductNow(id){
+  const p=catalogProductById(id);if(!p)return;
+  const s=productStats(p);
+  stockQuery=p.name;stockGame=p.game||'Pokemon';
+  if(s.watch?.retailers?.length)selectedRetailers=new Set(s.watch.retailers);
+  switchTab('stock');
+  setTimeout(()=>{
+    const q=$('stockQuery');if(q)q.value=p.name;
+    toast('Product loaded into Stock Finder');
+  },0);
+}
+function openProductVaultIQ(id){
+  const p=catalogProductById(id);if(!p)return;
+  let w=state.stockWatches.find(w=>productMatchesRecord(p,{product:w.product,game:w.game}));
+  if(!w){
+    w={uid:`temp-${p.uid}`,product:p.name,game:p.game,retailers:[...selectedRetailers],radius:Number(state.settings.radius)||25,maxPrice:Number(p.target)||Number(p.msrp)||null,priority:'High',desiredQty:Math.max(1,Number(p.desiredQty)||1),enabled:true,createdAt:new Date().toISOString()};
+  }
+  const iq=vaultIQProductScore(w);
+  alert(`VaultIQ Product Fit: ${iq.score}/100 — ${iq.label}\n\n${iq.reasons.join('\n')}`);
+}
+function editProductIdentifiers(id){
+  const p=catalogProductById(id);if(!p)return;
+  const upc=prompt('UPC / barcode (optional)',p.upc||'');if(upc!==null)p.upc=upc.trim();
+  const sku=prompt('Primary SKU / item number (optional)',p.sku||'');if(sku!==null)p.sku=sku.trim();
+  const release=prompt('Release date YYYY-MM-DD (optional)',p.releaseDate||'');if(release!==null)p.releaseDate=release.trim();
+  const packs=prompt('Pack count / packs inside (optional)',String(p.packCount||''));if(packs!==null)p.packCount=Math.max(0,Number(packs)||0);
+  const desired=prompt('Desired sealed quantity',String(p.desiredQty||0));if(desired!==null)p.desiredQty=Math.max(0,Number(desired)||0);
+  const min=prompt('Minimum keep-on-hand quantity',String(p.minOnHand||0));if(min!==null)p.minOnHand=Math.max(0,Number(min)||0);
+  const retailer=prompt('Retailer name for a SKU mapping (optional)','');
+  if(retailer && retailer.trim()){
+    const rid=prompt(`${retailer.trim()} SKU / item ID`,p.retailerSkus?.[retailer.trim()]||'');
+    if(rid!==null){
+      p.retailerSkus=p.retailerSkus||{};
+      if(rid.trim())p.retailerSkus[retailer.trim()]=rid.trim();
+      else delete p.retailerSkus[retailer.trim()];
+    }
+  }
+  saveState();renderTools();toast('Product identity updated');
+}
+function editSealedLotFromProduct(id){
+  const s=state.sealed.find(x=>x.uid===id);if(!s)return;
+  const qty=prompt('Quantity',String(s.qty||1));if(qty!==null)s.qty=Math.max(1,Number(qty)||1);
+  const cost=prompt('Cost EACH',String(s.cost||0));if(cost!==null)s.cost=Math.max(0,Number(cost)||0);
+  const current=prompt('Current tracked value EACH',String(s.current||0));if(current!==null)s.current=Math.max(0,Number(current)||0);
+  const retailer=prompt('Purchased from',s.retailer||'');if(retailer!==null)s.retailer=retailer.trim();
+  const date=prompt('Purchase date YYYY-MM-DD',s.purchaseDate||String(s.addedAt||'').slice(0,10));if(date!==null)s.purchaseDate=date.trim();
+  const loc=prompt('Storage location',s.location||'');if(loc!==null)s.location=loc.trim();
+  saveState();renderTools();toast('Inventory lot updated');
+}
+
 function productKeyFromParts(game='',set='',name=''){
   return normalizeName(`${game}|${set}|${name}`);
 }
@@ -934,39 +1167,60 @@ function ensureCatalogSeed(){
   }
 }
 function findCatalogMatches(query=''){
-  ensureCatalogSeed();
+  ensureProductInventorySchema();
   const q=normalizeName(query);
-  if(!q) return state.productCatalog;
-  return state.productCatalog.filter(p=>normalizeName(`${p.game} ${p.set} ${p.name} ${p.type}`).includes(q));
+  if(!q)return state.productCatalog;
+  return state.productCatalog.filter(p=>normalizeName(productIdentityText(p)).includes(q));
 }
 function productStats(product){
-  const owned = state.sealed.filter(s=>watchMatchesText({product:product.name}, s.name) && (!product.game || s.game===product.game));
-  const ownedQty = owned.reduce((n,x)=>n+(Number(x.qty)||0),0);
-  const costAvg = ownedQty ? owned.reduce((n,x)=>n+(Number(x.cost)||0)*(Number(x.qty)||0),0)/ownedQty : 0;
-  const currentAvg = ownedQty ? owned.reduce((n,x)=>n+(Number(x.current)||0)*(Number(x.qty)||0),0)/ownedQty : 0;
+  ensureProductInventorySchema();
+  const owned=(state.sealed||[]).filter(s=>productMatchesRecord(product,{productId:s.productId,product:s.name,game:s.game}));
+  const ownedQty=owned.reduce((n,x)=>n+(Number(x.qty)||0),0);
+  const costTotal=owned.reduce((n,x)=>n+(Number(x.cost)||0)*(Number(x.qty)||0),0);
+  const valueTotal=owned.reduce((n,x)=>n+(Number(x.current)||0)*(Number(x.qty)||0),0);
+  const costAvg=ownedQty?costTotal/ownedQty:0;
+  const currentAvg=ownedQty?valueTotal/ownedQty:0;
 
-  const reports = [
-    ...state.stockReports.map(r=>({product:r.product,store:r.store,price:Number(r.price)||0,ts:r.ts,status:r.status,source:'Your reports'})),
-    ...(state.communityReports||[]).map(r=>({product:r.product,store:r.store,price:Number(r.price)||0,ts:r.updated_at||r.created_at,status:r.status,source:'Community'})),
-    ...(state.inventoryResults||[]).map(r=>({product:r.product,store:r.store||r.retailer,price:Number(r.price)||0,ts:r.updatedAt,status:r.status,source:'Live connector'}))
-  ].filter(r=>watchMatchesText({product:product.name},r.product));
+  const reports=productObservationRows(product);
+  const inStock=reports.filter(r=>!/out/i.test(String(r.status||'')));
+  const prices=inStock.map(r=>Number(r.price)).filter(v=>v>0).sort((a,b)=>a-b);
+  const bestObserved=prices.length?prices[0]:null;
+  const observedAvg=prices.length?prices.reduce((a,b)=>a+b,0)/prices.length:null;
+  const observedMedian=prices.length?(prices.length%2?prices[(prices.length-1)/2]:(prices[prices.length/2-1]+prices[prices.length/2])/2):null;
+  const newest=inStock.map(r=>r.ts).filter(Boolean).sort((a,b)=>new Date(b)-new Date(a))[0]||null;
 
-  const inStock = reports.filter(r=>!/out/i.test(String(r.status||'')));
-  const prices = inStock.map(r=>r.price).filter(v=>v>0);
-  const bestObserved = prices.length ? Math.min(...prices) : null;
-  const newest = inStock.map(r=>r.ts).filter(Boolean).sort((a,b)=>new Date(b)-new Date(a))[0] || null;
+  const watch=(state.stockWatches||[]).find(w=>productMatchesRecord(product,{product:w.product,game:w.game}));
+  const opened=(state.openingLog||[]).filter(o=>productMatchesRecord(product,{product:o.product,game:o.game})).reduce((n,o)=>n+(Number(o.qty)||0),0);
+  const desiredQty=Math.max(0,Number(watch?.desiredQty)||Number(product.desiredQty)||0);
+  const gap=Math.max(0,desiredQty-ownedQty);
+  const minOnHand=Math.max(0,Number(product.minOnHand)||0);
+  const latestStores=latestProductStoreRows(product);
+  const inventoryStatus=productInventoryStatus(product);
+  const pattern=productRestockPattern(product);
 
-  const watch = state.stockWatches.find(w=>watchMatchesText(w,product.name) && (!product.game || w.game===product.game));
-  const opened = state.openingLog.filter(o=>watchMatchesText({product:product.name},o.product)).reduce((n,o)=>n+(Number(o.qty)||0),0);
-
-  return {ownedQty,costAvg,currentAvg,reports,inStock,bestObserved,newest,watch,opened};
+  return {
+    owned,ownedQty,costTotal,valueTotal,gain:valueTotal-costTotal,
+    costAvg,currentAvg,reports,inStock,bestObserved,observedAvg,observedMedian,newest,
+    watch,opened,desiredQty,gap,minOnHand,latestStores,inventoryStatus,pattern
+  };
 }
 function addCatalogProduct(product){
-  ensureCatalogSeed();
+  ensureProductInventorySchema();
   const key=productKeyFromParts(product.game,product.set,product.name);
   const existing=state.productCatalog.find(p=>productKeyFromParts(p.game,p.set,p.name)===key);
-  if(existing) return existing;
-  const next={uid:uid(),id:product.id||uid(),game:product.game||'Pokemon',name:product.name||'Sealed Product',set:product.set||'',type:product.type||'Sealed',msrp:Number(product.msrp)||0,target:Number(product.target)||0,image:product.image||'',notes:product.notes||'',createdAt:new Date().toISOString()};
+  if(existing){
+    if(product.upc&&!existing.upc)existing.upc=product.upc;
+    if(product.sku&&!existing.sku)existing.sku=product.sku;
+    saveState();return existing;
+  }
+  const next={
+    uid:uid(),id:product.id||uid(),game:product.game||'Pokemon',name:product.name||'Sealed Product',
+    set:product.set||'',type:product.type||'Sealed',msrp:Number(product.msrp)||0,target:Number(product.target)||0,
+    image:product.image||'',notes:product.notes||'',upc:product.upc||'',sku:product.sku||'',
+    releaseDate:product.releaseDate||'',packCount:Math.max(0,Number(product.packCount)||0),
+    desiredQty:Math.max(0,Number(product.desiredQty)||0),minOnHand:Math.max(0,Number(product.minOnHand)||0),
+    retailerSkus:product.retailerSkus||{},createdAt:new Date().toISOString()
+  };
   state.productCatalog.unshift(next);saveState();return next;
 }
 function catalogProductById(id){
@@ -1505,18 +1759,24 @@ function buyInventoryResult(x){
   logPurchaseAndSealed(x.product||'TCG product',x.store||x.retailer||'Retailer',Number(x.price)||0);
 }
 function logPurchaseAndSealed(product,merchant,defaultPrice){
+  ensureProductInventorySchema();
   const qRaw=prompt(`How many ${product} did you buy?`,'1');
   if(qRaw===null)return;
   const qty=Math.max(1,Number(qRaw)||1);
   const pRaw=prompt('Price paid EACH:',defaultPrice?String(defaultPrice.toFixed(2)):'');
   if(pRaw===null)return;
   const each=Math.max(0,Number(pRaw)||0);
+  const date=todayInput();
+  let p=findCatalogMatches(product).find(x=>x.game===(stockGame||'Pokemon'))||findCatalogMatches(product)[0]||null;
+  if(!p)p=addCatalogProduct({game:stockGame||'Pokemon',name:product,type:'Sealed',msrp:each,target:each});
   const addSealedChoice=confirm('Add this purchase to your Sealed Vault too?');
-  state.purchases.unshift({uid:uid(),merchant,item:product,category:'Stock Finder purchase',amount:each*qty,qty,date:todayInput(),notes:'Logged from Stock Finder'});
+  state.purchases.unshift({uid:uid(),merchant,item:product,category:'Stock Finder purchase',amount:each*qty,qty,date,notes:'Logged from Stock Finder / Product Command'});
   if(addSealedChoice){
-    state.sealed.unshift({uid:uid(),name:product,game:stockGame||'Pokemon',qty,cost:each,current:each,location:'New purchase',addedAt:new Date().toISOString()});
+    const location=(prompt('Storage location','New purchase')||'New purchase').trim();
+    state.sealed.unshift({uid:uid(),name:product,game:p.game,qty,cost:each,current:each,location,productId:p.uid,retailer:merchant||'',purchaseDate:date,upc:p.upc||'',sku:p.sku||'',ownerProfileId:activeCollectorProfileId,addedAt:new Date().toISOString()});
+    recordProductInventoryEvent(p.uid,'Acquired',`Bought ${qty} from Stock Finder`,`${merchant||'Retailer'} • ${money(each)} each`);
   }
-  saveState();renderStock();toast(addSealedChoice?'Purchase + sealed vault updated':'Purchase logged');
+  saveState();renderStock();toast(addSealedChoice?'Purchase + product inventory updated':'Purchase logged');
 }
 function huntWatch(id){
   const w=state.stockWatches.find(x=>x.uid===id);if(!w)return;
@@ -1976,7 +2236,7 @@ function renderTools(){
       ${toolButton('analytics','⌁','Dashboard Pro','Collection analytics')}
       ${toolButton('rips','✦','Rip Sessions','Openings & pull analytics')}
       ${toolButton('sets','▦','Sets','Master-set explorer')}
-      ${toolButton('products','◈','Products','Smart sealed pages')}
+      ${toolButton('products','◈','Product Command','Retail + sealed inventory')}
       ${toolButton('scanner','◉','Smart Scanner','Batch collection intake')}
       ${toolButton('wishlist','♡','Wishlist','Cards you want')}
       ${toolButton('stockreport','◎','Stock report','Log store inventory')}
@@ -2360,6 +2620,7 @@ function renderAnalyticsTool(){
   const rips=ripLeaderboard();
   const health=dataHealthScore();
   const salesStats=soldAnalytics();
+  const productCommandStats=productCommandSummary();
   const first=trend[0];
   const growth=first&&Number(first.market)?(t.market-Number(first.market))/Number(first.market)*100:0;
   const assetTotal=Math.max(1,t.market);
@@ -2423,6 +2684,16 @@ function renderAnalyticsTool(){
   <div class="analytics-grid">
     <div class="panel"><div class="section-head"><div><h2>Most valuable cards</h2><p>Largest current card positions by quantity × market.</p></div></div>${valuableHtml}</div>
     <div class="panel"><div class="section-head"><div><h2>Set completion leaders</h2><p>Your most complete tracked sets.</p></div><button class="link-btn" onclick="openTool('sets')">Set Explorer →</button></div>${setsHtml}</div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><h2>Product inventory</h2><p>Sealed inventory and retail-product tracking from Product Command.</p></div><button class="link-btn" onclick="openTool('products')">Product Command →</button></div>
+    <div class="meta-grid">
+      <div class="meta"><span>Tracked products</span><strong>${productCommandStats.products}</strong></div>
+      <div class="meta"><span>Owned sealed units</span><strong>${productCommandStats.ownedQty}</strong></div>
+      <div class="meta"><span>Sealed cost basis</span><strong>${money(productCommandStats.ownedCost)}</strong></div>
+      <div class="meta"><span>Tracked sealed value</span><strong>${money(productCommandStats.ownedValue)}</strong></div>
+    </div>
   </div>
 
   <div class="panel"><div class="section-head"><div><h2>Rip performance</h2><p>Opening-session value compared with recorded opening cost.</p></div><button class="link-btn" onclick="openTool('rips')">Rip Lab →</button></div>${ripsHtml}</div>`;
@@ -2675,81 +2946,212 @@ function openCardFromSet(card){activeCardDetail=card;switchTab('discover')}
 let activeProductId = null;
 
 function renderProductsTool(){
-  ensureCatalogSeed();
-  const query = window._productSearchQuery || '';
-  const results = findCatalogMatches(query);
-  const active = activeProductId ? catalogProductById(activeProductId) : null;
+  ensureProductInventorySchema();
+  const query=window._productSearchQuery||'';
+  const gameFilter=state.productCommandSettings.game||'All';
+  const needFilter=state.productCommandSettings.need||'All';
+  const sort=state.productCommandSettings.sort||'Priority';
+  let results=findCatalogMatches(query);
 
-  return `<div class="panel product-search-panel">
-    <div class="section-head"><div><div class="eyebrow">SMART PRODUCT DATABASE</div><h2>Sealed product explorer</h2><p>Create or open a product page, then connect stock sightings, purchase history, sealed ownership and opening logs.</p></div></div>
-    <div class="searchbar"><span>⌕</span><input id="productSearchQ" value="${esc(query)}" placeholder="Search ETB, booster box, tin, set..." oninput="setProductSearch(this.value)"><button class="btn primary" onclick="createCustomProduct()">＋ Product</button></div>
-    <div class="product-list">${results.length?results.slice(0,30).map(productListCard).join(''):`<div class="empty">No matching products. Create one above.</div>`}</div>
+  if(gameFilter!=='All')results=results.filter(p=>p.game===gameFilter);
+  if(needFilter==='Owned')results=results.filter(p=>productStats(p).ownedQty>0);
+  if(needFilter==='Need More')results=results.filter(p=>productStats(p).gap>0);
+  if(needFilter==='Watched')results=results.filter(p=>!!productStats(p).watch);
+  if(needFilter==='Recent Stock')results=results.filter(p=>productObservationRows(p).some(o=>reportAgeMinutes(o.ts)<=1440&&!/out/i.test(String(o.status||''))));
+
+  results=results.slice().sort((a,b)=>{
+    const A=productStats(a),B=productStats(b);
+    if(sort==='Name')return a.name.localeCompare(b.name);
+    if(sort==='Value')return B.valueTotal-A.valueTotal;
+    if(sort==='Need')return B.gap-A.gap;
+    if(sort==='Stock')return (B.inventoryStatus.count-A.inventoryStatus.count)||(new Date(B.newest||0)-new Date(A.newest||0));
+    const aScore=A.watch?vaultIQProductScore(A.watch).score:0;
+    const bScore=B.watch?vaultIQProductScore(B.watch).score:0;
+    return bScore-aScore || B.gap-A.gap || a.name.localeCompare(b.name);
+  });
+
+  const active=activeProductId?catalogProductById(activeProductId):null;
+  const sum=productCommandSummary();
+  const watched=state.productCatalog.filter(p=>productStats(p).watch).slice(0,12);
+
+  return `<div class="panel product-command-hero">
+    <div class="section-head"><div><div class="eyebrow">2GEN PRODUCT COMMAND</div><h2>Retail + sealed inventory intelligence</h2><p>Track exactly what products exist, what you own, what stores have been seen with stock, what you still need, what you paid, and what to hunt next.</p></div><button class="btn primary" onclick="createCustomProduct()">＋ Product</button></div>
+    <div class="stat-grid compact-stats">
+      <div class="stat-card"><span>Products tracked</span><strong>${sum.products}</strong><small>${sum.watched} active watches</small></div>
+      <div class="stat-card"><span>Owned sealed units</span><strong>${sum.ownedQty}</strong><small>${money(sum.ownedCost)} cost basis</small></div>
+      <div class="stat-card"><span>Tracked sealed value</span><strong>${money(sum.ownedValue)}</strong><small class="${sum.gain>=0?'good':'bad'}">${sum.gain>=0?'+':''}${money(sum.gain)} vs cost</small></div>
+      <div class="stat-card"><span>Products still needed</span><strong>${sum.need}</strong><small>${sum.recent} sightings in last 24h</small></div>
+    </div>
   </div>
-  <div class="panel">${active ? renderProductDetail(active) : `<div class="empty">Choose a product to open its smart product page.</div>`}</div>`;
+
+  <div class="panel product-command-filter">
+    <div class="searchbar"><span>⌕</span><input id="productSearchQ" value="${esc(query)}" placeholder="Product, set, UPC, SKU, retailer item ID..." oninput="setProductSearch(this.value)"></div>
+    <div class="product-filter-grid">
+      <label class="field"><span>TCG</span><select onchange="setProductGameFilter(this.value)"><option>All</option>${games.map(g=>`<option ${gameFilter===g?'selected':''}>${esc(g)}</option>`).join('')}</select></label>
+      <label class="field"><span>Inventory filter</span><select onchange="setProductNeedFilter(this.value)">${['All','Owned','Need More','Watched','Recent Stock'].map(v=>`<option ${needFilter===v?'selected':''}>${v}</option>`).join('')}</select></label>
+      <label class="field"><span>Sort</span><select onchange="setProductSort(this.value)">${['Priority','Need','Stock','Value','Name'].map(v=>`<option ${sort===v?'selected':''}>${v}</option>`).join('')}</select></label>
+    </div>
+  </div>
+
+  ${watched.length?`<div class="panel">
+    <div class="section-head"><div><div class="eyebrow">RETAIL INVENTORY BOARD</div><h2>Watched products at a glance</h2><p>Latest known store observations only — never fabricated stock.</p></div></div>
+    <div class="inventory-board">${watched.map(productInventoryBoardCard).join('')}</div>
+  </div>`:''}
+
+  <div class="product-command-grid">
+    <div class="panel">
+      <div class="section-head"><div><h2>Product database</h2><p>${results.length} matching product${results.length===1?'':'s'}.</p></div></div>
+      <div class="product-list command-product-list">${results.length?results.slice(0,60).map(productListCard).join(''):`<div class="empty">No matching products. Search UPC/SKU or create a product.</div>`}</div>
+    </div>
+    <div class="panel product-detail-shell">${active?renderProductDetail(active):`<div class="empty">Choose a product to open its complete inventory command page.</div>`}</div>
+  </div>`;
+}
+function productInventoryBoardCard(p){
+  const s=productStats(p),status=s.inventoryStatus;
+  const latest=s.latestStores[0];
+  const iq=s.watch?vaultIQProductScore(s.watch):null;
+  return `<button class="inventory-board-card" onclick="openProductPage('${p.uid}')">
+    <div class="inventory-board-head"><span class="stock-pill ${status.tone}">${status.label}</span>${iq?`<b class="iq-board">${iq.score} IQ</b>`:''}</div>
+    <strong>${esc(p.name)}</strong>
+    <span>${esc(p.game)} • ${esc(p.type)} • ${s.ownedQty}/${s.desiredQty||'—'} owned/goal</span>
+    <div class="inventory-board-foot"><span>${latest?`${esc(latest.store)} • ${humanAge(latest.ts)}`:'No store data'}</span><b>${latest?.price?money(latest.price):p.target?money(p.target):'—'}</b></div>
+  </button>`;
 }
 function setProductSearch(v){ window._productSearchQuery=v; renderTools(); }
 function productListCard(p){
   const s=productStats(p);
-  return `<button class="product-row ${activeProductId===p.uid?'active':''}" onclick="openProductPage('${p.uid}')">
+  const status=s.inventoryStatus;
+  const identity=[p.upc?`UPC ${p.upc}`:'',p.sku?`SKU ${p.sku}`:''].filter(Boolean).join(' • ');
+  return `<button class="product-row command-row ${activeProductId===p.uid?'active':''}" onclick="openProductPage('${p.uid}')">
     <div class="product-icon">${p.image?`<img src="${esc(p.image)}" alt="">`:'◈'}</div>
-    <div class="grow"><strong>${esc(p.name)}</strong><span>${esc(p.game)} • ${esc(p.set||'No set')} • ${esc(p.type||'Sealed')}</span></div>
-    <div class="right"><strong>${p.msrp?money(Number(p.msrp)):'—'}</strong><small>${s.ownedQty} owned</small></div>
+    <div class="grow">
+      <strong>${esc(p.name)}</strong>
+      <span>${esc(p.game)} • ${esc(p.set||'No set')} • ${esc(p.type||'Sealed')}</span>
+      ${identity?`<small>${esc(identity)}</small>`:''}
+      <div class="product-row-pills"><span class="stock-pill ${status.tone}">${status.label}</span>${s.gap>0?`<span class="need-pill">NEED ${s.gap}</span>`:''}${s.watch?`<span class="watch-pill">${esc(s.watch.priority||'High')} WATCH</span>`:''}</div>
+    </div>
+    <div class="right"><strong>${s.bestObserved!==null?money(s.bestObserved):p.msrp?money(Number(p.msrp)):'—'}</strong><small>${s.ownedQty} owned${s.desiredQty?` / ${s.desiredQty} goal`:''}</small></div>
   </button>`;
 }
 function openProductPage(id){ activeProductId=id; renderTools(); }
 function createCustomProduct(){
-  const name=prompt('Product name');if(!name)return;
+  const name=(prompt('Product name')||'').trim();if(!name)return;
   const game=prompt('TCG / game','Pokemon')||'Pokemon';
   const set=prompt('Set / release name','')||'';
-  const type=prompt('Product type (ETB, Booster Box, Tin, Bundle...)','ETB')||'Sealed';
-  const msrp=Number(prompt('MSRP (optional)','49.99')||0);
+  const type=prompt('Product type (ETB, Booster Box, Tin, Bundle, Collection...)','ETB')||'Sealed';
+  const msrp=Number(prompt('MSRP / reference retail price (optional)','49.99')||0);
   const target=Number(prompt('Your target buy price (optional)',msrp?String(msrp):'')||0);
-  const p=addCatalogProduct({game,name,set,type,msrp,target});
-  activeProductId=p.uid;renderTools();toast('Product page created');
+  const upc=(prompt('UPC / barcode (optional)','')||'').trim();
+  const sku=(prompt('Primary SKU / item number (optional)','')||'').trim();
+  const desiredQty=Math.max(0,Number(prompt('How many sealed copies do you want to own?','1'))||0);
+  const releaseDate=(prompt('Release date YYYY-MM-DD (optional)','')||'').trim();
+  const p=addCatalogProduct({game,name,set,type,msrp,target,upc,sku,desiredQty,releaseDate});
+  activeProductId=p.uid;renderTools();toast('Product added to Product Command');
 }
 function renderProductDetail(p){
   const s=productStats(p);
-  const costDiff=s.bestObserved!==null && p.msrp ? s.bestObserved-Number(p.msrp) : null;
-  return `<div class="product-detail">
+  const costDiff=s.bestObserved!==null&&p.msrp?s.bestObserved-Number(p.msrp):null;
+  const goal=s.desiredQty||0;
+  const goalPct=goal?Math.min(100,s.ownedQty/goal*100):0;
+  const retailerRows=s.latestStores;
+  const pattern=s.pattern;
+  const movement=productMovementTimeline(p);
+  const identityRows=[
+    ['UPC / Barcode',p.upc||'Not set'],
+    ['Primary SKU',p.sku||'Not set'],
+    ['Release',p.releaseDate||'Not set'],
+    ['Packs inside',p.packCount||'Not set']
+  ];
+  const retailerIds=Object.entries(p.retailerSkus||{});
+  const iq=s.watch?vaultIQProductScore(s.watch):null;
+  const maxDay=Math.max(1,...pattern.days.map(x=>x.count));
+
+  return `<div class="product-detail product-command-detail">
     <div class="product-hero">
       <div class="product-hero-icon">${p.image?`<img src="${esc(p.image)}" alt="">`:'◈'}</div>
-      <div class="grow"><div class="eyebrow">${esc(p.game)} • ${esc(p.type||'Sealed')}</div><h2>${esc(p.name)}</h2><p>${esc(p.set||'No set specified')}</p></div>
-      <button class="btn" onclick="editCatalogProduct('${p.uid}')">Edit</button>
+      <div class="grow"><div class="eyebrow">${esc(p.game)} • ${esc(p.type||'Sealed')}</div><h2>${esc(p.name)}</h2><p>${esc(p.set||'No set specified')}</p><div class="product-row-pills"><span class="stock-pill ${s.inventoryStatus.tone}">${s.inventoryStatus.label}</span>${s.watch?`<span class="watch-pill">${esc(s.watch.priority)} WATCH</span>`:''}${iq?`<span class="iq-pill">${iq.score} VAULTIQ</span>`:''}</div></div>
+      <div class="right"><button class="btn" onclick="editCatalogProduct('${p.uid}')">Edit basics</button><button class="btn" onclick="editProductIdentifiers('${p.uid}')">UPC / SKU</button></div>
     </div>
 
     <div class="stat-grid compact-stats">
-      <div class="stat-card"><span>MSRP</span><strong>${p.msrp?money(Number(p.msrp)):'—'}</strong><small>Reference price</small></div>
-      <div class="stat-card"><span>Your target</span><strong>${p.target?money(Number(p.target)):'—'}</strong><small>Desired buy price</small></div>
-      <div class="stat-card"><span>Best observed</span><strong>${s.bestObserved!==null?money(s.bestObserved):'—'}</strong><small class="${costDiff!==null&&costDiff<=0?'good':''}">${costDiff!==null?(costDiff<=0?'At/below MSRP':'Above MSRP'):'No sightings yet'}</small></div>
-      <div class="stat-card"><span>Owned sealed</span><strong>${s.ownedQty}</strong><small>${s.opened} opened logged</small></div>
+      <div class="stat-card"><span>MSRP</span><strong>${p.msrp?money(Number(p.msrp)):'—'}</strong><small>Reference retail</small></div>
+      <div class="stat-card"><span>Your max / target</span><strong>${p.target?money(Number(p.target)):'—'}</strong><small>Buy discipline</small></div>
+      <div class="stat-card"><span>Best observed</span><strong>${s.bestObserved!==null?money(s.bestObserved):'—'}</strong><small class="${costDiff!==null&&costDiff<=0?'good':''}">${costDiff!==null?(costDiff<=0?`${money(Math.abs(costDiff))} below MSRP`:`${money(costDiff)} above MSRP`):'No sightings yet'}</small></div>
+      <div class="stat-card"><span>Owned / desired</span><strong>${s.ownedQty}${goal?` / ${goal}`:''}</strong><small>${s.gap?`${s.gap} still needed`:'Goal satisfied / no goal'}</small></div>
     </div>
 
-    <div class="product-action-grid">
-      <button class="quick-card" onclick="watchProduct('${p.uid}')"><span class="big-icon">◎</span><b>${s.watch?'Edit stock watch':'Watch inventory'}</b><span>${s.watch?`${esc(s.watch.priority||'High')} priority • ${s.watch.radius} mi`:'Create a Restock Radar watch from this product.'}</span></button>
-      <button class="quick-card" onclick="buyCatalogProduct('${p.uid}')"><span class="big-icon">$</span><b>Log purchase</b><span>Add the purchase and optionally place it in your sealed vault.</span></button>
-      <button class="quick-card" onclick="addOwnedSealedFromProduct('${p.uid}')"><span class="big-icon">▣</span><b>Add owned</b><span>Add sealed copies you already own.</span></button>
-      <button class="quick-card" onclick="logOpeningFromProduct('${p.uid}')"><span class="big-icon">✦</span><b>Open product</b><span>Reduce sealed quantity and add an opening log entry.</span></button>
+    ${goal?`<div class="product-goal"><div class="kpi-line"><span>Sealed inventory goal</span><strong>${s.ownedQty}/${goal} • ${goalPct.toFixed(0)}%</strong></div><div class="progress"><div style="width:${goalPct}%"></div></div></div>`:''}
+
+    <div class="product-action-grid command-actions">
+      <button class="quick-card" onclick="watchProduct('${p.uid}')"><span class="big-icon">◎</span><b>${s.watch?'Stock watch':'Watch inventory'}</b><span>${s.watch?`${esc(s.watch.priority||'High')} • ${s.watch.radius} mi • max ${s.watch.maxPrice?money(s.watch.maxPrice):'open'}`:'Create a Restock Radar watch.'}</span></button>
+      <button class="quick-card" onclick="huntProductNow('${p.uid}')"><span class="big-icon">⌖</span><b>Hunt now</b><span>Load this exact product into Stock Finder and nearby-store workflow.</span></button>
+      <button class="quick-card" onclick="openProductStockReport('${p.uid}')"><span class="big-icon">◎</span><b>Log sighting</b><span>Record retailer, quantity and price with product identity attached.</span></button>
+      <button class="quick-card" onclick="buyCatalogProduct('${p.uid}')"><span class="big-icon">$</span><b>Log purchase</b><span>Add purchase cost and optionally sealed inventory.</span></button>
+      <button class="quick-card" onclick="addOwnedSealedFromProduct('${p.uid}')"><span class="big-icon">▣</span><b>Add inventory lot</b><span>Track retailer, date, cost, value and storage location.</span></button>
+      <button class="quick-card" onclick="logOpeningFromProduct('${p.uid}')"><span class="big-icon">✦</span><b>Open product</b><span>Reduce sealed inventory and launch a Rip Session.</span></button>
+      <button class="quick-card" onclick="openProductVaultIQ('${p.uid}')"><span class="big-icon">IQ</span><b>VaultIQ product fit</b><span>Analyze budget, quantity owned, target price and Restock Radar.</span></button>
     </div>
 
-    <div class="subpanel">
-      <div class="section-head"><div><h2>Inventory sightings</h2><p>Only real reports/results already known to 2GEN Vault are shown.</p></div></div>
-      ${s.inStock.length?s.inStock.sort((a,b)=>new Date(b.ts)-new Date(a.ts)).slice(0,12).map(r=>`<div class="compact-row"><div class="grow"><strong>${esc(r.store||'Retailer')}</strong><span>${esc(r.source)} • ${humanAge(r.ts)} • ${esc(r.status||'')}</span></div><div class="right"><strong>${r.price?money(r.price):'—'}</strong></div></div>`).join(''):`<div class="empty">No sightings for this product yet.</div>`}
-    </div>
-
-    <div class="subpanel">
-      <div class="section-head"><div><h2>Your sealed holdings</h2><p>Average cost and current tracked value for this product.</p></div></div>
-      <div class="meta-grid">
-        <div class="meta"><span>Quantity</span><strong>${s.ownedQty}</strong></div>
-        <div class="meta"><span>Avg cost</span><strong>${s.ownedQty?money(s.costAvg):'—'}</strong></div>
-        <div class="meta"><span>Avg tracked value</span><strong>${s.ownedQty?money(s.currentAvg):'—'}</strong></div>
+    <div class="product-command-sections">
+      <div class="subpanel">
+        <div class="section-head"><div><div class="eyebrow">PRODUCT IDENTITY</div><h2>UPC / SKU / release data</h2><p>Searchable identity data makes retailer/product matching much more reliable.</p></div></div>
+        <div class="meta-grid">${identityRows.map(([k,v])=>`<div class="meta"><span>${esc(k)}</span><strong>${esc(String(v))}</strong></div>`).join('')}</div>
+        ${retailerIds.length?`<div class="retailer-id-list">${retailerIds.map(([r,id])=>`<span><b>${esc(r)}</b> ${esc(id)}</span>`).join('')}</div>`:`<div class="empty mini-empty">No retailer-specific item IDs saved yet.</div>`}
       </div>
-    </div>
 
-    <div class="subpanel">
-      <div class="section-head"><div><h2>Opening history</h2><p>Track when sealed product leaves your vault because you opened it.</p></div></div>
-      ${state.openingLog.filter(o=>watchMatchesText({product:p.name},o.product)).length
-        ? state.openingLog.filter(o=>watchMatchesText({product:p.name},o.product)).slice(0,12).map(o=>`<div class="compact-row"><div class="thumb square"><b>✦</b></div><div class="grow"><strong>${esc(o.product)}</strong><span>${esc(o.date)} • Qty ${o.qty}${o.notes?' • '+esc(o.notes):''}</span></div></div>`).join('')
-        : `<div class="empty">No openings logged for this product yet.</div>`}
+      <div class="subpanel">
+        <div class="section-head"><div><div class="eyebrow">RETAIL INVENTORY</div><h2>Latest store observations</h2><p>Status, quantity, price, freshness and a transparent 2GEN report-confidence score.</p></div></div>
+        ${retailerRows.length?`<div class="retailer-inventory-table">${retailerRows.slice(0,16).map(o=>`<div class="retailer-inventory-row">
+          <div><strong>${esc(o.store)}</strong><span>${esc(o.source)} • ${humanAge(o.ts)}</span></div>
+          <span class="stock-pill ${/out/i.test(String(o.status))?'out':/low/i.test(String(o.status))?'low':'in'}">${esc(o.status||'Unknown')}</span>
+          <div class="center"><strong>${o.qty||'—'}</strong><span>qty</span></div>
+          <div class="right"><strong>${o.price?money(o.price):'—'}</strong><span class="confidence-badge ${o.confidence>=85?'high':o.confidence>=60?'mid':'low'}">${o.confidence}% confidence</span></div>
+        </div>`).join('')}</div>`:`<div class="empty">No legitimate reports/connectors have produced store inventory observations for this product yet.</div>`}
+      </div>
+
+      <div class="subpanel">
+        <div class="section-head"><div><div class="eyebrow">PRICE INTELLIGENCE</div><h2>Observed retail pricing</h2><p>Derived only from actual stored sightings/results.</p></div></div>
+        <div class="meta-grid">
+          <div class="meta"><span>Best observed</span><strong>${s.bestObserved!==null?money(s.bestObserved):'—'}</strong></div>
+          <div class="meta"><span>Average observed</span><strong>${s.observedAvg!==null?money(s.observedAvg):'—'}</strong></div>
+          <div class="meta"><span>Median observed</span><strong>${s.observedMedian!==null?money(s.observedMedian):'—'}</strong></div>
+          <div class="meta"><span>Price observations</span><strong>${s.inStock.filter(x=>x.price>0).length}</strong></div>
+        </div>
+      </div>
+
+      <div class="subpanel">
+        <div class="section-head"><div><div class="eyebrow">OBSERVED RESTOCK PATTERN</div><h2>When sightings have happened</h2><p>This summarizes your/community/connector observations. It does not claim a retailer will restock on this schedule.</p></div></div>
+        <div class="pattern-summary"><span><b>${pattern.peakDay}</b> most-observed day</span><span><b>${pattern.peakPart}</b> most-observed daypart</span><span><b>${pattern.count}</b> in-stock observations</span></div>
+        <div class="weekday-bars">${pattern.days.map(d=>`<div><i style="height:${Math.max(4,d.count/maxDay*100)}%"></i><span>${d.name}</span><b>${d.count}</b></div>`).join('')}</div>
+      </div>
+
+      <div class="subpanel">
+        <div class="section-head"><div><div class="eyebrow">OWNED INVENTORY</div><h2>Sealed inventory lots</h2><p>Each lot can preserve its own cost, value, retailer, date and storage location.</p></div></div>
+        <div class="meta-grid">
+          <div class="meta"><span>Quantity</span><strong>${s.ownedQty}</strong></div>
+          <div class="meta"><span>Total cost</span><strong>${money(s.costTotal)}</strong></div>
+          <div class="meta"><span>Tracked value</span><strong>${money(s.valueTotal)}</strong></div>
+          <div class="meta"><span>Difference</span><strong class="${s.gain>=0?'good':'bad'}">${s.gain>=0?'+':''}${money(s.gain)}</strong></div>
+        </div>
+        ${s.owned.length?s.owned.map(l=>`<div class="inventory-lot-row"><div class="thumb square"><b>▣</b></div><div class="grow"><strong>Qty ${l.qty} • ${money(Number(l.cost))} cost ea.</strong><span>${esc(l.retailer||'Retailer not set')} • ${esc(l.purchaseDate||String(l.addedAt||'').slice(0,10)||'Date not set')} • ${esc(l.location||'No location')}</span></div><div class="right"><strong>${money((Number(l.current)||0)*(Number(l.qty)||0))}</strong><button class="link-btn" onclick="editSealedLotFromProduct('${l.uid}')">Edit lot</button></div></div>`).join(''):`<div class="empty">No owned sealed lots for this product yet.</div>`}
+      </div>
+
+      <div class="subpanel">
+        <div class="section-head"><div><div class="eyebrow">STOCK HISTORY</div><h2>Observation timeline</h2><p>See exactly where the inventory picture came from.</p></div></div>
+        ${s.reports.length?s.reports.slice(0,20).map(r=>`<div class="inventory-history-row"><div><strong>${esc(r.store)}</strong><span>${esc(r.source)} • ${humanAge(r.ts)}${r.qty?` • Qty ${r.qty}`:''}</span></div><span class="stock-pill ${/out/i.test(String(r.status))?'out':/low/i.test(String(r.status))?'low':'in'}">${esc(r.status||'Unknown')}</span><strong>${r.price?money(r.price):'—'}</strong></div>`).join(''):`<div class="empty">No stock history recorded yet.</div>`}
+      </div>
+
+      <div class="subpanel">
+        <div class="section-head"><div><div class="eyebrow">PRODUCT MOVEMENT</div><h2>Purchase / open / sell timeline</h2><p>Follow how sealed inventory moved through your collection.</p></div></div>
+        ${movement.length?movement.map(m=>`<div class="movement-row"><div class="movement-icon">${m.type==='Opened'?'✦':m.type==='Sold'?'$':m.type==='Purchase'?'＋':'▣'}</div><div class="grow"><strong>${esc(m.title)}</strong><span>${esc(m.type)} • ${dateShort(m.ts)} • ${esc(m.detail)}</span></div></div>`).join(''):`<div class="empty">No movement history yet.</div>`}
+      </div>
+
+      <div class="subpanel">
+        <div class="section-head"><div><h2>Opening history</h2><p>Track when sealed product leaves inventory because it was opened.</p></div></div>
+        ${state.openingLog.filter(o=>productMatchesRecord(p,{product:o.product,game:o.game})).length
+          ? state.openingLog.filter(o=>productMatchesRecord(p,{product:o.product,game:o.game})).slice(0,12).map(o=>`<div class="compact-row"><div class="thumb square"><b>✦</b></div><div class="grow"><strong>${esc(o.product)}</strong><span>${esc(o.date)} • Qty ${o.qty}${o.notes?' • '+esc(o.notes):''}</span></div></div>`).join('')
+          : `<div class="empty">No openings logged for this product yet.</div>`}
+      </div>
     </div>
 
     ${p.notes?`<div class="notice"><span>ℹ</span><span>${esc(p.notes)}</span></div>`:''}
@@ -2757,10 +3159,13 @@ function renderProductDetail(p){
 }
 function editCatalogProduct(id){
   const p=catalogProductById(id);if(!p)return;
-  const set=prompt('Set / release',p.set||'');if(set!==null)p.set=set;
-  const type=prompt('Product type',p.type||'Sealed');if(type!==null)p.type=type;
-  const msrp=prompt('MSRP',p.msrp??'');if(msrp!==null)p.msrp=msrp===''?0:Math.max(0,Number(msrp)||0);
-  const target=prompt('Target buy price',p.target??'');if(target!==null)p.target=target===''?0:Math.max(0,Number(target)||0);
+  const name=prompt('Product name',p.name||'');if(name!==null&&name.trim())p.name=name.trim();
+  const game=prompt('TCG / game',p.game||'Pokemon');if(game!==null&&game.trim())p.game=game.trim();
+  const set=prompt('Set / release',p.set||'');if(set!==null)p.set=set.trim();
+  const type=prompt('Product type',p.type||'Sealed');if(type!==null)p.type=type.trim()||'Sealed';
+  const msrp=prompt('MSRP / reference retail',p.msrp??'');if(msrp!==null)p.msrp=msrp===''?0:Math.max(0,Number(msrp)||0);
+  const target=prompt('Target / max buy price',p.target??'');if(target!==null)p.target=target===''?0:Math.max(0,Number(target)||0);
+  const desired=prompt('Desired sealed quantity',String(p.desiredQty||0));if(desired!==null)p.desiredQty=Math.max(0,Number(desired)||0);
   const notes=prompt('Notes',p.notes||'');if(notes!==null)p.notes=notes;
   saveState();renderTools();toast('Product updated');
 }
@@ -2781,16 +3186,30 @@ function watchProduct(id){
 }
 function buyCatalogProduct(id){
   const p=catalogProductById(id);if(!p)return;
-  logPurchaseAndSealed(p.name,'Retail purchase',Number(p.target)||Number(p.msrp)||0);
+  const qty=Math.max(1,Number(prompt(`How many ${p.name} did you buy?`,'1'))||1);
+  const each=Math.max(0,Number(prompt('Price paid EACH',p.target?String(p.target):p.msrp?String(p.msrp):'0'))||0);
+  const retailer=(prompt('Retailer / store','')||'').trim();
+  const date=(prompt('Purchase date YYYY-MM-DD',todayInput())||todayInput()).trim();
+  state.purchases.unshift({uid:uid(),merchant:retailer||'Retail purchase',item:p.name,category:'Product inventory purchase',amount:each*qty,qty,date,notes:`Product Command${p.upc?` • UPC ${p.upc}`:''}`});
+  if(confirm('Add these units to your Sealed Vault inventory too?')){
+    const current=Math.max(0,Number(prompt('Current tracked value EACH',String(each)))||each);
+    const location=(prompt('Storage location','Shelf / bin')||'').trim();
+    state.sealed.unshift({uid:uid(),name:p.name,game:p.game,qty,cost:each,current,location,productId:p.uid,retailer,purchaseDate:date,upc:p.upc||'',sku:p.sku||'',ownerProfileId:activeCollectorProfileId,addedAt:new Date().toISOString()});
+    recordProductInventoryEvent(p.uid,'Acquired',`Purchased ${qty} unit${qty===1?'':'s'}`,`${retailer||'Retailer'} • ${money(each)} each`);
+  }
+  saveState();renderTools();toast('Product purchase logged');
 }
 function addOwnedSealedFromProduct(id){
   const p=catalogProductById(id);if(!p)return;
-  const qty=Math.max(1,Number(prompt(`How many ${p.name} do you own?`,'1'))||1);
+  const qty=Math.max(1,Number(prompt(`How many ${p.name} are in this inventory lot?`,'1'))||1);
   const cost=Math.max(0,Number(prompt('Cost paid EACH',p.target?String(p.target):p.msrp?String(p.msrp):'0'))||0);
-  const current=Math.max(0,Number(prompt('Current estimated value EACH',p.msrp?String(p.msrp):String(cost)))||0);
-  const location=prompt('Storage location','Shelf / bin')||'';
-  state.sealed.unshift({uid:uid(),name:p.name,game:p.game,qty,cost,current,location,productId:p.uid,ownerProfileId:activeCollectorProfileId,addedAt:new Date().toISOString()});
-  saveState();renderTools();toast('Added to sealed vault');
+  const current=Math.max(0,Number(prompt('Current tracked value EACH',p.msrp?String(p.msrp):String(cost)))||0);
+  const retailer=(prompt('Purchased from / source','')||'').trim();
+  const purchaseDate=(prompt('Purchase date YYYY-MM-DD',todayInput())||todayInput()).trim();
+  const location=(prompt('Storage location','Shelf / bin')||'').trim();
+  state.sealed.unshift({uid:uid(),name:p.name,game:p.game,qty,cost,current,location,productId:p.uid,retailer,purchaseDate,upc:p.upc||'',sku:p.sku||'',ownerProfileId:activeCollectorProfileId,addedAt:new Date().toISOString()});
+  recordProductInventoryEvent(p.uid,'Acquired',`Added ${qty} sealed unit${qty===1?'':'s'}`,`${retailer||'Source not set'} • ${money(cost)} cost each`);
+  saveState();renderTools();toast('Inventory lot added');
 }
 function logOpeningFromProduct(id){
   const p=catalogProductById(id);if(!p)return;
@@ -2804,7 +3223,9 @@ function logOpeningFromProduct(id){
   }
   state.sealed=state.sealed.filter(s=>s.qty>0);
   const actual=qty-left;
-  state.openingLog.unshift({uid:uid(),product:p.name,game:p.game,qty:actual,date:todayInput(),notes:prompt('Opening notes (optional)','')||''});
+  const openingNotes=prompt('Opening notes (optional)','')||'';
+  state.openingLog.unshift({uid:uid(),product:p.name,game:p.game,qty:actual,date:todayInput(),notes:openingNotes});
+  if(actual>0)recordProductInventoryEvent(p.uid,'Opened',`Opened ${actual} unit${actual===1?'':'s'}`,openingNotes||`${money(spent)} cost basis removed`);
   if(actual>0 && confirm('Start a Rip Session for this opening?')){
     const packs=Math.max(0,Number(prompt('How many packs are inside / being opened?','1'))||0);
     const session={uid:uid(),name:`${p.name} Opening`,game:p.game,product:p.name,packs,cost:spent,hitThreshold:5,date:todayInput(),notes:'Created from Smart Product page',pulls:[],createdAt:new Date().toISOString()};
@@ -3238,16 +3659,42 @@ function renderWishlistTool(){
 }
 function removeWishlist(id){state.wishlist=state.wishlist.filter(x=>x.uid!==id);saveState();renderTools()}
 function renderStockReportTool(){
-  return `<div class="panel"><div class="section-head"><div><h2>Add stock report</h2><p>Record what you saw and when. This becomes community reporting when cloud accounts are added.</p></div></div>
-    <div class="form-grid"><label class="field"><span>Store</span><input id="reportStore" placeholder="Target - Asheville"></label><label class="field"><span>Status</span><select id="reportStatus"><option>In stock</option><option>Low stock</option><option>Out of stock</option></select></label><label class="field full"><span>Product</span><input id="reportProduct" placeholder="Prismatic Evolutions ETB"></label><label class="field"><span>Quantity seen</span><input id="reportQty" type="number" min="0" placeholder="4"></label><label class="field"><span>Price</span><input id="reportPrice" type="number" min="0" step=".01" placeholder="49.99"></label><label class="field full"><span>Notes</span><textarea id="reportNotes" placeholder="Aisle, limit, restock notes..."></textarea></label></div>
+  const pre=window._stockReportPrefill||{};
+  return `<div class="panel"><div class="section-head"><div><div class="eyebrow">PRODUCT INVENTORY SIGHTING</div><h2>Add stock report</h2><p>Record exactly what product you saw, where, how many and at what price.</p></div></div>
+    <div class="form-grid">
+      <label class="field"><span>Store / location</span><input id="reportStore" placeholder="Target - Asheville"></label>
+      <label class="field"><span>Status</span><select id="reportStatus"><option>In stock</option><option>Low stock</option><option>Out of stock</option></select></label>
+      <label class="field full"><span>Product</span><input id="reportProduct" value="${esc(pre.product||'')}" placeholder="Prismatic Evolutions ETB"></label>
+      <label class="field"><span>Quantity seen</span><input id="reportQty" type="number" min="0" placeholder="4"></label>
+      <label class="field"><span>Price EACH</span><input id="reportPrice" type="number" min="0" step=".01" placeholder="49.99"></label>
+      <label class="field"><span>UPC / barcode</span><input id="reportUpc" value="${esc(pre.upc||'')}" placeholder="Optional"></label>
+      <label class="field"><span>SKU / item ID</span><input id="reportSku" value="${esc(pre.sku||'')}" placeholder="Optional"></label>
+      <label class="field full"><span>Notes</span><textarea id="reportNotes" placeholder="Aisle, purchase limit, display location, restock notes..."></textarea></label>
+    </div>
+    <input id="reportProductId" type="hidden" value="${esc(pre.productId||'')}">
     <label class="field" style="margin-top:10px"><span>Community</span><select id="reportPublish"><option value="local">Save on this phone only</option><option value="cloud">Publish to 2GEN Community Network</option></select></label>
-    <button class="btn primary" style="margin-top:10px" onclick="addStockReport()">Save report</button>
+    <button class="btn primary" style="margin-top:10px" onclick="addStockReport()">Save inventory sighting</button>
   </div>`;
 }
 async function addStockReport(){
   const store=$('reportStore')?.value.trim(), product=$('reportProduct')?.value.trim(); if(!store||!product){toast('Store and product are required');return;}
-  const report={uid:uid(),store,product,game:stockGame||'Pokemon',status:$('reportStatus')?.value||'In stock',qty:Number($('reportQty')?.value)||0,price:Number($('reportPrice')?.value)||0,notes:$('reportNotes')?.value.trim()||'',ts:new Date().toISOString(),confirmations:0,soldOutConfirmations:0};
+  let productId=$('reportProductId')?.value||'';
+  let catalog=productId?catalogProductById(productId):null;
+  if(!catalog){
+    const matches=findCatalogMatches(product);
+    catalog=matches.find(p=>p.game===(stockGame||'Pokemon'))||matches[0]||null;
+  }
+  const upc=$('reportUpc')?.value.trim()||catalog?.upc||'';
+  const sku=$('reportSku')?.value.trim()||catalog?.sku||'';
+  if(catalog){
+    if(upc&&!catalog.upc)catalog.upc=upc;
+    if(sku&&!catalog.sku)catalog.sku=sku;
+    productId=catalog.uid;
+  }
+  const report={uid:uid(),productId,store,product,game:catalog?.game||stockGame||'Pokemon',status:$('reportStatus')?.value||'In stock',qty:Number($('reportQty')?.value)||0,price:Number($('reportPrice')?.value)||0,upc,sku,source:'manual_sighting',notes:$('reportNotes')?.value.trim()||'',ts:new Date().toISOString(),confirmations:0,soldOutConfirmations:0};
   state.stockReports.unshift(report);
+  if(catalog)recordProductInventoryEvent(catalog.uid,'Sighting',`${report.status} at ${store}`,`${report.qty?`Qty ${report.qty} • `:''}${report.price?money(report.price):'Price not entered'}`);
+  window._stockReportPrefill=null;
   saveState();
 
   if(($('reportPublish')?.value||'local')==='cloud'){
@@ -4070,6 +4517,30 @@ function buildActionCenter(includeSnoozed=false){
       detail:refreshDays===null?`${liveCards.length} supported cards can begin price tracking.`:`Last bulk refresh ${Math.floor(refreshDays)} days ago.`,
       tool:'market',cta:'Refresh prices'
     });
+  }
+
+
+  // Product inventory goals and retail opportunities.
+  for(const p of state.productCatalog||[]){
+    const ps=productStats(p);
+    if(ps.gap>0 && ps.watch){
+      const iq=vaultIQProductScore(ps.watch);
+      if(ps.bestObserved!==null && ps.watch.maxPrice && ps.bestObserved<=Number(ps.watch.maxPrice)){
+        push({
+          id:`product-buy-${p.uid}`,priority:iq.score>=68?'high':'medium',icon:'◈',category:'Stock',
+          title:`Product target available: ${p.name}`,
+          detail:`Need ${ps.gap} more • best observed ${money(ps.bestObserved)} • max ${money(Number(ps.watch.maxPrice))}`,
+          tool:'products',cta:'Open Product Command'
+        });
+      }else if(ps.inventoryStatus.label==='RECENTLY SEEN'){
+        push({
+          id:`product-gap-${p.uid}`,priority:'medium',icon:'◈',category:'Stock',
+          title:`Inventory goal gap: ${p.name}`,
+          detail:`Own ${ps.ownedQty}/${ps.desiredQty} • recently seen at ${ps.inventoryStatus.count} store source${ps.inventoryStatus.count===1?'':'s'}`,
+          tool:'products',cta:'Review product'
+        });
+      }
+    }
   }
 
   // Near-complete sets.
@@ -4937,7 +5408,7 @@ Object.assign(window,{
   switchTab,openVault,openTool,toggleRetailer,saveStockArea,useMyLocation,runInventorySearch,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
-  selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
+  selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
   setToolTab,setDiscoverGame,setScannerGame,setTradeSearchGame,openVaultIQCard,queueVaultIQCard,queueVaultIQWatch,updateAcquisitionStatus,removeAcquisitionItem,editVaultIQSettings,vaultIQDealCheck,setShowcaseProfile,toggleShowcaseFeatured,editShowcaseText,toggleShowcaseSetting,downloadShowcaseHtml,downloadShowcaseJson,shareShowcase,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
@@ -4967,6 +5438,7 @@ ensureFamilySchema();
 ensureSalesSchema();
 ensureScannerSchema();
 ensureCatalogSeed();
+ensureProductInventorySchema();
 ensureDailySnapshot();
 evaluateWatchtower({notify:false});
 render('home');

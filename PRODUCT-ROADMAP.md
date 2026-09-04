@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v3.0 VaultIQ + Universal Live Network
+## Current build: v4.0 Product Command
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -274,3 +274,25 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Restock Radar / sealed-product scoring
 - Next Hunt Plan
 - Acquisition Queue
+
+
+## v4.0 completed
+- Product Command Center
+- UPC / barcode tracking
+- SKU / item-number tracking
+- Retailer-specific product IDs
+- Desired sealed quantity and inventory gaps
+- Retail Inventory Board
+- Store quantity / price / status / freshness
+- Transparent report-confidence scoring
+- Product stock history
+- Observed weekday/daypart restock patterns
+- Sealed inventory lots
+- Retailer + purchase-date lot metadata
+- Product movement timeline
+- Product-aware stock reports
+- Product search by UPC/SKU/retailer ID
+- Product Command -> Hunt Mode
+- Product Command -> VaultIQ
+- Dashboard Pro product analytics
+- Action Center product opportunities
