@@ -3945,20 +3945,35 @@ async function openLiveScannerCamera(){
       <div class="scanner-live-stage">
         <video id="scannerLiveVideo" autoplay muted playsinline></video>
         <div class="scanner-card-guide"><i></i></div>
-        <div id="scannerCameraMessage" class="scanner-camera-message">Starting rear camera…</div>
+        <div id="scannerCameraMessage" class="scanner-camera-message">Waiting for camera permission…</div>
       </div>
       <div class="scanner-camera-tips">Keep the card flat • use even light • reduce glare • make the name and collector number readable</div>
       <div class="scanner-camera-controls">
         <button type="button" class="btn" onclick="closeLiveScannerCamera();openScannerFilePicker()">Gallery</button>
         <button type="button" id="scannerCaptureBtn" class="scanner-shutter" onclick="captureLiveScannerFrame()" disabled aria-label="Take photo"></button>
-        <button type="button" class="btn" onclick="scannerCameraPermissionHelp()">Permission help</button>
+        <button type="button" class="btn" onclick="retryLiveScannerCamera()">Retry camera</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
 
+  await startLiveScannerStream();
+}
+async function startLiveScannerStream(){
   const video=document.getElementById('scannerLiveVideo');
   const message=document.getElementById('scannerCameraMessage');
   const capture=document.getElementById('scannerCaptureBtn');
+  if(!video)return;
+
+  if(scannerLiveStream){
+    try{scannerLiveStream.getTracks().forEach(t=>t.stop())}catch{}
+    scannerLiveStream=null;
+  }
+  if(message){
+    message.style.opacity='1';
+    message.classList.remove('ready','error');
+    message.textContent='Waiting for camera permission…';
+  }
+  if(capture)capture.disabled=true;
 
   try{
     let stream;
@@ -3972,35 +3987,54 @@ async function openLiveScannerCamera(){
         }
       });
     }catch(firstError){
-      // Some Android browsers reject advanced rear-camera constraints.
       stream=await navigator.mediaDevices.getUserMedia({audio:false,video:true});
+    }
+
+    if(!scannerLiveCameraOpen){
+      try{stream.getTracks().forEach(t=>t.stop())}catch{}
+      return;
     }
 
     scannerLiveStream=stream;
     video.srcObject=stream;
-    await video.play();
-    message.textContent='Rear camera ready';
-    message.classList.add('ready');
-    capture.disabled=false;
 
-    setTimeout(()=>{ if(message) message.style.opacity='.15'; },1400);
+    await new Promise((resolve,reject)=>{
+      if(video.readyState>=1 && video.videoWidth) return resolve();
+      const timer=setTimeout(()=>resolve(),3000);
+      video.addEventListener('loadedmetadata',()=>{clearTimeout(timer);resolve();},{once:true});
+      video.addEventListener('error',()=>{clearTimeout(timer);reject(new Error('Camera video could not start'));},{once:true});
+    });
+
+    try{await video.play()}catch{}
+    if(message){
+      message.textContent='Camera ready — tap the white shutter button';
+      message.classList.add('ready');
+      message.style.opacity='1';
+    }
+    if(capture)capture.disabled=false;
   }catch(e){
-    scannerLiveCameraOpen=false;
     if(message){
       message.style.opacity='1';
       message.classList.add('error');
       if(e?.name==='NotAllowedError'){
-        message.textContent='Camera permission was denied. Tap Permission help or use Gallery.';
+        message.textContent='Camera permission is blocked. Allow Camera permission, then tap Retry camera.';
       }else if(e?.name==='NotFoundError'){
         message.textContent='No camera was detected. Use Gallery instead.';
       }else{
-        message.textContent='Could not start the camera. Use Gallery or check camera permission.';
+        message.textContent='Camera did not start. Tap Retry camera or use Gallery.';
       }
     }
-    if(capture)capture.disabled=true;
-    toast(e?.name==='NotAllowedError'?'Camera permission is blocked':'Could not start phone camera');
+    toast(e?.name==='NotAllowedError'?'Camera permission is blocked':'Camera did not start');
   }
 }
+async function retryLiveScannerCamera(){
+  if(!scannerLiveCameraOpen){
+    await openLiveScannerCamera();
+    return;
+  }
+  await startLiveScannerStream();
+}
+
 async function captureLiveScannerFrame(){
   const video=document.getElementById('scannerLiveVideo');
   if(!video || !video.videoWidth || !video.videoHeight){
@@ -6096,7 +6130,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,setDiscoverGame,setScannerGame,setTradeSearchGame,openVaultIQCard,queueVaultIQCard,queueVaultIQWatch,updateAcquisitionStatus,removeAcquisitionItem,editVaultIQSettings,vaultIQDealCheck,setShowcaseProfile,toggleShowcaseFeatured,editShowcaseText,toggleShowcaseSetting,downloadShowcaseHtml,downloadShowcaseJson,shareShowcase,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,openScannerCamera,openScannerFilePicker,openLiveScannerCamera,closeLiveScannerCamera,captureLiveScannerFrame,scannerCameraPermissionHelp,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,setDiscoverGame,setScannerGame,setTradeSearchGame,openVaultIQCard,queueVaultIQCard,queueVaultIQWatch,updateAcquisitionStatus,removeAcquisitionItem,editVaultIQSettings,vaultIQDealCheck,setShowcaseProfile,toggleShowcaseFeatured,editShowcaseText,toggleShowcaseSetting,downloadShowcaseHtml,downloadShowcaseJson,shareShowcase,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,openScannerCamera,openScannerFilePicker,openLiveScannerCamera,startLiveScannerStream,retryLiveScannerCamera,closeLiveScannerCamera,captureLiveScannerFrame,scannerCameraPermissionHelp,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -6131,4 +6165,5 @@ evaluateWatchtower({notify:false});
 render('home');
 })();
 
-document.addEventListener('visibilitychange',()=>{if(document.hidden&&scannerLiveCameraOpen)closeLiveScannerCamera();});
+// v7.2.1: Do not close camera on visibilitychange; Android permission prompts can temporarily hide the PWA.
+window.addEventListener('pagehide',()=>{if(scannerLiveCameraOpen)closeLiveScannerCamera();});

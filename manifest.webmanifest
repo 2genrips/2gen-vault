@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault v7.2 \u2014 true in-app rear camera scanner using getUserMedia, with gallery fallback, OCR-assisted identification and live-provider market-reference lookup.",
+  "description": "2GEN Vault v7.2.1 \u2014 Android camera permission-flow hotfix. Keeps the scanner camera open while the OS permission dialog is shown.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
