@@ -1,7 +1,7 @@
 {
   "name": "2GEN Vault",
   "short_name": "2GEN Vault",
-  "description": "2GEN Vault by 2GEN RIPS \u2014 Collector OS with Rip Sessions, pull analytics, Master Set Lab, Smart Product Pages, Stock Finder and Restock Radar.",
+  "description": "2GEN Vault by 2GEN RIPS \u2014 Collector OS with Dashboard Pro analytics, Rip Sessions, Master Set Lab, Smart Products, Stock Finder and Restock Radar.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

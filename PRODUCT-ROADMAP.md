@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v1.0 Rip Sessions
+## Current build: v1.1 Dashboard Pro
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -119,3 +119,17 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - Set-progress impact
 - Smart Product / Sealed Vault -> Rip Session
 - Session export
+
+
+## v1.1 completed
+- Daily portfolio snapshots
+- Portfolio trend chart
+- Singles vs sealed allocation
+- Value by TCG
+- Six-month spending chart
+- Strongest / weakest positions vs cost basis
+- Most valuable card positions
+- Set completion analytics
+- Rip-session leaderboard
+- Vault Data Health score
+- Backup freshness tracking

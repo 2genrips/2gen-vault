@@ -41,6 +41,7 @@ const seed = {
   productCatalog: [],
   openingLog: [],
   ripSessions: [],
+  portfolioSnapshots: [],
   inventoryResults: [],
   nearbyStores: [],
   huntRoute: [],
@@ -55,7 +56,8 @@ const seed = {
     locationLabel:'',
     monthlyBudget:200,
     brand:'2GEN Vault',
-    tagline:'Two Generations. One Collection.'
+    tagline:'Two Generations. One Collection.',
+    lastBackupAt:null
   }
 };
 
@@ -254,6 +256,161 @@ function totals(){
   const cost = cardCost + sealedCost;
   return {cards,cardMarket,cardCost,sealedValue,sealedCost,market,cost,gain:market-cost,pct:cost?((market-cost)/cost*100):0};
 }
+
+function currentSnapshot(){
+  const t=totals();
+  return {
+    uid:uid(),
+    ts:new Date().toISOString(),
+    day:new Date().toISOString().slice(0,10),
+    market:t.market,
+    cost:t.cost,
+    cardMarket:t.cardMarket,
+    sealedValue:t.sealedValue,
+    cards:t.cards,
+    sealedQty:state.sealed.reduce((n,x)=>n+(Number(x.qty)||0),0)
+  };
+}
+function ensureDailySnapshot(){
+  if(!Array.isArray(state.portfolioSnapshots)) state.portfolioSnapshots=[];
+  const day=new Date().toISOString().slice(0,10);
+  const existing=state.portfolioSnapshots.find(x=>x.day===day);
+  const snap=currentSnapshot();
+  if(existing){
+    Object.assign(existing,snap,{uid:existing.uid});
+  }else{
+    state.portfolioSnapshots.push(snap);
+  }
+  state.portfolioSnapshots=state.portfolioSnapshots
+    .sort((a,b)=>new Date(a.ts)-new Date(b.ts))
+    .slice(-365);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+function saveSnapshotNow(){
+  if(!Array.isArray(state.portfolioSnapshots)) state.portfolioSnapshots=[];
+  state.portfolioSnapshots.push(currentSnapshot());
+  state.portfolioSnapshots=state.portfolioSnapshots.sort((a,b)=>new Date(a.ts)-new Date(b.ts)).slice(-365);
+  saveState();
+  renderTools();
+  toast('Portfolio snapshot saved');
+}
+function monthlySpendSeries(months=6){
+  const now=new Date();
+  const rows=[];
+  for(let i=months-1;i>=0;i--){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const label=d.toLocaleDateString('en-US',{month:'short'});
+    const amount=(state.purchases||[]).filter(p=>(p.date||'').startsWith(key)).reduce((n,p)=>n+(Number(p.amount)||0),0);
+    rows.push({key,label,amount});
+  }
+  return rows;
+}
+function portfolioTrend(){
+  const snaps=(state.portfolioSnapshots||[]).slice().sort((a,b)=>new Date(a.ts)-new Date(b.ts));
+  if(!snaps.length) return [];
+  // Keep one snapshot per calendar day, most recent wins.
+  const byDay=new Map();
+  snaps.forEach(s=>byDay.set(s.day||String(s.ts).slice(0,10),s));
+  return [...byDay.values()].slice(-30);
+}
+function svgSparkline(values,width=320,height=90){
+  if(!values.length) return '';
+  const nums=values.map(Number).filter(Number.isFinite);
+  if(!nums.length) return '';
+  const min=Math.min(...nums), max=Math.max(...nums);
+  const range=(max-min)||1;
+  const pts=nums.map((v,i)=>{
+    const x=nums.length===1?width/2:i*(width/(nums.length-1));
+    const y=height-8-((v-min)/range)*(height-16);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg class="sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="Portfolio trend"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+function allocationData(){
+  const t=totals();
+  const total=t.market||1;
+  return [
+    {name:'Singles',value:t.cardMarket,pct:t.cardMarket/total*100},
+    {name:'Sealed',value:t.sealedValue,pct:t.sealedValue/total*100}
+  ];
+}
+function gameAllocation(){
+  const map=new Map();
+  for(const i of state.collection||[]){
+    const game=i.card?.game||'Other';
+    map.set(game,(map.get(game)||0)+(Number(i.card?.market)||0)*(Number(i.qty)||0));
+  }
+  for(const i of state.sealed||[]){
+    const game=i.game||'Other';
+    map.set(game,(map.get(game)||0)+(Number(i.current)||0)*(Number(i.qty)||0));
+  }
+  return [...map.entries()].map(([name,value])=>({name,value})).sort((a,b)=>b.value-a.value);
+}
+function positionRows(){
+  return (state.collection||[]).map(i=>{
+    const qty=Number(i.qty)||0;
+    const marketEach=Number(i.card?.market)||0;
+    const costEach=Number(i.cost)||0;
+    const market=marketEach*qty;
+    const cost=costEach*qty;
+    const gain=market-cost;
+    const pct=cost?gain/cost*100:0;
+    return {item:i,market,cost,gain,pct};
+  }).sort((a,b)=>b.gain-a.gain);
+}
+function valuableCards(limit=5){
+  return [...(state.collection||[])]
+    .map(i=>({item:i,value:(Number(i.card?.market)||0)*(Number(i.qty)||0)}))
+    .sort((a,b)=>b.value-a.value)
+    .slice(0,limit);
+}
+function collectionSetAnalytics(){
+  const map=new Map();
+  for(const i of state.collection||[]){
+    const key=i.card?.setId||i.card?.set||'Unknown';
+    if(!map.has(key)) map.set(key,{name:i.card?.set||'Unknown',unique:new Set(),total:Number(i.card?.setPrintedTotal||i.card?.setTotal||0)});
+    const g=map.get(key);
+    g.unique.add(i.card?.id||i.card?.number||i.card?.name);
+    g.total=Math.max(g.total,Number(i.card?.setPrintedTotal||i.card?.setTotal||0));
+  }
+  for(const g of state.setGoals||[]){
+    const key=`goal:${g.game}:${g.setName}`;
+    if(!map.has(key)) map.set(key,{name:g.setName,unique:new Set(Array.from({length:Number(g.owned)||0},(_,i)=>`goal-${i}`)),total:Number(g.total)||0});
+  }
+  return [...map.values()].map(g=>{
+    const owned=g.unique.size;
+    const total=g.total||0;
+    return {name:g.name,owned,total,pct:total?Math.min(100,owned/total*100):0};
+  }).sort((a,b)=>b.pct-a.pct);
+}
+function dataHealthScore(){
+  const collection=state.collection||[], sealed=state.sealed||[];
+  const cardQty=collection.reduce((n,i)=>n+(Number(i.qty)||0),0);
+  const sealedQty=sealed.reduce((n,i)=>n+(Number(i.qty)||0),0);
+  const cardCostQty=collection.reduce((n,i)=>n+((Number(i.cost)||0)>0?(Number(i.qty)||0):0),0);
+  const locatedQty=collection.reduce((n,i)=>n+(i.location?(Number(i.qty)||0):0),0);
+  const sealedTracked=sealed.reduce((n,i)=>n+(((Number(i.cost)||0)>0 && (Number(i.current)||0)>0)?(Number(i.qty)||0):0),0);
+
+  const costScore=cardQty?cardCostQty/cardQty*25:25;
+  const locationScore=cardQty?locatedQty/cardQty*20:20;
+  const sealedScore=sealedQty?sealedTracked/sealedQty*20:20;
+  const binderScore=(state.binders||[]).length>=2?10:5;
+  const purchaseScore=(state.purchases||[]).length?10:4;
+  let backupScore=0;
+  if(state.settings?.lastBackupAt){
+    const days=(Date.now()-new Date(state.settings.lastBackupAt).getTime())/86400000;
+    backupScore=days<=7?15:days<=30?10:5;
+  }
+  const score=Math.round(Math.min(100,costScore+locationScore+sealedScore+binderScore+purchaseScore+backupScore));
+  const label=score>=85?'Excellent':score>=70?'Strong':score>=50?'Building':'Needs data';
+  return {score,label};
+}
+function ripLeaderboard(){
+  return (state.ripSessions||[]).map(s=>({session:s,stats:ripSessionStats(s)}))
+    .sort((a,b)=>b.stats.roi-a.stats.roi);
+}
+
 function monthSpend(){
   const month = new Date().toISOString().slice(0,7);
   return state.purchases.filter(x=>(x.date||'').startsWith(month)).reduce((n,x)=>n+(Number(x.amount)||0),0);
@@ -310,6 +467,8 @@ function renderHome(){
   const left = budget - spent;
   const top = [...state.collection].sort((a,b)=>(Number(b.card.market)||0)*b.qty-(Number(a.card.market)||0)*a.qty).slice(0,4);
   const recentStock = [...state.stockReports].sort((a,b)=>new Date(b.ts)-new Date(a.ts)).slice(0,3);
+  const trend = portfolioTrend();
+  const health = dataHealthScore();
   $('home').innerHTML = `
     <div class="hero">
       <div class="eyebrow">2GEN RIPS PRESENTS</div>
@@ -341,6 +500,7 @@ function renderHome(){
         <button class="quick-card" onclick="openTool('scanner')"><span class="big-icon">◉</span><b>Scan a card</b><span>Camera capture now; smart matching is ready for the backend phase.</span></button>
         <button class="quick-card" onclick="openTool('sets')"><span class="big-icon">▦</span><b>Master sets</b><span>Live set checklists, owned progress and missing-card tracking.</span></button>
         <button class="quick-card" onclick="openTool('rips')"><span class="big-icon">✦</span><b>Rip sessions</b><span>Track openings, pulls, value, hits, ROI and set progress.</span></button>
+        <button class="quick-card" onclick="openTool('analytics')"><span class="big-icon">⌁</span><b>Dashboard Pro</b><span>Growth, spending, allocation, positions, sets and rip performance.</span></button>
       </div>
     </div>
 
@@ -348,6 +508,19 @@ function renderHome(){
       <div class="section-head"><div><h2>Portfolio pulse</h2><p>Collection + sealed value compared with total cost basis.</p></div></div>
       <div class="meter"><div style="width:${Math.min(100,Math.max(5,t.cost?t.market/t.cost*50:50))}%"></div></div>
       <div class="split"><span>Cost ${money(t.cost)}</span><span>Market ${money(t.market)}</span></div>
+    </div>
+
+
+    <div class="panel pro-preview">
+      <div class="section-head"><div><div class="eyebrow">DASHBOARD PRO</div><h2>Collection intelligence</h2><p>Growth snapshots and organization health from the data already in your Vault.</p></div><button class="btn" onclick="openTool('analytics')">Open analytics</button></div>
+      <div class="pro-preview-grid">
+        <div>
+          <span class="analytics-label">30-day portfolio trend</span>
+          ${trend.length?svgSparkline(trend.map(x=>Number(x.market)||0),360,95):`<div class="empty mini-empty">Snapshots begin today.</div>`}
+          <div class="split"><span>${trend.length?money(Number(trend[0].market)||0):money(t.market)}</span><span>${money(t.market)} now</span></div>
+        </div>
+        <div class="health-card"><span>Vault data health</span><strong>${health.score}</strong><b>${health.label}</b><small>Organization/data completeness — not an investment rating.</small></div>
+      </div>
     </div>
 
     <div class="panel">
@@ -1116,7 +1289,12 @@ async function saveCloudProfile(){
 }
 async function syncVaultToCloud(){
   if(!signedIn()){toast('Sign in first');return;}
-  try{await twogenCloudSaveBackup(state);toast('Vault backed up to your account')}catch(e){toast(e.message||'Cloud backup failed')}
+  try{
+    state.settings.lastBackupAt=new Date().toISOString();
+    saveState();
+    await twogenCloudSaveBackup(state);
+    toast('Vault backed up to your account')
+  }catch(e){toast(e.message||'Cloud backup failed')}
 }
 async function restoreVaultFromCloud(){
   if(!signedIn()){toast('Sign in first');return;}
@@ -1407,6 +1585,7 @@ function renderTools(){
   $('tools').innerHTML = `
     <div class="page-title"><div><h1>Collector Tools</h1><p>The rest of your collecting workflow, all under one roof.</p></div></div>
     <div class="tool-menu">
+      ${toolButton('analytics','⌁','Dashboard Pro','Collection analytics')}
       ${toolButton('rips','✦','Rip Sessions','Openings & pull analytics')}
       ${toolButton('sets','▦','Sets','Master-set explorer')}
       ${toolButton('products','◈','Products','Smart sealed pages')}
@@ -1425,6 +1604,7 @@ function renderTools(){
 function toolButton(id,icon,title,sub){return `<button class="tool-tab ${toolsTab===id?'active':''}" onclick="setToolTab('${id}')"><b>${icon} ${title}</b><span>${sub}</span></button>`}
 function setToolTab(t){toolsTab=t;renderTools()}
 function renderToolBody(){
+  if(toolsTab==='analytics') return renderAnalyticsTool();
   if(toolsTab==='rips') return renderRipSessionsTool();
   if(toolsTab==='sets') return renderSetExplorerTool();
   if(toolsTab==='products') return renderProductsTool();
@@ -1440,6 +1620,93 @@ function renderToolBody(){
 }
 
 
+
+
+function renderAnalyticsTool(){
+  ensureDailySnapshot();
+  const t=totals();
+  const trend=portfolioTrend();
+  const spends=monthlySpendSeries(6);
+  const maxSpend=Math.max(1,...spends.map(x=>x.amount));
+  const alloc=allocationData();
+  const games=gameAllocation();
+  const positions=positionRows();
+  const best=positions.filter(x=>x.cost>0).slice(0,5);
+  const worst=positions.filter(x=>x.cost>0).slice().sort((a,b)=>a.gain-b.gain).slice(0,5);
+  const valuable=valuableCards(5);
+  const sets=collectionSetAnalytics().slice(0,6);
+  const rips=ripLeaderboard();
+  const health=dataHealthScore();
+  const first=trend[0];
+  const growth=first&&Number(first.market)?(t.market-Number(first.market))/Number(first.market)*100:0;
+  const assetTotal=Math.max(1,t.market);
+  const singlesPct=t.cardMarket/assetTotal*100;
+
+  const trendHtml = trend.length
+    ? svgSparkline(trend.map(x=>Number(x.market)||0),500,145)
+    : '<div class="empty">Your first snapshot is being created today.</div>';
+  const allocHtml = alloc.map(a=>'<div class="kpi-line"><span>'+esc(a.name)+'</span><strong>'+money(a.value)+' • '+a.pct.toFixed(1)+'%</strong></div>').join('');
+  const gamesHtml = games.length
+    ? '<div class="eyebrow" style="margin-top:12px">BY TCG</div>'+games.slice(0,6).map(g=>'<div class="kpi-line"><span>'+esc(g.name)+'</span><strong>'+money(g.value)+' • '+(g.value/assetTotal*100).toFixed(1)+'%</strong></div>').join('')
+    : '';
+  const spendHtml = spends.map(m=>'<div class="bar-col"><div class="bar-value">'+(m.amount?money(m.amount):'—')+'</div><div class="bar-track"><i style="height:'+Math.max(4,m.amount/maxSpend*100)+'%"></i></div><span>'+esc(m.label)+'</span></div>').join('');
+  const bestHtml = best.length ? best.map(analyticsPositionRow).join('') : '<div class="empty">Add card cost basis to calculate positions.</div>';
+  const worstHtml = worst.length ? worst.map(analyticsPositionRow).join('') : '<div class="empty">No cost-basis positions yet.</div>';
+  const valuableHtml = valuable.length ? valuable.map(x=>'<div class="compact-row">'+cardArt(x.item.card)+'<div class="grow"><strong>'+esc(x.item.card.name)+'</strong><span>'+esc(x.item.card.set)+' • Qty '+x.item.qty+'</span></div><div class="right"><strong>'+money(x.value)+'</strong></div></div>').join('') : '<div class="empty">No cards tracked yet.</div>';
+  const setsHtml = sets.length ? sets.map(s=>{
+    const label=s.total ? s.owned+'/'+s.total+' • '+s.pct.toFixed(1)+'%' : s.owned+' owned';
+    const progress=s.total ? '<div class="progress"><div style="width:'+s.pct+'%"></div></div>' : '';
+    return '<div class="set-analytics-row"><div class="kpi-line"><span>'+esc(s.name)+'</span><strong>'+label+'</strong></div>'+progress+'</div>';
+  }).join('') : '<div class="empty">Set data will appear as you build the collection.</div>';
+  const ripsHtml = rips.length ? rips.slice(0,8).map(entry=>{
+    const session=entry.session, stats=entry.stats;
+    const roi=stats.spent ? (stats.roi>=0?'+':'')+stats.roi.toFixed(1)+'% ROI' : 'No cost';
+    return '<div class="rip-analytics-row"><div class="grow"><strong>'+esc(session.name)+'</strong><span>'+esc(session.date)+' • '+(session.packs||0)+' packs • '+stats.cardsPulled+' logged cards</span></div><div class="right"><strong>'+money(stats.totalValue)+'</strong><small class="'+(stats.roi>=0?'good':'bad')+'">'+roi+'</small></div></div>';
+  }).join('') : '<div class="empty">Log a Rip Session to compare opening performance.</div>';
+
+  return `<div class="panel analytics-hero">
+    <div class="section-head"><div><div class="eyebrow">2GEN DASHBOARD PRO</div><h2>Collector analytics</h2><p>Portfolio, spending, collection organization, set progress and rip performance in one view.</p></div><button class="btn" onclick="saveSnapshotNow()">＋ Snapshot</button></div>
+    <div class="stat-grid">
+      <div class="stat-card"><span>Vault value</span><strong>${money(t.market)}</strong><small class="${t.gain>=0?'good':'bad'}">${t.gain>=0?'+':''}${money(t.gain)} vs cost</small></div>
+      <div class="stat-card"><span>Tracked cost</span><strong>${money(t.cost)}</strong><small>Singles + sealed</small></div>
+      <div class="stat-card"><span>Snapshot growth</span><strong class="${growth>=0?'good':'bad'}">${trend.length>1?(growth>=0?'+':'')+growth.toFixed(1)+'%':'—'}</strong><small>${trend.length} daily snapshots</small></div>
+      <div class="stat-card"><span>Data health</span><strong>${health.score}/100</strong><small>${health.label}</small></div>
+    </div>
+  </div>
+
+  <div class="analytics-grid">
+    <div class="panel">
+      <div class="section-head"><div><h2>Portfolio growth</h2><p>Daily local snapshots, up to the last 30 days.</p></div></div>
+      <div class="chart-card">${trendHtml}</div>
+      <div class="split"><span>${trend.length?trend[0].day+' • '+money(Number(trend[0].market)||0):'No history yet'}</span><span>${money(t.market)} now</span></div>
+    </div>
+    <div class="panel">
+      <div class="section-head"><div><h2>Asset allocation</h2><p>Current tracked market value.</p></div></div>
+      <div class="allocation-wrap"><div class="allocation-ring" style="--singles:${singlesPct.toFixed(1)}deg"></div><div class="grow">${allocHtml}</div></div>
+      ${gamesHtml}
+    </div>
+  </div>
+
+  <div class="analytics-grid">
+    <div class="panel"><div class="section-head"><div><h2>Spending trend</h2><p>Purchase log totals for the last six calendar months.</p></div></div><div class="bar-chart">${spendHtml}</div></div>
+    <div class="panel"><div class="section-head"><div><h2>Vault data health</h2><p>A completeness/organization score, not an investment score.</p></div></div><div class="health-large"><div class="health-number">${health.score}</div><div><strong>${health.label}</strong><span>Improve it by maintaining cost basis, storage locations, sealed values, purchase history and fresh backups.</span></div></div><div class="progress"><div style="width:${health.score}%"></div></div><div class="action-row" style="margin-top:10px"><button class="btn" onclick="exportBackup()">Create backup</button><button class="btn" onclick="openVault('binders')">Manage binders</button></div></div>
+  </div>
+
+  <div class="analytics-grid">
+    <div class="panel"><div class="section-head"><div><h2>Strongest positions vs cost</h2><p>Unrealized difference between current card market field and your recorded cost basis.</p></div></div>${bestHtml}</div>
+    <div class="panel"><div class="section-head"><div><h2>Weakest positions vs cost</h2><p>This is not day-to-day market movement; it compares current market field with what you paid.</p></div></div>${worstHtml}</div>
+  </div>
+
+  <div class="analytics-grid">
+    <div class="panel"><div class="section-head"><div><h2>Most valuable cards</h2><p>Largest current card positions by quantity × market.</p></div></div>${valuableHtml}</div>
+    <div class="panel"><div class="section-head"><div><h2>Set completion leaders</h2><p>Your most complete tracked sets.</p></div><button class="link-btn" onclick="openTool('sets')">Set Explorer →</button></div>${setsHtml}</div>
+  </div>
+
+  <div class="panel"><div class="section-head"><div><h2>Rip performance</h2><p>Opening-session value compared with recorded opening cost.</p></div><button class="link-btn" onclick="openTool('rips')">Rip Lab →</button></div>${ripsHtml}</div>`;
+}
+function analyticsPositionRow(x){
+  return `<div class="compact-row">${cardArt(x.item.card)}<div class="grow"><strong>${esc(x.item.card.name)}</strong><span>${esc(x.item.card.set)} • Qty ${x.item.qty} • cost ${money(x.cost)}</span></div><div class="right"><strong class="${x.gain>=0?'good':'bad'}">${x.gain>=0?'+':''}${money(x.gain)}</strong><small>${x.cost?(x.pct>=0?'+':'')+x.pct.toFixed(1)+'%':'—'}</small></div></div>`;
+}
 
 function renderRipSessionsTool(){
   const totals=allRipStats();
@@ -1935,6 +2202,8 @@ function renderSettingsTool(){
 }
 function saveBrandSettings(){state.settings.brand=$('brandName')?.value.trim()||'2GEN Vault';state.settings.tagline=$('brandTagline')?.value.trim()||'Two Generations. One Collection.';saveState();renderTools();toast('Branding saved')}
 function exportBackup(){
+  state.settings.lastBackupAt=new Date().toISOString();
+  saveState();
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));a.download='2gen-vault-full-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)
 }
 $('hiddenImport').addEventListener('change',e=>{
@@ -1955,7 +2224,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,openProductPage,createCustomProduct,editCatalogProduct,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,saveSnapshotNow,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
@@ -1975,5 +2244,6 @@ if('serviceWorker' in navigator){
 }
 ensureCollectionSchema();
 ensureCatalogSeed();
+ensureDailySnapshot();
 render('home');
 })();

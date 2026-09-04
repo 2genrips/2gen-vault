@@ -1,4 +1,4 @@
-# 2GEN Vault — Rip Sessions v1.0 (GitHub Pages)
+# 2GEN Vault — Dashboard Pro v1.1 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -299,3 +299,57 @@ can immediately start a new Rip Session with the product cost already carried ov
 
 ### Session export
 Each rip can be exported as JSON for backups, analysis, or future creator/content workflows.
+
+
+## New in v1.1 — Dashboard Pro
+
+2GEN Vault now includes a full analytics workspace.
+
+### Portfolio snapshots
+The app saves one local portfolio snapshot per day and keeps up to 365 snapshots.
+
+Dashboard Pro shows:
+- current vault value
+- tracked cost
+- gain/loss vs cost basis
+- 30-day portfolio trend
+- snapshot growth
+- manual snapshot button
+
+The trend reflects values stored in 2GEN Vault. It is only as current as the market fields available to the app.
+
+### Asset allocation
+See:
+- singles vs sealed
+- value by TCG/game
+
+### Spending analytics
+The purchase log is summarized into a six-month spending chart.
+
+### Position analytics
+Strongest and weakest card positions compare:
+current card market field vs your recorded cost basis.
+
+They are NOT presented as day-to-day gainers/losers because the current frontend does not yet have reliable historical card-price feeds.
+
+### Vault Data Health
+A transparent organization/completeness score based on:
+- cost-basis coverage
+- binder/storage locations
+- sealed cost/value tracking
+- binder organization
+- purchase history
+- backup freshness
+
+This is NOT an investment rating.
+
+### Set analytics
+See your most complete tracked sets and jump into Master Set Lab.
+
+### Rip analytics
+Compare opening-session:
+- cost
+- pull value
+- ROI
+- pack count
+- card count
