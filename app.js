@@ -81,6 +81,7 @@ const seed = {
   ripSessions: [],
   portfolioSnapshots: [],
   scanQueue: [],
+  scannerRecentScans: [],
   cardPriceHistory: {},
   priceRefreshLog: [],
   scannerSettings: {gradingValueThreshold:25, preferredBinder:'Main Binder'},
@@ -151,6 +152,10 @@ let scannerLiveCameraOpen = false;
 let scannerPriceChartingResult = null;
 let scannerPriceChartingStatus = 'unknown';
 const SCANNER_GAME_OPTIONS=['Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece'];
+let scannerCameraZoom=1;
+let scannerCameraTorch=false;
+let scannerCameraCapabilities={zoom:false,torch:false};
+
 let scannerOcrText = '';
 let scannerOcrConfidence = null;
 let scannerAutoCandidates = [];
@@ -191,6 +196,7 @@ function saveState(){
 
 function ensureScannerSchema(){
   if(!Array.isArray(state.scanQueue)) state.scanQueue=[];
+  if(!Array.isArray(state.scannerRecentScans)) state.scannerRecentScans=[];
   state.scannerSettings={
     gradingValueThreshold:25,
     preferredBinder:'Main Binder',
@@ -3979,6 +3985,9 @@ function closeLiveScannerCamera(){
   }
   scannerLiveStream=null;
   scannerLiveCameraOpen=false;
+  scannerCameraZoom=1;
+  scannerCameraTorch=false;
+  scannerCameraCapabilities={zoom:false,torch:false};
   document.getElementById('scannerCameraModal')?.remove();
 }
 async function openLiveScannerCamera(){
@@ -4004,7 +4013,12 @@ async function openLiveScannerCamera(){
         <div class="scanner-card-guide"><i></i><b>PLACE ENTIRE CARD HERE</b></div>
         <div id="scannerCameraMessage" class="scanner-camera-message">Waiting for camera permission…</div>
       </div>
-      <div class="scanner-camera-tips">Fill the outline with the card • keep it flat • reduce glare • make the name + collector number readable</div>
+      <div class="scanner-camera-tips">Center the ENTIRE card inside the green frame • fill most of the frame • reduce glare • keep the name + collector number readable</div>
+      <div class="scanner-camera-toolrow">
+        <button type="button" id="scannerZoomBtn" class="btn" onclick="scannerCycleZoom()" disabled>Zoom N/A</button>
+        <span>Card frame is locked to the exact center</span>
+        <button type="button" id="scannerTorchBtn" class="btn" onclick="scannerToggleTorch()" disabled>Light N/A</button>
+      </div>
       <div class="scanner-camera-controls">
         <button type="button" class="btn" onclick="closeLiveScannerCamera();openScannerFilePicker()">Gallery</button>
         <button type="button" id="scannerCaptureBtn" class="scanner-shutter" onclick="captureLiveScannerFrame()" disabled aria-label="Take photo"></button>
@@ -4063,6 +4077,17 @@ async function startLiveScannerStream(){
     });
 
     try{await video.play()}catch{}
+
+    const track=stream.getVideoTracks?.()[0];
+    const caps=track?.getCapabilities?.()||{};
+    scannerCameraCapabilities={
+      zoom:!!caps.zoom,
+      torch:!!caps.torch
+    };
+    scannerCameraZoom=Number(track?.getSettings?.()?.zoom)||1;
+    scannerCameraTorch=false;
+    updateScannerCameraControlUI();
+
     if(message){
       message.textContent='Camera ready — tap the white shutter button';
       message.classList.add('ready');
@@ -4090,6 +4115,46 @@ async function retryLiveScannerCamera(){
     return;
   }
   await startLiveScannerStream();
+}
+
+
+function updateScannerCameraControlUI(){
+  const zoomBtn=document.getElementById('scannerZoomBtn');
+  const torchBtn=document.getElementById('scannerTorchBtn');
+  if(zoomBtn){
+    zoomBtn.disabled=!scannerCameraCapabilities.zoom;
+    zoomBtn.textContent=scannerCameraCapabilities.zoom?`${scannerCameraZoom.toFixed(scannerCameraZoom%1?1:0)}× Zoom`:'Zoom N/A';
+  }
+  if(torchBtn){
+    torchBtn.disabled=!scannerCameraCapabilities.torch;
+    torchBtn.textContent=scannerCameraCapabilities.torch?(scannerCameraTorch?'⚡ Light on':'⚡ Light'):'Light N/A';
+  }
+}
+async function scannerCycleZoom(){
+  const track=scannerLiveStream?.getVideoTracks?.()[0];
+  if(!track)return;
+  const caps=track.getCapabilities?.()||{};
+  const z=caps.zoom;
+  if(!z){scannerCameraCapabilities.zoom=false;updateScannerCameraControlUI();return;}
+  scannerCameraCapabilities.zoom=true;
+  const min=Number(z.min)||1,max=Number(z.max)||1,step=Number(z.step)||0.1;
+  const levels=[1,1.5,2,2.5,3].map(v=>Math.max(min,Math.min(max,v))).filter((v,i,a)=>i===0||Math.abs(v-a[i-1])>.05);
+  let idx=levels.findIndex(v=>Math.abs(v-scannerCameraZoom)<.08);
+  idx=(idx+1)%levels.length;
+  scannerCameraZoom=levels[idx];
+  try{await track.applyConstraints({advanced:[{zoom:scannerCameraZoom}]});}catch{}
+  updateScannerCameraControlUI();
+}
+async function scannerToggleTorch(){
+  const track=scannerLiveStream?.getVideoTracks?.()[0];
+  if(!track)return;
+  const caps=track.getCapabilities?.()||{};
+  if(!caps.torch){scannerCameraCapabilities.torch=false;updateScannerCameraControlUI();return;}
+  scannerCameraCapabilities.torch=true;
+  scannerCameraTorch=!scannerCameraTorch;
+  try{await track.applyConstraints({advanced:[{torch:scannerCameraTorch}]});}
+  catch{scannerCameraTorch=false;}
+  updateScannerCameraControlUI();
 }
 
 async function captureLiveScannerFrame(){
@@ -4302,6 +4367,7 @@ function scannerBestMatchMarkup(){
     <div class="action-row">
       <button class="btn primary" onclick='selectAutoMatch(${JSON.stringify(card).replace(/'/g,"&#39;")})'>Confirm match</button>
       <button class="btn" onclick='queueCard(${JSON.stringify(card).replace(/'/g,"&#39;")})'>＋ Queue</button>
+      <button class="btn" onclick="scanAnotherCard()">📷 Scan another</button>
       ${(pc?.searchUrl||card.url)?`<a class="btn" href="${esc(pc?.searchUrl||card.url)}" target="_blank" rel="noreferrer">Pricing source ↗</a>`:''}
     </div>
   </div>`;
@@ -4513,6 +4579,7 @@ async function autoIdentifyFromPhoto(autoRun=false){
 
     scannerSearchResults.forEach(c=>captureCardPrice(c,'Scanner live-value lookup'));
     scannerLastMarketLookupAt=new Date().toISOString();
+    if(scannerBestMatch)recordScannerRecent(scannerBestMatch);
     saveState();
 
     if(scannerBestMatch){
@@ -4547,6 +4614,59 @@ function selectAutoMatch(card){
   scannerLastMarketLookupAt=new Date().toISOString();
   renderTools();
   toast('Match selected — review before adding');
+}
+
+
+function recordScannerRecent(card){
+  ensureScannerSchema();
+  if(!card)return;
+  const pc=card.priceCharting||scannerPriceChartingResult;
+  const provider=providerForGame(scannerGame);
+  const entry={
+    uid:uid(),
+    card:{
+      id:card.id||'',
+      game:card.game||scannerGame,
+      name:card.name||'Unknown card',
+      set:card.set||'',
+      number:card.number||'',
+      image:card.image||''
+    },
+    value:Number(card.market)||0,
+    priceCharting:pc?{
+      ungraded:Number(pc.ungraded)||0,
+      grade9:Number(pc.grade9)||0,
+      psa10:Number(pc.psa10)||0,
+      bgs10:Number(pc.bgs10)||0
+    }:null,
+    providerValue:Number(card.providerMarket)||(!pc?Number(card.market)||0:0),
+    primarySource:pc?'PriceCharting':(provider?.label||'Game provider'),
+    confidence:Number(card.autoScore)||0,
+    checkedAt:new Date().toISOString()
+  };
+  const dedupeKey=`${entry.card.game}|${entry.card.id}|${entry.card.number}`;
+  state.scannerRecentScans=(state.scannerRecentScans||[]).filter(x=>`${x.card?.game}|${x.card?.id}|${x.card?.number}`!==dedupeKey);
+  state.scannerRecentScans.unshift(entry);
+  state.scannerRecentScans=state.scannerRecentScans.slice(0,20);
+  saveState();
+}
+function clearScannerRecent(){
+  state.scannerRecentScans=[];
+  saveState();renderTools();
+}
+function scannerRecentMarkup(){
+  ensureScannerSchema();
+  if(!state.scannerRecentScans.length)return `<div class="empty">Your last 20 successful scanner matches will appear here.</div>`;
+  return `<div class="scanner-recent-grid">${state.scannerRecentScans.slice(0,8).map(x=>`
+    <div class="scanner-recent-card">
+      ${x.card?.image?`<img src="${esc(x.card.image)}" alt="">`:`<div class="scanner-recent-placeholder">◈</div>`}
+      <div class="grow"><strong>${esc(x.card?.name||'Card')}</strong><span>${esc(x.card?.set||'')} ${x.card?.number?`• ${esc(x.card.number)}`:''}</span><small>${esc(x.primarySource||'Pricing source')} • ${humanAge(x.checkedAt)}</small></div>
+      <div class="scanner-recent-value"><strong>${x.value?money(x.value):'—'}</strong><span>${x.confidence||0}% match</span></div>
+    </div>`).join('')}</div>`;
+}
+function scanAnotherCard(){
+  clearScannerPhoto();
+  setTimeout(()=>openScannerCamera('camera'),80);
 }
 
 function scannerOwnedQty(card){
@@ -4744,6 +4864,23 @@ function renderScannerTool(){
     ${scannerBestMatchMarkup()}
     ${scannerSearchResults.length?`<div class="subpanel" style="margin-top:11px"><div class="section-head"><div><h2>${scannerAutoCandidates.length?'Other possible printings':'Possible matches'}</h2><p>Check set, collector number and variant before using the value.</p></div><button class="link-btn" onclick="scannerSearchResults=[];scannerAutoCandidates=[];scannerBestMatch=null;renderTools()">Clear</button></div>${scannerLastMarketLookupAt?`<div class="market-refresh-note">Live lookup retrieved ${humanAge(scannerLastMarketLookupAt)}.</div>`:''}<div class="scanner-match-list">${scannerSearchResults.map(scannerResultMarkup).join('')}</div></div>`:''}
   </div>
+  <div class="panel scanner-source-command">
+    <div class="section-head"><div><div class="eyebrow">PRICING COMMAND CENTER</div><h2>Primary + fallback pricing</h2><p>PriceCharting is used first when its secure connector is configured. Game-specific sources remain visible as secondary/fallback references.</p></div><span class="badge primary">${scannerPriceChartingStatus==='connected'?'PRICECHARTING LIVE':scannerPriceChartingStatus==='not_configured'?'PRICECHARTING READY':'MULTI-SOURCE'}</span></div>
+    <div class="scanner-source-grid">
+      <div><b>Primary guide</b><span>PriceCharting • ungraded / graded guide fields when connected</span></div>
+      <div><b>Pokémon</b><span>Pokémon TCG API / available TCGplayer reference fields</span></div>
+      <div><b>Lorcana</b><span>Lorcast fallback/reference</span></div>
+      <div><b>Magic</b><span>Scryfall fallback/reference</span></div>
+      <div><b>Yu-Gi-Oh!</b><span>YGOPRODeck fallback/reference</span></div>
+      <div><b>One Piece</b><span>PriceCharting connector path</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><div><div class="eyebrow">SCAN HISTORY</div><h2>Recent successful matches</h2><p>Quickly compare the cards you just scanned and their saved reference value at scan time.</p></div>${state.scannerRecentScans?.length?`<button class="link-btn" onclick="clearScannerRecent()">Clear</button>`:''}</div>
+    ${scannerRecentMarkup()}
+  </div>
+
   <div class="panel"><div class="section-head"><div><h2>Batch review</h2><p>Review quantity, cost and binder before adding cards.</p></div><div class="action-row"><button class="btn red" onclick="clearScanQueue()">Clear</button><button class="btn primary" onclick="commitScanQueue()">✓ Add queue to Vault</button></div></div>${renderScanQueue()}</div>
   <div class="panel"><div class="section-head"><div><h2>Scanner coverage</h2><p>Live providers connected to photo/manual identification.</p></div></div><div class="automation-grid">${Object.entries(LIVE_CARD_PROVIDERS).map(([g,p])=>`<div><b>✓ ${esc(g)}</b><span>${esc(p.label)} • ${esc(p.price)}</span></div>`).join('')}<div><b>Privacy</b><span>The photo is resized and OCR-processed in your browser; extracted text is used for lookup.</span></div><div><b>Condition limits</b><span>The scanner does not determine authenticity, surface, centering, edges or professional grade.</span></div></div></div>`;
 }
@@ -6516,7 +6653,7 @@ Object.assign(window,{
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
   setDiscoverMode,doCardSearch,addCard,addGradedCard,openCardDetail,closeCardDetail,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,openCollectionCardDetail,addBinder,renameBinder,deleteBinder,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
-  setToolTab,setDiscoverGame,setScannerGame,setTradeSearchGame,openVaultIQCard,queueVaultIQCard,queueVaultIQWatch,updateAcquisitionStatus,removeAcquisitionItem,editVaultIQSettings,vaultIQDealCheck,setShowcaseProfile,toggleShowcaseFeatured,editShowcaseText,toggleShowcaseSetting,downloadShowcaseHtml,downloadShowcaseJson,shareShowcase,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,openScannerCamera,openScannerFilePicker,openLiveScannerCamera,startLiveScannerStream,retryLiveScannerCamera,closeLiveScannerCamera,captureLiveScannerFrame,scannerCameraPermissionHelp,autoIdentifyFromPhoto,selectAutoMatch,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+  setToolTab,setDiscoverGame,setScannerGame,setTradeSearchGame,openVaultIQCard,queueVaultIQCard,queueVaultIQWatch,updateAcquisitionStatus,removeAcquisitionItem,editVaultIQSettings,vaultIQDealCheck,setShowcaseProfile,toggleShowcaseFeatured,editShowcaseText,toggleShowcaseSetting,downloadShowcaseHtml,downloadShowcaseJson,shareShowcase,openWatchtowerNotification,markWatchtowerRead,markAllWatchtowerRead,clearWatchtowerInbox,resetWatchtowerSignals,enableBrowserNotifications,disableBrowserNotifications,toggleWatchtowerPref,toggleWatchtowerCategory,evaluateWatchtower,openActionItem,snoozeAction,clearAllActionSnoozes,addCollectorProfile,editCollectorProfile,deleteCollectorProfile,setActiveCollector,moveCollectionOwner,moveSealedOwner,transferDuplicateToCollector,addGiveawayFromCollection,addGiveawayFromSealed,updateGiveawayStatus,removeGiveaway,addContentIdea,addContentFromRip,updateContentStatus,editContentIdea,removeContentIdea,exportCollectorShowcase,selectSellSource,setSellMarketplace,updateSellPreview,addSaleToQueue,removeSaleQueueItem,editSaleQueuePrice,completeSale,copySaleListing,queueDuplicateForSale,removeSaleHistory,saveSnapshotNow,refreshVaultPrices,selectMarketCard,scannerSearch,openScannerCamera,openScannerFilePicker,openLiveScannerCamera,startLiveScannerStream,retryLiveScannerCamera,closeLiveScannerCamera,captureLiveScannerFrame,scannerCycleZoom,scannerToggleTorch,scannerCameraPermissionHelp,autoIdentifyFromPhoto,selectAutoMatch,scanAnotherCard,clearScannerRecent,queueCard,removeQueuedCard,updateQueuedCard,clearScanQueue,reviewScannerSettings,commitScanQueue,clearScannerPhoto,createRipSession,openRipSession,openRipQuickScanner,promptRipCardSearch,addPullToSession,changePullQty,removePull,editRipSession,finishRipSession,deleteRipSession,exportRipSession,clearRipSearch,clearRipPreview,searchPokemonSets,openSetByInfo,openSetByCard,openCardFromSet,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addOwnedTradeItem,addWishlistTradeItem,addDuplicateTradeItem,addManualTradeItem,addCashAdjustment,removeTradeDraftItem,changeTradeDraftQty,changeTradeDraftValue,clearTradeBuilder,tradeCardSearch,addTradeSearchResult,copyTradeSummary,saveTradeProposal,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
 });
 
 
