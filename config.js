@@ -1,6 +1,10 @@
 /*
   2GEN Vault public configuration.
 
+  CLOUD ACCOUNTS:
+  supabaseUrl and supabaseAnonKey are PUBLIC client settings, not secret service-role keys.
+  Never place a Supabase service-role key in GitHub Pages.
+
   IMPORTANT:
   GitHub Pages is public. Never place private API keys, passwords, payment secrets,
   retailer partner secrets, or admin tokens in this file.
@@ -34,5 +38,7 @@
 */
 window.TWOGEN_CONFIG = {
   inventoryApiBase: "",
-  appVersion: "0.5.0"
+  supabaseUrl: "",
+  supabaseAnonKey: "",
+  appVersion: "0.6.0"
 };

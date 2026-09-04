@@ -1,4 +1,4 @@
-# 2GEN Vault — Live Stock Network v0.5 (GitHub Pages)
+# 2GEN Vault — Cloud Community v0.6 (GitHub Pages)
 
 **2GEN Vault by 2GEN RIPS**  
 **Two Generations. One Collection.**
@@ -11,6 +11,7 @@ This is the easy-to-deploy GitHub Pages build. No npm, Codespaces, Android Studi
 - `styles.css`
 - `app.js`
 - `config.js`
+- `cloud.js`
 - `manifest.webmanifest`
 - `sw.js`
 - `icon.svg`
@@ -101,3 +102,21 @@ You keep the same installed GitHub Pages app on your phone. As we add retailer c
 ### Why confidence scoring matters
 
 A stock report that is 8 minutes old should not be treated the same as one from yesterday. The app now visibly scores freshness. When cloud/community accounts are connected, confirmations from multiple collectors can feed this same model.
+
+
+## New in v0.6 — Accounts + shared community network
+
+The app now has an optional secure cloud layer while preserving Guest mode.
+
+- Email/password accounts
+- Magic-link sign-in
+- Collector profile + home ZIP
+- Shared community stock reports
+- “Still there” / “Sold out” confirmations per signed-in collector
+- Public report freshness/confidence scoring
+- Private cross-device vault backup + restore
+- Row Level Security SQL policies
+- GitHub Pages remains the frontend
+- Supabase is the optional secure account/database layer
+
+To activate the cloud features, follow `START-HERE-CLOUD.txt` and run `SUPABASE_SETUP.sql`.

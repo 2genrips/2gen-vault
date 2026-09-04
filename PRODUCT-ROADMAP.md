@@ -1,6 +1,6 @@
 # 2GEN Vault — Product Roadmap
 
-## Current build: v0.5 Live Stock Network
+## Current build: v0.6 Cloud Community Network
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -64,3 +64,13 @@ Needed for:
 - smart image recognition
 
 GitHub Pages remains the frontend; the cloud service becomes the secure data layer.
+
+
+## v0.6 completed
+- Cloud account architecture
+- Supabase authentication
+- Community stock-report sharing
+- Per-user stock confirmations
+- Private vault cloud backup
+- Row-level security policies
+- Guest-mode fallback

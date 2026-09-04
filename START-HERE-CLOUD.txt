@@ -1,0 +1,139 @@
+2GEN VAULT v0.6 — CLOUD ACCOUNTS + COMMUNITY STOCK NETWORK
+PHONE-FRIENDLY SETUP
+
+You can keep GitHub Pages as the app.
+Supabase is only the secure cloud database/account layer.
+
+WHY THIS IS NEEDED
+GitHub Pages cannot securely store private user data or shared community reports by itself.
+This build keeps Guest mode working even before you connect Supabase.
+
+WHAT YOU GET AFTER THIS ONE-TIME SETUP
+- Create/sign in to 2GEN accounts
+- Community stock reports shared between collectors
+- Still-there / sold-out confirmations
+- Private cloud vault backup and restore
+- Collector display name + home ZIP
+- Same installed GitHub Pages app; no APK
+
+STEP 1 — CREATE A FREE SUPABASE PROJECT
+
+1. In Chrome on your Android phone, go to:
+   https://supabase.com
+
+2. Sign in / create an account.
+
+3. Create a new project.
+
+Suggested:
+Project name: 2GEN Vault
+Database password: create a strong password and SAVE IT somewhere secure
+Region: choose the closest available US region to your main users
+
+Wait for the project to finish creating.
+
+STEP 2 — CREATE THE DATABASE TABLES
+
+1. In Supabase, open:
+   SQL Editor
+
+2. Create a new query.
+
+3. Open the file:
+   SUPABASE_SETUP.sql
+
+4. Copy the ENTIRE contents into the SQL Editor.
+
+5. Tap Run.
+
+It should complete successfully.
+
+STEP 3 — GET THE TWO PUBLIC CLIENT VALUES
+
+In Supabase open:
+Project Settings > API
+
+Find:
+- Project URL
+- anon / public key (or publishable anon key)
+
+DO NOT COPY:
+- service_role key
+- database password
+- any secret service key
+
+The app only needs the public browser-safe client values.
+
+STEP 4 — EDIT config.js IN GITHUB
+
+Open your 2gen-vault GitHub repository.
+
+Open:
+config.js
+
+Tap the pencil/edit button.
+
+Change:
+
+supabaseUrl: "",
+supabaseAnonKey: "",
+
+to your PUBLIC values, for example:
+
+supabaseUrl: "https://YOURPROJECT.supabase.co",
+supabaseAnonKey: "YOUR_PUBLIC_ANON_KEY",
+
+Do not change the quotes or commas.
+
+Commit the change to main.
+
+STEP 5 — ALLOW YOUR GITHUB PAGES URL FOR AUTH
+
+In Supabase:
+Authentication > URL Configuration
+
+Set Site URL to your real Pages URL, for example:
+https://YOURUSERNAME.github.io/2gen-vault/
+
+Add the same Pages URL under Redirect URLs.
+
+This is especially important for email confirmation and magic-link sign-in.
+
+STEP 6 — WAIT FOR GITHUB PAGES TO UPDATE
+
+Usually this takes a short time.
+
+Fully close the installed 2GEN Vault app and reopen it.
+
+Go to:
+Tools > Account
+
+You should now see the real sign-in/create-account screen rather than the setup notice.
+
+STEP 7 — TEST IT
+
+Create an account.
+
+Then test:
+Tools > Account > Back up vault
+
+Then:
+Stock > Collector reports > Refresh reports
+
+Then create a stock report:
+Tools > Stock report
+Choose:
+Publish to 2GEN Community Network
+
+The report should appear on another signed-in device/account after refreshing.
+
+SECURITY RULE
+
+The Supabase anon/public client key is intended for browser apps when Row Level Security is correctly enabled.
+The SQL file enables RLS.
+
+NEVER put the Supabase service_role key into GitHub, config.js, app.js, or any browser file.
+
+LATER
+When we add paid Premium subscriptions, protected retailer API credentials, server-side push notifications,
+anti-abuse scoring, and advanced live inventory connectors, those will use secure server functions.

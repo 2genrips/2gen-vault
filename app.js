@@ -31,6 +31,8 @@ const seed = {
   inventoryResults: [],
   nearbyStores: [],
   huntRoute: [],
+  communityReports: [],
+  communityConfirmationCounts: {},
   settings: {
     zip:'',
     radius:25,
@@ -110,6 +112,31 @@ function humanAge(ts){
   return `${Math.floor(m/1440)}d ago`;
 }
 
+function cloudReady(){
+  return Boolean(window.TWOGEN_CLOUD?.configured && window.TWOGEN_CLOUD?.client);
+}
+function signedIn(){
+  return Boolean(window.TWOGEN_CLOUD?.user);
+}
+function accountLabel(){
+  const c=window.TWOGEN_CLOUD;
+  if(!c?.configured) return 'Guest • Cloud not configured';
+  if(c.error) return 'Cloud unavailable';
+  if(c.user) return c.profile?.display_name || c.user.email || 'Signed in';
+  return 'Guest mode';
+}
+function cloudReportConfidence(report){
+  const counts=state.communityConfirmationCounts?.[report.id]||{still:0,gone:0};
+  const localShape={
+    ts:report.updated_at||report.created_at,
+    status:report.status==='in_stock'?'In stock':report.status==='low_stock'?'Low stock':report.status==='out_of_stock'?'Out of stock':report.status,
+    confirmations:counts.still,
+    soldOutConfirmations:counts.gone
+  };
+  return confidenceScore(localShape);
+}
+
+
 function toast(msg){
   const el = $('toast'); if(!el) return;
   clearTimeout(toastTimer);
@@ -173,8 +200,9 @@ function updateStatus(){
   const pill = $('connectionPill');
   if(!pill) return;
   const backend = (window.TWOGEN_CONFIG?.inventoryApiBase||'').trim();
-  pill.classList.toggle('live', !!backend);
-  pill.querySelector('span').textContent = backend ? 'Inventory Connected' : 'Collector OS';
+  const cloud = cloudReady();
+  pill.classList.toggle('live', !!backend || cloud);
+  pill.querySelector('span').textContent = signedIn() ? 'Cloud Synced' : backend ? 'Inventory Connected' : cloud ? 'Cloud Ready' : 'Collector OS';
 }
 
 function renderHome(){
@@ -195,6 +223,7 @@ function renderHome(){
         <span class="badge">◎ ${state.stockWatches.length} STOCK WATCHES</span>
         <span class="badge">⌖ ${state.huntRoute.filter(x=>!x.visited).length} HUNT STOPS</span>
         <span class="badge red">2GEN RIPS</span>
+        <span class="badge">${signedIn()?'☁ SYNCED':'☁ GUEST'}</span>
       </div>
     </div>
 
@@ -293,6 +322,19 @@ function renderStock(){
         <button class="btn" onclick="clearHuntRoute()">Clear route</button>
       </div>
       <div id="huntRoute" style="margin-top:10px">${renderHuntRoute()}</div>
+    </div>
+
+
+    <div class="panel community-panel">
+      <div class="section-head">
+        <div><div class="eyebrow">2GEN COMMUNITY NETWORK</div><h2>Collector reports</h2><p>See recent reports from other collectors after the free cloud project is connected.</p></div>
+        <span class="badge ${signedIn()?'primary':''}">${signedIn()?'SIGNED IN':cloudReady()?'GUEST':'LOCAL ONLY'}</span>
+      </div>
+      <div class="action-row">
+        <button class="btn primary" onclick="refreshCommunityReports()">↻ Refresh reports</button>
+        <button class="btn" onclick="openTool('account')">${signedIn()?'My account':'Sign in'}</button>
+      </div>
+      <div id="communityReports" style="margin-top:10px">${renderCommunityReports()}</div>
     </div>
 
     <div class="panel">
@@ -603,6 +645,162 @@ function huntWatch(id){
   },0);
 }
 
+
+async function refreshCommunityReports(showToast=true){
+  if(!cloudReady()){
+    if(showToast) toast('Cloud is not configured yet. Use the setup file in the ZIP.');
+    return;
+  }
+  try{
+    const reports=await twogenCloudFetchReports({
+      zip:state.settings.zip||'',
+      game:stockGame||'',
+      product:stockQuery||'',
+      hours:72,
+      limit:100
+    });
+    state.communityReports=reports;
+    try{
+      state.communityConfirmationCounts=await twogenCloudFetchConfirmationCounts(reports.map(r=>r.id));
+    }catch{
+      state.communityConfirmationCounts={};
+    }
+    saveState();
+    if(currentTab==='stock') renderStock();
+    if(showToast) toast(`${reports.length} community reports loaded`);
+  }catch(e){
+    if(showToast) toast(e.message||'Community reports could not be loaded');
+  }
+}
+function renderCommunityReports(){
+  if(!cloudReady()){
+    return `<div class="notice warn"><span>!</span><span>Community accounts are built into this version but not connected yet. Follow <b>START-HERE-CLOUD.txt</b> once to create the free cloud project, then paste the two public client values into config.js.</span></div>`;
+  }
+  if(!state.communityReports?.length){
+    return `<div class="empty">No matching community reports loaded yet. Tap Refresh reports. Reports can be filtered by your saved ZIP, TCG and current product hunt.</div>`;
+  }
+  return state.communityReports.slice(0,30).map(r=>{
+    const c=state.communityConfirmationCounts?.[r.id]||{still:0,gone:0};
+    const cs=cloudReportConfidence(r);
+    const displayStatus=r.status==='in_stock'?'In stock':r.status==='low_stock'?'Low stock':r.status==='out_of_stock'?'Out of stock':r.status;
+    return `<div class="community-report">
+      <div class="stock-report-head">
+        <div class="thumb square"><b>${displayStatus==='In stock'?'✓':displayStatus==='Low stock'?'!':'×'}</b></div>
+        <div class="grow"><strong>${esc(r.product)}</strong><span>${esc(r.store)} • ${esc(displayStatus)} • ${humanAge(r.updated_at||r.created_at)}</span></div>
+        <div class="right"><strong>${money(Number(r.price))}</strong><span class="confidence-badge ${cs>=85?'high':cs>=50?'mid':'low'}">${cs}%</span></div>
+      </div>
+      <div class="report-proof"><span>✓ ${c.still||0} still-there</span><span>× ${c.gone||0} sold-out</span>${r.quantity?`<span>Qty ${r.quantity}</span>`:''}</div>
+      <div class="report-actions">
+        <button class="btn green" onclick="confirmCommunityReport('${r.id}','still')">✓ Still there</button>
+        <button class="btn red" onclick="confirmCommunityReport('${r.id}','gone')">× Sold out</button>
+        <button class="btn" onclick='buyCommunityReport(${JSON.stringify(r).replace(/'/g,"&#39;")})'>$ Bought it</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+async function confirmCommunityReport(id,kind){
+  if(!signedIn()){
+    toast('Sign in to confirm community reports');
+    openTool('account');
+    return;
+  }
+  try{
+    await twogenCloudConfirmReport(id,kind);
+    await refreshCommunityReports(false);
+    toast(kind==='still'?'Thanks — sighting confirmed':'Thanks — marked sold out');
+  }catch(e){toast(e.message||'Confirmation failed')}
+}
+function buyCommunityReport(r){
+  logPurchaseAndSealed(r.product||'TCG product',r.store||'Retailer',Number(r.price)||0);
+}
+function renderAccountTool(){
+  const c=window.TWOGEN_CLOUD||{};
+  if(!c.configured){
+    return `<div class="panel">
+      <div class="eyebrow">2GEN CLOUD</div><h2>Connect your collector account</h2>
+      <p>Accounts are ready, but this GitHub Pages copy has not been connected to a cloud project yet.</p>
+      <div class="notice warn" style="margin-top:10px"><span>!</span><span>Open <b>START-HERE-CLOUD.txt</b> from the ZIP. It walks you through a free Supabase setup from your phone. You only do this once.</span></div>
+      <div class="feature-stack">
+        <div><b>☁ Cross-device backup</b><span>Save and restore the whole vault.</span></div>
+        <div><b>◎ Community stock reports</b><span>Publish and confirm real collector sightings.</span></div>
+        <div><b>♢ Collector profile</b><span>Your 2GEN identity follows you between devices.</span></div>
+      </div>
+    </div>`;
+  }
+  if(!c.user){
+    return `<div class="panel">
+      <div class="eyebrow">2GEN ACCOUNT</div><h2>Sign in or create an account</h2><p>Your local vault keeps working in Guest mode. Signing in enables community reports and cloud backup.</p>
+      <div class="form-grid" style="margin-top:12px">
+        <label class="field"><span>Display name</span><input id="accountName" placeholder="Collector name"></label>
+        <label class="field"><span>Email</span><input id="accountEmail" type="email" autocomplete="email" placeholder="you@example.com"></label>
+        <label class="field full"><span>Password</span><input id="accountPassword" type="password" autocomplete="current-password" minlength="6" placeholder="At least 6 characters"></label>
+      </div>
+      <div class="action-row" style="margin-top:10px">
+        <button class="btn primary" onclick="cloudSignIn()">Sign in</button>
+        <button class="btn" onclick="cloudSignUp()">Create account</button>
+        <button class="btn" onclick="cloudMagicLink()">Email me a magic link</button>
+      </div></div>`;
+  }
+  const profile=c.profile||{};
+  return `<div class="panel">
+    <div class="eyebrow">SIGNED IN</div><h2>${esc(profile.display_name||c.user.email||'Collector')}</h2><p>${esc(c.user.email||'')} • ${accountLabel()}</p>
+    <div class="form-grid" style="margin-top:12px">
+      <label class="field"><span>Display name</span><input id="profileName" value="${esc(profile.display_name||'')}"></label>
+      <label class="field"><span>Home ZIP</span><input id="profileZip" value="${esc(profile.home_zip||state.settings.zip||'')}" inputmode="numeric"></label>
+    </div>
+    <div class="action-row" style="margin-top:10px">
+      <button class="btn primary" onclick="saveCloudProfile()">Save profile</button>
+      <button class="btn" onclick="syncVaultToCloud()">☁ Back up vault</button>
+      <button class="btn" onclick="restoreVaultFromCloud()">↓ Restore vault</button>
+      <button class="btn red" onclick="cloudSignOut()">Sign out</button>
+    </div>
+    <div class="notice good" style="margin-top:10px"><span>✓</span><span>Your account is connected. Community reports and private vault backup are available.</span></div>
+  </div>`;
+}
+async function cloudSignUp(){
+  const email=$('accountEmail')?.value.trim(), password=$('accountPassword')?.value||'', name=$('accountName')?.value.trim()||'Collector';
+  if(!email||password.length<6){toast('Enter an email and password of at least 6 characters');return;}
+  try{
+    await twogenCloudSignUp(email,password,name);
+    toast('Account created. Check your email if confirmation is enabled.');
+    renderTools();
+  }catch(e){toast(e.message||'Could not create account')}
+}
+async function cloudSignIn(){
+  const email=$('accountEmail')?.value.trim(), password=$('accountPassword')?.value||'';
+  if(!email||!password){toast('Enter email and password');return;}
+  try{await twogenCloudSignIn(email,password);toast('Signed in');renderTools();refreshCommunityReports(false)}catch(e){toast(e.message||'Sign in failed')}
+}
+async function cloudMagicLink(){
+  const email=$('accountEmail')?.value.trim();if(!email){toast('Enter your email first');return;}
+  try{await twogenCloudMagicLink(email);toast('Magic link sent — check your email')}catch(e){toast(e.message||'Magic link failed')}
+}
+async function cloudSignOut(){
+  try{await twogenCloudSignOut();toast('Signed out');renderTools()}catch(e){toast(e.message||'Sign out failed')}
+}
+async function saveCloudProfile(){
+  try{
+    const name=$('profileName')?.value.trim()||'Collector', zip=$('profileZip')?.value.trim()||'';
+    await twogenCloudSaveProfile(name,zip);
+    if(zip){state.settings.zip=zip;state.settings.locationLabel=zip;saveState()}
+    toast('Profile saved');renderTools();
+  }catch(e){toast(e.message||'Profile update failed')}
+}
+async function syncVaultToCloud(){
+  if(!signedIn()){toast('Sign in first');return;}
+  try{await twogenCloudSaveBackup(state);toast('Vault backed up to your account')}catch(e){toast(e.message||'Cloud backup failed')}
+}
+async function restoreVaultFromCloud(){
+  if(!signedIn()){toast('Sign in first');return;}
+  if(!confirm('Replace this device’s current local data with your cloud backup?'))return;
+  try{
+    const backup=await twogenCloudLoadBackup();
+    if(!backup?.payload){toast('No cloud backup found');return;}
+    state={...structuredClone(seed),...backup.payload,settings:{...seed.settings,...(backup.payload.settings||{})}};
+    saveState();render(currentTab);toast('Cloud backup restored');
+  }catch(e){toast(e.message||'Restore failed')}
+}
+
 function renderDiscover(){
   $('discover').innerHTML = `
     <div class="page-title"><div><h1>Card Search</h1><p>Discover cards, compare market data and add them straight to your vault.</p></div></div>
@@ -753,6 +951,7 @@ function renderTools(){
       ${toolButton('grading','◇','Grading','Submission tracker')}
       ${toolButton('trades','⇄','Trades','Trade history')}
       ${toolButton('alerts','!','Alerts','Price targets')}
+      ${toolButton('account','☁','Account','Cloud sync & profile')}
       ${toolButton('settings','⚙','Settings','Backup & integrations')}
     </div>
     <div id="toolBody">${renderToolBody()}</div>`;
@@ -767,6 +966,7 @@ function renderToolBody(){
   if(toolsTab==='grading') return renderGradingTool();
   if(toolsTab==='trades') return renderTradesTool();
   if(toolsTab==='alerts') return renderAlertsTool();
+  if(toolsTab==='account') return renderAccountTool();
   return renderSettingsTool();
 }
 function renderScannerTool(){
@@ -786,13 +986,37 @@ function removeWishlist(id){state.wishlist=state.wishlist.filter(x=>x.uid!==id);
 function renderStockReportTool(){
   return `<div class="panel"><div class="section-head"><div><h2>Add stock report</h2><p>Record what you saw and when. This becomes community reporting when cloud accounts are added.</p></div></div>
     <div class="form-grid"><label class="field"><span>Store</span><input id="reportStore" placeholder="Target - Asheville"></label><label class="field"><span>Status</span><select id="reportStatus"><option>In stock</option><option>Low stock</option><option>Out of stock</option></select></label><label class="field full"><span>Product</span><input id="reportProduct" placeholder="Prismatic Evolutions ETB"></label><label class="field"><span>Quantity seen</span><input id="reportQty" type="number" min="0" placeholder="4"></label><label class="field"><span>Price</span><input id="reportPrice" type="number" min="0" step=".01" placeholder="49.99"></label><label class="field full"><span>Notes</span><textarea id="reportNotes" placeholder="Aisle, limit, restock notes..."></textarea></label></div>
+    <label class="field" style="margin-top:10px"><span>Community</span><select id="reportPublish"><option value="local">Save on this phone only</option><option value="cloud">Publish to 2GEN Community Network</option></select></label>
     <button class="btn primary" style="margin-top:10px" onclick="addStockReport()">Save report</button>
   </div>`;
 }
-function addStockReport(){
+async function addStockReport(){
   const store=$('reportStore')?.value.trim(), product=$('reportProduct')?.value.trim(); if(!store||!product){toast('Store and product are required');return;}
-  state.stockReports.unshift({uid:uid(),store,product,status:$('reportStatus')?.value||'In stock',qty:Number($('reportQty')?.value)||0,price:Number($('reportPrice')?.value)||0,notes:$('reportNotes')?.value.trim()||'',ts:new Date().toISOString(),confirmations:0,soldOutConfirmations:0});
-  saveState(); toast('Stock report saved'); switchTab('stock');
+  const report={uid:uid(),store,product,game:stockGame||'Pokemon',status:$('reportStatus')?.value||'In stock',qty:Number($('reportQty')?.value)||0,price:Number($('reportPrice')?.value)||0,notes:$('reportNotes')?.value.trim()||'',ts:new Date().toISOString(),confirmations:0,soldOutConfirmations:0};
+  state.stockReports.unshift(report);
+  saveState();
+
+  if(($('reportPublish')?.value||'local')==='cloud'){
+    if(!signedIn()){
+      toast('Saved locally. Sign in before publishing to the community.');
+    }else{
+      try{
+        await twogenCloudPublishStockReport({
+          ...report,
+          zip:state.settings.zip||null,
+          lat:typeof state.settings.lat==='number'?state.settings.lat:null,
+          lon:typeof state.settings.lon==='number'?state.settings.lon:null
+        });
+        toast('Published to 2GEN Community Network');
+        await refreshCommunityReports(false);
+      }catch(e){
+        toast('Saved locally; cloud publish failed: '+(e.message||'unknown error'));
+      }
+    }
+  }else{
+    toast('Stock report saved locally');
+  }
+  switchTab('stock');
 }
 function renderBudgetTool(){
   const spent=monthSpend(), budget=Number(state.settings.monthlyBudget)||0, pct=budget?Math.min(100,spent/budget*100):0;
@@ -838,6 +1062,7 @@ function removePriceAlert(id){state.priceAlerts=state.priceAlerts.filter(x=>x.ui
 function renderSettingsTool(){
   const cfg=window.TWOGEN_CONFIG||{};
   return `<div class="panel"><div class="section-head"><div><h2>App settings</h2><p>Branding, backup and integration status.</p></div></div><div class="form-grid"><label class="field"><span>App name</span><input id="brandName" value="${esc(state.settings.brand)}"></label><label class="field"><span>Tagline</span><input id="brandTagline" value="${esc(state.settings.tagline)}"></label></div><button class="btn primary" style="margin-top:10px" onclick="saveBrandSettings()">Save branding</button></div>
+  <div class="panel"><h2>Cloud status</h2><div class="notice ${cloudReady()?'good':'warn'}"><span>${cloudReady()?'●':'!'}</span><span>${cloudReady()?`Cloud project connected • ${signedIn()?'signed in':'guest mode'}`:'Cloud project not configured. Accounts and community reports remain local-only until setup.'}</span></div></div>
   <div class="panel"><h2>Inventory integration</h2><div class="notice ${cfg.inventoryApiBase?'good':'warn'}"><span>${cfg.inventoryApiBase?'●':'!'}</span><span>${cfg.inventoryApiBase?`Connected to ${esc(cfg.inventoryApiBase)}`:'No secure retailer-inventory backend is configured. Edit only the public inventoryApiBase in config.js after we create the backend. Never put secret retailer/API keys in GitHub Pages.'}</span></div></div>
   <div class="panel"><h2>Backup & portability</h2><div class="action-row"><button class="btn" onclick="exportBackup()">Export full backup</button><button class="btn" onclick="$('hiddenImport').click()">Import backup</button><button class="btn red" onclick="resetApp()">Reset local data</button></div><p style="margin-top:9px">Version ${esc(String(cfg.appVersion||'0.4.0'))}. Data currently lives on this device until cloud accounts are added.</p></div>`;
 }
@@ -860,8 +1085,21 @@ function exportCollectionCSV(){
 Object.assign(window,{
   switchTab,openVault,openTool,toggleRetailer,saveStockArea,useMyLocation,runInventorySearch,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
+  refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   setDiscoverMode,doCardSearch,addCard,addWishlist,addPriceAlert,setVaultTab,updateCollection,removeCollection,addSealed,openOneSealed,removeSealed,addSetGoal,editSetGoal,removeSetGoal,
   setToolTab,addStockReport,removeWishlist,saveBudget,addPurchase,removePurchase,addGrading,advanceGrading,removeGrading,addTrade,removeTrade,removePriceAlert,saveBrandSettings,exportBackup,resetApp,exportCollectionCSV
+});
+
+
+window.addEventListener('twogen-cloud-ready',()=>{
+  updateStatus();
+  if(currentTab==='tools' && toolsTab==='account') renderTools();
+  if(cloudReady() && state.settings.zip) refreshCommunityReports(false);
+});
+window.addEventListener('twogen-auth-changed',()=>{
+  updateStatus();
+  render(currentTab);
+  if(cloudReady() && state.settings.zip) refreshCommunityReports(false);
 });
 
 if('serviceWorker' in navigator){
