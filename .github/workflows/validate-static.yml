@@ -3,7 +3,7 @@ name: Validate VaultSignal Static Build
 on:
   pull_request:
   push:
-    branches: [main, v17-signal-network]
+    branches: [main, v18-live-community]
 
 permissions:
   contents: read
@@ -14,13 +14,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
       - name: Check JavaScript syntax
         run: |
           node --check app.js
+          node --check cloud-compat-v18.js
           node --check cloud.js
           node --check config.js
           node --check creator-command.js
@@ -28,20 +31,35 @@ jobs:
           node --check journey-engine.js
           node --check vaultgraph.js
           node --check signal-network.js
+          node --check live-community.js
           node --check sw.js
-      - name: Verify v17 assets are wired
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Check Signal Push Edge Function
+        run: deno check --config supabase/functions/signal-push/deno.json supabase/functions/signal-push/index.ts
+
+      - name: Verify v18 assets are wired
         run: |
           grep -q 'creator-command.css' index.html
           grep -q 'grail-intelligence.css' index.html
           grep -q 'journey-engine.css' index.html
           grep -q 'vaultgraph.css' index.html
           grep -q 'signal-network.css' index.html
-          grep -q 'creator-command.js' index.html
-          grep -q 'grail-intelligence.js' index.html
-          grep -q 'journey-engine.js' index.html
-          grep -q 'vaultgraph.js' index.html
+          grep -q 'live-community.css' index.html
+          grep -q 'cloud-compat-v18.js' index.html
           grep -q 'signal-network.js' index.html
-          grep -q 'signal-network.js' sw.js
-          grep -q 'signal-network.css' sw.js
-          grep -q 'appVersion: "17.0.0"' config.js
+          grep -q 'live-community.js' index.html
+          grep -q 'live-community.js' sw.js
+          grep -q 'live-community.css' sw.js
+          grep -q "addEventListener('push'" sw.js
+          grep -q 'appVersion: "18.0.0"' config.js
+          grep -q 'supabasePublishableKey' config.js
+          grep -q 'webPushPublicKey' config.js
           test -f supabase/signal-network-v17.sql
+          test -f supabase/live-community-v18.sql
+          test -f supabase/functions/signal-push/index.ts
+          test -f supabase/functions/signal-push/deno.json
