@@ -3,7 +3,7 @@ name: Validate VaultSignal Static Build
 on:
   pull_request:
   push:
-    branches: [main, v15-card-journey]
+    branches: [main, v16-vaultgraph]
 
 permissions:
   contents: read
@@ -26,15 +26,18 @@ jobs:
           node --check creator-command.js
           node --check grail-intelligence.js
           node --check journey-engine.js
+          node --check vaultgraph.js
           node --check sw.js
-      - name: Verify v15 assets are wired
+      - name: Verify v16 assets are wired
         run: |
           grep -q 'creator-command.css' index.html
           grep -q 'grail-intelligence.css' index.html
           grep -q 'journey-engine.css' index.html
+          grep -q 'vaultgraph.css' index.html
           grep -q 'creator-command.js' index.html
           grep -q 'grail-intelligence.js' index.html
           grep -q 'journey-engine.js' index.html
-          grep -q 'journey-engine.js' sw.js
-          grep -q 'journey-engine.css' sw.js
-          grep -q 'appVersion: "15.0.0"' config.js
+          grep -q 'vaultgraph.js' index.html
+          grep -q 'vaultgraph.js' sw.js
+          grep -q 'vaultgraph.css' sw.js
+          grep -q 'appVersion: "16.0.0"' config.js
