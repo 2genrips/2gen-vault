@@ -18,12 +18,12 @@ window.TWOGEN_CONFIG = {
   premiumMonthlyPrice: 4.99,
   premiumProductId: "vaultsignal_premium_monthly",
   premiumPreview: true,
-  releaseChannel: "grail-intelligence-preview",
+  releaseChannel: "card-journey-preview",
   premiumEntitlementApiBase: "",
   supportEmail: "",
   supportUrl: "",
   privacyUrl: "./privacy.html",
   termsUrl: "./terms.html",
   dataDeletionUrl: "./privacy.html#deletion",
-  appVersion: "14.0.0"
+  appVersion: "15.0.0"
 };
