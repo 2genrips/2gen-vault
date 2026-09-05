@@ -3,7 +3,7 @@ name: Validate VaultSignal Static Build
 on:
   pull_request:
   push:
-    branches: [main, v16-vaultgraph]
+    branches: [main, v17-signal-network]
 
 permissions:
   contents: read
@@ -27,17 +27,21 @@ jobs:
           node --check grail-intelligence.js
           node --check journey-engine.js
           node --check vaultgraph.js
+          node --check signal-network.js
           node --check sw.js
-      - name: Verify v16 assets are wired
+      - name: Verify v17 assets are wired
         run: |
           grep -q 'creator-command.css' index.html
           grep -q 'grail-intelligence.css' index.html
           grep -q 'journey-engine.css' index.html
           grep -q 'vaultgraph.css' index.html
+          grep -q 'signal-network.css' index.html
           grep -q 'creator-command.js' index.html
           grep -q 'grail-intelligence.js' index.html
           grep -q 'journey-engine.js' index.html
           grep -q 'vaultgraph.js' index.html
-          grep -q 'vaultgraph.js' sw.js
-          grep -q 'vaultgraph.css' sw.js
-          grep -q 'appVersion: "16.0.0"' config.js
+          grep -q 'signal-network.js' index.html
+          grep -q 'signal-network.js' sw.js
+          grep -q 'signal-network.css' sw.js
+          grep -q 'appVersion: "17.0.0"' config.js
+          test -f supabase/signal-network-v17.sql
