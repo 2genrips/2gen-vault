@@ -16,8 +16,8 @@
 */
 window.TWOGEN_CONFIG = {
   inventoryApiBase: "https://2gen-vault-inventory.willingpaige.workers.dev",
-  supabaseUrl: "",
-  supabasePublishableKey: "",
+  supabaseUrl: "https://ztesewpipghbkvtbidry.supabase.co",
+  supabasePublishableKey: "sb_publishable_30xcnUHi1scD67S0TmEx9A_n-DNYCsK",
   supabaseAnonKey: "",
   webPushPublicKey: "",
   premiumMonthlyPrice: 4.99,
