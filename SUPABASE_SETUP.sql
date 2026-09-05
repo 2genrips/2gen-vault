@@ -1,7 +1,8 @@
--- 2GEN Vault v0.6 — Supabase schema
--- Run this entire file once in Supabase > SQL Editor.
+-- VaultSignal base Supabase schema
+-- Hardened production-safe account, stock report, confirmation, and vault backup foundation.
 
 create extension if not exists pgcrypto;
+create schema if not exists private;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -27,11 +28,11 @@ create table if not exists public.stock_reports (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
 create index if not exists stock_reports_zip_idx on public.stock_reports(zip);
 create index if not exists stock_reports_game_idx on public.stock_reports(game);
 create index if not exists stock_reports_updated_idx on public.stock_reports(updated_at desc);
 create index if not exists stock_reports_product_idx on public.stock_reports using gin (to_tsvector('simple', product));
+create index if not exists stock_reports_user_idx on public.stock_reports(user_id);
 
 create table if not exists public.stock_confirmations (
   id uuid primary key default gen_random_uuid(),
@@ -42,8 +43,8 @@ create table if not exists public.stock_confirmations (
   updated_at timestamptz not null default now(),
   unique(report_id,user_id)
 );
-
 create index if not exists stock_confirmations_report_idx on public.stock_confirmations(report_id);
+create index if not exists stock_confirmations_user_idx on public.stock_confirmations(user_id);
 
 create table if not exists public.vault_backups (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -57,109 +58,60 @@ alter table public.stock_reports enable row level security;
 alter table public.stock_confirmations enable row level security;
 alter table public.vault_backups enable row level security;
 
--- Profiles: users can read public display names but only write their own profile.
+grant select,insert,update on public.profiles to authenticated;
+grant select on public.stock_reports to anon,authenticated;
+grant insert,update,delete on public.stock_reports to authenticated;
+grant select on public.stock_confirmations to anon,authenticated;
+grant insert,update,delete on public.stock_confirmations to authenticated;
+grant select,insert,update on public.vault_backups to authenticated;
+
 drop policy if exists "profiles public read" on public.profiles;
-create policy "profiles public read"
-on public.profiles for select
-using (true);
-
+drop policy if exists "profiles own read" on public.profiles;
+create policy "profiles own read" on public.profiles for select to authenticated using ((select auth.uid()) = id);
 drop policy if exists "profiles own insert" on public.profiles;
-create policy "profiles own insert"
-on public.profiles for insert
-with check (auth.uid() = id);
-
+create policy "profiles own insert" on public.profiles for insert to authenticated with check ((select auth.uid()) = id);
 drop policy if exists "profiles own update" on public.profiles;
-create policy "profiles own update"
-on public.profiles for update
-using (auth.uid() = id)
-with check (auth.uid() = id);
+create policy "profiles own update" on public.profiles for update to authenticated using ((select auth.uid()) = id) with check ((select auth.uid()) = id);
 
--- Stock reports: anyone using the app can read; only signed-in users can publish,
--- and users can only edit/delete their own reports.
 drop policy if exists "stock reports public read" on public.stock_reports;
-create policy "stock reports public read"
-on public.stock_reports for select
-using (true);
-
+create policy "stock reports public read" on public.stock_reports for select to anon,authenticated using (true);
 drop policy if exists "stock reports auth insert" on public.stock_reports;
-create policy "stock reports auth insert"
-on public.stock_reports for insert
-to authenticated
-with check (auth.uid() = user_id);
-
+create policy "stock reports auth insert" on public.stock_reports for insert to authenticated with check ((select auth.uid()) = user_id);
 drop policy if exists "stock reports own update" on public.stock_reports;
-create policy "stock reports own update"
-on public.stock_reports for update
-to authenticated
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
-
+create policy "stock reports own update" on public.stock_reports for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 drop policy if exists "stock reports own delete" on public.stock_reports;
-create policy "stock reports own delete"
-on public.stock_reports for delete
-to authenticated
-using (auth.uid() = user_id);
+create policy "stock reports own delete" on public.stock_reports for delete to authenticated using ((select auth.uid()) = user_id);
 
--- Confirmations: public read; signed-in collectors can create/update/delete only their own vote.
 drop policy if exists "confirmations public read" on public.stock_confirmations;
-create policy "confirmations public read"
-on public.stock_confirmations for select
-using (true);
-
+create policy "confirmations public read" on public.stock_confirmations for select to anon,authenticated using (true);
 drop policy if exists "confirmations own insert" on public.stock_confirmations;
-create policy "confirmations own insert"
-on public.stock_confirmations for insert
-to authenticated
-with check (auth.uid() = user_id);
-
+create policy "confirmations own insert" on public.stock_confirmations for insert to authenticated with check ((select auth.uid()) = user_id);
 drop policy if exists "confirmations own update" on public.stock_confirmations;
-create policy "confirmations own update"
-on public.stock_confirmations for update
-to authenticated
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
-
+create policy "confirmations own update" on public.stock_confirmations for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 drop policy if exists "confirmations own delete" on public.stock_confirmations;
-create policy "confirmations own delete"
-on public.stock_confirmations for delete
-to authenticated
-using (auth.uid() = user_id);
+create policy "confirmations own delete" on public.stock_confirmations for delete to authenticated using ((select auth.uid()) = user_id);
 
--- Private vault backups: only the owner can read/write.
 drop policy if exists "vault backup own read" on public.vault_backups;
-create policy "vault backup own read"
-on public.vault_backups for select
-to authenticated
-using (auth.uid() = user_id);
-
+create policy "vault backup own read" on public.vault_backups for select to authenticated using ((select auth.uid()) = user_id);
 drop policy if exists "vault backup own insert" on public.vault_backups;
-create policy "vault backup own insert"
-on public.vault_backups for insert
-to authenticated
-with check (auth.uid() = user_id);
-
+create policy "vault backup own insert" on public.vault_backups for insert to authenticated with check ((select auth.uid()) = user_id);
 drop policy if exists "vault backup own update" on public.vault_backups;
-create policy "vault backup own update"
-on public.vault_backups for update
-to authenticated
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
+create policy "vault backup own update" on public.vault_backups for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 
--- Automatically create a basic profile after signup.
-create or replace function public.handle_new_user()
+create or replace function private.handle_new_user()
 returns trigger
 language plpgsql
-security definer set search_path = public
+security definer
+set search_path = public, private
 as $$
 begin
   insert into public.profiles (id, display_name)
-  values (new.id, coalesce(new.raw_user_meta_data->>'display_name','Collector'))
+  values (new.id, left(coalesce(nullif(trim(new.raw_user_meta_data->>'display_name'),''),'Collector'),40))
   on conflict (id) do nothing;
   return new;
 end;
 $$;
+revoke all on function private.handle_new_user() from public, anon, authenticated;
 
 drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-after insert on auth.users
-for each row execute procedure public.handle_new_user();
+create trigger on_auth_user_created after insert on auth.users for each row execute function private.handle_new_user();
