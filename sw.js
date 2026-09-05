@@ -1,5 +1,5 @@
-const CACHE='vaultsignal-card-journey-v150';
-const ASSETS=['./','./index.html','./styles.css','./app.js','./config.js','./cloud.js','./creator-command.css','./creator-command.js','./grail-intelligence.css','./grail-intelligence.js','./journey-engine.css','./journey-engine.js','./manifest.webmanifest','./icon.svg','./privacy.html','./terms.html','./support.html'];
+const CACHE='vaultsignal-vaultgraph-v160';
+const ASSETS=['./','./index.html','./styles.css','./app.js','./config.js','./cloud.js','./creator-command.css','./creator-command.js','./grail-intelligence.css','./grail-intelligence.js','./journey-engine.css','./journey-engine.js','./vaultgraph.css','./vaultgraph.js','./manifest.webmanifest','./icon.svg','./privacy.html','./terms.html','./support.html'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)))});
 self.addEventListener('activate',e=>{e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim()})())});
 self.addEventListener('fetch',e=>{
