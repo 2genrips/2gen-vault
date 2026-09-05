@@ -1,0 +1,34 @@
+name: Validate VaultSignal Static Build
+
+on:
+  pull_request:
+  push:
+    branches: [main, v14-grail-intelligence]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JavaScript syntax
+        run: |
+          node --check app.js
+          node --check cloud.js
+          node --check config.js
+          node --check creator-command.js
+          node --check grail-intelligence.js
+          node --check sw.js
+      - name: Verify v14 assets are wired
+        run: |
+          grep -q 'grail-intelligence.css' index.html
+          grep -q 'grail-intelligence.js' index.html
+          grep -q 'grail-intelligence.js' sw.js
+          grep -q '"appVersion": "14.0.0"' <(sed 's/appVersion:/"appVersion":/' config.js) || grep -q 'appVersion: "14.0.0"' config.js
