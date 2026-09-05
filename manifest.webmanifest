@@ -1,28 +1,17 @@
 {
-  "name": "VaultSignal \u2014 Collector Intelligence OS",
+  "name": "VaultSignal — Collector Intelligence OS",
   "short_name": "VaultSignal",
-  "description": "VaultSignal v12.0 launch candidate \u2014 stock alerts, local inventory, card scanning and values, singles + sealed collection tracking, sets, trades and analytics.",
+  "description": "VaultSignal v13 — stock intelligence, card scanning and values, collection management, family Pack Battles, creator tools, trades, sales, sets and analytics in one collector OS by 2GEN RIPS.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#0B1020",
   "theme_color": "#0B1020",
   "orientation": "portrait",
-  "icons": [
-    {
-      "src": "./icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }
-  ],
+  "icons": [{"src":"./icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}],
   "id": "./",
   "lang": "en-US",
   "dir": "ltr",
-  "categories": [
-    "shopping",
-    "lifestyle",
-    "utilities"
-  ],
+  "categories": ["shopping","lifestyle","utilities","entertainment"],
   "prefer_related_applications": false
 }
