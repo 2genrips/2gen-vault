@@ -9,6 +9,9 @@
  *   LOCAL_STOCK_PROVIDER_URL    - Optional licensed/partner local-inventory feed base URL
  *   LOCAL_STOCK_PROVIDER_TOKEN  - Optional bearer token for the partner feed
  *
+ * Bindings:
+ *   VAULTSIGNAL_ALERTS          - Cloudflare KV namespace for watch profiles, snapshots and alert inboxes
+ *
  * Vars:
  *   ALLOWED_ORIGIN   - e.g. https://2genrips.github.io
  *
@@ -18,9 +21,15 @@
  *   GET /card-price?q=...&game=...
  *   GET /area-scan?zip=28761&radius=25&games=Pokemon,Lorcana
  *   GET /drop-feed?games=Pokemon,One%20Piece&limit=120
+ *   POST /watch-sync
+ *   POST /alerts-query
+ *   GET /alert-status
+ *   GET /system-status
+ *   POST /watch-delete
+ *   GET /launch-status
  */
 
-const VERSION = "10.6.0";
+const VERSION = "12.0.0";
 const BESTBUY_BASE = "https://api.bestbuy.com/v1";
 const MAX_PRODUCT_MATCHES = 4;
 const CACHE_TTL_SECONDS = 120;
@@ -32,7 +41,7 @@ function json(data, status=200, origin="*"){
       "content-type":"application/json; charset=utf-8",
       "cache-control":"no-store",
       "access-control-allow-origin":origin,
-      "access-control-allow-methods":"GET,OPTIONS",
+      "access-control-allow-methods":"GET,POST,OPTIONS",
       "access-control-allow-headers":"Accept,Content-Type"
     }
   });
@@ -802,6 +811,222 @@ async function localStockCheck(url,env){
   };
 }
 
+
+async function sha256Hex(value){
+  const data=new TextEncoder().encode(String(value||""));
+  const digest=await crypto.subtle.digest("SHA-256",data);
+  return [...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+function validInstallId(v){
+  const s=String(v||"");
+  return /^[A-Za-z0-9_-]{8,100}$/.test(s)?s:"";
+}
+function cleanWatchList(rows){
+  return (Array.isArray(rows)?rows:[]).map(x=>({
+    product:safeText(x?.product,120),
+    game:safeText(x?.game,40)||"Pokemon",
+    maxPrice:boundedNumber(x?.maxPrice,0,100000,0)
+  })).filter(x=>x.product).slice(0,8);
+}
+async function watchEngineStatus(env){
+  if(!env.VAULTSIGNAL_ALERTS){
+    return {configured:false,storage:false,lastMonitorAt:null,description:"Bind Cloudflare KV as VAULTSIGNAL_ALERTS and add a Cron Trigger."};
+  }
+  const lastMonitorAt=await env.VAULTSIGNAL_ALERTS.get("system:lastMonitor");
+  return {configured:true,storage:true,lastMonitorAt:lastMonitorAt||null,description:"KV watch storage is connected."};
+}
+async function verifyWatchIdentity(env,installId,installToken,allowCreate=false){
+  if(!env.VAULTSIGNAL_ALERTS)throw new Error("Watch Engine storage is not configured");
+  const id=validInstallId(installId);
+  if(!id)throw new Error("Invalid installation ID");
+  if(!installToken||String(installToken).length<24)throw new Error("Invalid installation token");
+
+  const key=`profile:${id}`;
+  const existing=await env.VAULTSIGNAL_ALERTS.get(key,"json");
+  const tokenHash=await sha256Hex(installToken);
+  if(existing){
+    if(existing.tokenHash!==tokenHash)throw new Error("Watch identity verification failed");
+    return {id,key,profile:existing,tokenHash};
+  }
+  if(!allowCreate)throw new Error("Watch profile is not registered");
+  return {id,key,profile:null,tokenHash};
+}
+async function watchSyncRequest(request,env){
+  const body=await request.json().catch(()=>({}));
+  const auth=await verifyWatchIdentity(env,body.installId,body.installToken,true);
+  const zip=safeText(body.zip,10).replace(/\D/g,"").slice(0,5);
+  if(zip.length!==5)return {status:400,data:{error:"A 5-digit ZIP is required"}};
+  const watches=cleanWatchList(body.watches);
+  if(!watches.length)return {status:400,data:{error:"At least one watch is required"}};
+
+  const profile={
+    installId:auth.id,tokenHash:auth.tokenHash,zip,
+    radius:boundedNumber(body.radius,1,100,25),
+    games:(Array.isArray(body.games)?body.games:[]).map(x=>safeText(x,40)).filter(Boolean).slice(0,5),
+    watches,enabled:true,
+    createdAt:auth.profile?.createdAt||new Date().toISOString(),
+    updatedAt:new Date().toISOString()
+  };
+  await env.VAULTSIGNAL_ALERTS.put(auth.key,JSON.stringify(profile));
+  return {status:200,data:{ok:true,watchCount:watches.length,syncedAt:profile.updatedAt,alertEngine:await watchEngineStatus(env)}};
+}
+async function alertsQueryRequest(request,env){
+  const body=await request.json().catch(()=>({}));
+  const auth=await verifyWatchIdentity(env,body.installId,body.installToken,false);
+  const alerts=await env.VAULTSIGNAL_ALERTS.get(`alerts:${auth.id}`,"json")||[];
+  return {status:200,data:{ok:true,alerts:alerts.slice(0,100),alertEngine:await watchEngineStatus(env)}};
+}
+function monitorWords(v){
+  return safeText(v,180).toLowerCase().split(/\s+/).filter(x=>x.length>2&&!["pokemon","trading","cards","card","the","and","with"].includes(x));
+}
+function watchMatchesProduct(watch,row){
+  const q=String(watch.product||"").toLowerCase();
+  const text=`${row.product||""} ${row.game||""}`.toLowerCase();
+  if(text.includes(q))return true;
+  const words=monitorWords(watch.product);
+  if(!words.length)return false;
+  return words.filter(w=>text.includes(w)).length/words.length>=0.7;
+}
+function monitorRowKey(row){
+  return `${row.sourceId||row.provider||row.retailer||"source"}|${row.storeId||row.store||"online"}|${row.productId||row.handle||row.retailerSku||row.url||row.product}`;
+}
+function monitorSnapshotValue(row){
+  return {
+    available:row.available===true||["in_stock","available","low_stock","limited"].includes(String(row.status||"").toLowerCase()),
+    price:Number(row.price)||0,
+    quantity:(row.quantity===null||row.quantity===undefined)?null:Number(row.quantity),
+    checkedAt:row.checkedAt||new Date().toISOString()
+  };
+}
+function alertFromChange(watch,row,before,current){
+  if(!before)return null; // First pass creates a baseline.
+
+  let type="",priority="high";
+  if(before.available===false&&current.available===true)type="RESTOCK";
+  else if(before.quantity!==null&&current.quantity!==null&&current.quantity>before.quantity)type="QUANTITY UP";
+  else if(before.price>0&&current.price>0&&current.price<before.price){type="PRICE DROP";priority="medium";}
+  else return null;
+
+  if(type==="PRICE DROP"&&watch.maxPrice>0&&current.price>watch.maxPrice)return null;
+
+  return {
+    id:crypto.randomUUID(),type,priority,
+    source:row.sourceLabel||row.sourceAttribution||row.provider||row.retailer||"VaultSignal",
+    retailer:row.retailer||"",
+    store:row.store||row.region||"Online",
+    product:row.product||watch.product,
+    price:current.price||null,previousPrice:before.price||null,
+    quantity:current.quantity,previousQuantity:before.quantity,
+    url:row.url||row.addToCartUrl||"",
+    detectedAt:new Date().toISOString(),
+    title:`${type} • ${row.product||watch.product}`
+  };
+}
+async function profileMonitorRows(profile,env,globalDrops){
+  const rows=[];
+  for(const watch of profile.watches||[]){
+    for(const row of globalDrops||[]){
+      if(watchMatchesProduct(watch,row))rows.push({...row,_watch:watch});
+    }
+    if(env.BESTBUY_API_KEY||env.LOCAL_STOCK_PROVIDER_URL){
+      const u=new URL("https://vaultsignal.local/local-stock");
+      u.searchParams.set("zip",profile.zip);
+      u.searchParams.set("radius",String(profile.radius||25));
+      u.searchParams.set("query",watch.product);
+      try{
+        const out=await localStockCheck(u,env);
+        for(const row of out.data?.results||[])rows.push({...row,_watch:watch});
+      }catch{}
+    }
+  }
+  return rows.slice(0,160);
+}
+async function appendProfileAlerts(env,installId,newAlerts){
+  if(!newAlerts.length)return;
+  const key=`alerts:${installId}`;
+  const existing=await env.VAULTSIGNAL_ALERTS.get(key,"json")||[];
+  await env.VAULTSIGNAL_ALERTS.put(key,JSON.stringify([...newAlerts,...existing].slice(0,100)),{expirationTtl:60*60*24*45});
+}
+async function monitorOneProfile(profile,env,globalDrops){
+  const rows=await profileMonitorRows(profile,env,globalDrops);
+  const snapKey=`snapshot:${profile.installId}`;
+  const previous=await env.VAULTSIGNAL_ALERTS.get(snapKey,"json")||{};
+  const next={},alerts=[];
+
+  for(const row of rows){
+    const key=monitorRowKey(row);
+    const current=monitorSnapshotValue(row);
+    next[key]=current;
+    const alert=alertFromChange(row._watch||{},row,previous[key],current);
+    if(alert)alerts.push(alert);
+  }
+
+  await env.VAULTSIGNAL_ALERTS.put(snapKey,JSON.stringify(next),{expirationTtl:60*60*24*14});
+  await appendProfileAlerts(env,profile.installId,alerts);
+  return alerts.length;
+}
+async function monitorWatchProfiles(env){
+  if(!env.VAULTSIGNAL_ALERTS)return {configured:false,profiles:0,alerts:0};
+
+  const start=Date.now();
+  const listed=await env.VAULTSIGNAL_ALERTS.list({prefix:"profile:",limit:50});
+  const profiles=[];
+  for(const key of listed.keys){
+    const p=await env.VAULTSIGNAL_ALERTS.get(key.name,"json");
+    if(p?.enabled&&Array.isArray(p.watches)&&p.watches.length)profiles.push(p);
+  }
+
+  const games=[...new Set(profiles.flatMap(p=>p.games||[]))];
+  let globalDrops=[];
+  if(profiles.length){
+    try{
+      const u=new URL("https://vaultsignal.local/drop-feed");
+      u.searchParams.set("games",(games.length?games:["Pokemon"]).join(","));
+      u.searchParams.set("limit","160");
+      globalDrops=(await liveDropFeed(u)).results||[];
+    }catch{}
+  }
+
+  let alerts=0;
+  for(const profile of profiles){
+    try{alerts+=await monitorOneProfile(profile,env,globalDrops)}catch{}
+  }
+
+  const at=new Date().toISOString();
+  await env.VAULTSIGNAL_ALERTS.put("system:lastMonitor",at);
+  await env.VAULTSIGNAL_ALERTS.put("system:lastMonitorMeta",JSON.stringify({at,profiles:profiles.length,alerts,durationMs:Date.now()-start}),{expirationTtl:60*60*24*7});
+  return {configured:true,profiles:profiles.length,alerts,durationMs:Date.now()-start,at};
+}
+
+
+async function watchDeleteRequest(request,env){
+  const body=await request.json().catch(()=>({}));
+  const auth=await verifyWatchIdentity(env,body.installId,body.installToken,false);
+  await Promise.all([
+    env.VAULTSIGNAL_ALERTS.delete(`profile:${auth.id}`),
+    env.VAULTSIGNAL_ALERTS.delete(`snapshot:${auth.id}`),
+    env.VAULTSIGNAL_ALERTS.delete(`alerts:${auth.id}`)
+  ]);
+  return {status:200,data:{ok:true,deleted:true,installId:auth.id,deletedAt:new Date().toISOString()}};
+}
+async function launchStatus(env){
+  const alertEngine=await watchEngineStatus(env);
+  return {
+    ok:true,version:VERSION,releaseCandidate:true,checkedAt:new Date().toISOString(),
+    capabilities:{
+      watchDataDeletion:!!env.VAULTSIGNAL_ALERTS,
+      watchEngine:alertEngine.configured===true,
+      liveDrops:PUBLIC_STOREFRONT_MONITORS.length>0,
+      bestBuy:!!env.BESTBUY_API_KEY,
+      localStockPartner:!!env.LOCAL_STOCK_PROVIDER_URL,
+      priceCharting:!!env.PRICECHARTING_API_TOKEN,
+      productionStoreDiscovery:!!env.GOOGLE_PLACES_API_KEY
+    },
+    accountMode:'accountless-local-first',
+    premiumServerVerification:false
+  };
+}
+
 export default {
   async fetch(request, env, ctx){
     const origin=corsOrigin(request,env);
@@ -811,7 +1036,7 @@ export default {
       "access-control-allow-headers":"Accept,Content-Type",
       "access-control-max-age":"86400"
     }});
-    if(request.method!=="GET")return json({error:"Method not allowed"},405,origin);
+    if(!["GET","POST"].includes(request.method))return json({error:"Method not allowed"},405,origin);
 
     const url=new URL(request.url);
     if(url.pathname==="/health"){
@@ -820,10 +1045,66 @@ export default {
         providers:providerStatus(env),
         storeDiscovery:storeDiscoveryStatus(env),
         localStockProviders:localStockProviderStatus(env),
+        alertEngine:await watchEngineStatus(env),
         pricingProviders:[priceChartingStatus(env)],
         checkedAt:new Date().toISOString()
       },200,origin);
     }
+    if(url.pathname==="/watch-delete"){
+      if(request.method!=="POST")return json({error:"POST required"},405,origin);
+      try{
+        const out=await watchDeleteRequest(request,env);
+        return json(out.data,out.status,origin);
+      }catch(e){return json({ok:false,error:e.message||"Watch data deletion failed"},502,origin)}
+    }
+
+    if(url.pathname==="/launch-status"){
+      return json(await launchStatus(env),200,origin);
+    }
+
+    if(url.pathname==="/watch-sync"){
+      if(request.method!=="POST")return json({error:"POST required"},405,origin);
+      try{
+        const out=await watchSyncRequest(request,env);
+        return json(out.data,out.status,origin);
+      }catch(e){
+        return json({ok:false,error:e.message||"Watch sync failed"},502,origin);
+      }
+    }
+
+    if(url.pathname==="/alerts-query"){
+      if(request.method!=="POST")return json({error:"POST required"},405,origin);
+      try{
+        const out=await alertsQueryRequest(request,env);
+        return json(out.data,out.status,origin);
+      }catch(e){
+        return json({ok:false,error:e.message||"Alert query failed"},502,origin);
+      }
+    }
+
+    if(url.pathname==="/alert-status"){
+      const alertEngine=await watchEngineStatus(env);
+      const lastMonitorMeta=env.VAULTSIGNAL_ALERTS ? await env.VAULTSIGNAL_ALERTS.get("system:lastMonitorMeta","json") : null;
+      return json({ok:true,alertEngine,lastMonitorMeta},200,origin);
+    }
+
+    if(url.pathname==="/system-status"){
+      const alertEngine=await watchEngineStatus(env);
+      const lastMonitorMeta=env.VAULTSIGNAL_ALERTS ? await env.VAULTSIGNAL_ALERTS.get("system:lastMonitorMeta","json") : null;
+      return json({
+        ok:true,
+        version:VERSION,
+        checkedAt:new Date().toISOString(),
+        alertEngine:{...alertEngine,lastMonitorMeta},
+        providers:providerStatus(env),
+        localStockProviders:localStockProviderStatus(env),
+        storeDiscovery:storeDiscoveryStatus(env),
+        pricingProviders:[priceChartingStatus(env)],
+        dropMonitors:{configured:PUBLIC_STOREFRONT_MONITORS.length,names:PUBLIC_STOREFRONT_MONITORS.map(x=>x.name)},
+        launch:{releaseCandidate:true,watchDataDeletion:!!env.VAULTSIGNAL_ALERTS,accountMode:"accountless-local-first"}
+      },200,origin);
+    }
+
     if(url.pathname==="/local-stock"){
       try{
         const out=await localStockCheck(url,env);
@@ -927,5 +1208,8 @@ export default {
         checkedAt:new Date().toISOString()
       }
     },200,origin);
+  },
+  async scheduled(event,env,ctx){
+    ctx.waitUntil(monitorWatchProfiles(env));
   }
 };

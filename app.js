@@ -2,6 +2,7 @@
 'use strict';
 
 const STORAGE_KEY = '2gen-vault-collector-os-v4';
+const HAD_EXISTING_STATE = !!localStorage.getItem(STORAGE_KEY);
 const retailers = ['Walmart','Target','Best Buy','GameStop',"Sam's Club",'Costco','Walgreens','CVS','Dollar General','Family Dollar','Local Card Shop'];
 const games = ['Pokemon','Lorcana','One Piece','Magic','Yu-Gi-Oh!','Sports','Other'];
 
@@ -25,10 +26,7 @@ const demoCards = [
 
 const seed = {
   binders: [{uid:'binder-default',name:'Main Binder',game:'All',notes:'Default collection binder'}],
-  collection: [
-    {uid:uid(),card:demoCards[0],qty:1,condition:'Near Mint',cost:92,location:'Main Binder'},
-    {uid:uid(),card:demoCards[1],qty:2,condition:'Near Mint',cost:51,location:'Main Binder'}
-  ],
+  collection: [],
   sealed: [],
   wishlist: [],
   priceAlerts: [],
@@ -87,6 +85,13 @@ const seed = {
     scannerDay:'',
     scannerCount:0
   },
+  launch: {
+    onboardingComplete:false,
+    onboardingVersion:'',
+    legalAcceptedAt:null,
+    selectedGames:['Pokemon'],
+    lastDiagnosticsAt:null
+  },
   inventoryCommandSettings: {
     game:'All',
     type:'All',
@@ -114,6 +119,19 @@ const seed = {
   localStockResults: [],
   localStockMeta: {checkedAt:null,durationMs:0,providers:[],errors:[]},
   localStockQuery: '',
+  systemStatus: {checkedAt:null,version:'',alertEngine:null,providers:[],localStockProviders:[],storeDiscovery:null,pricingProviders:[],dropMonitors:null},
+  serverWatch: {
+    installId:'',
+    installToken:'',
+    configured:false,
+    lastSyncAt:null,
+    lastPollAt:null,
+    lastMonitorAt:null,
+    syncedWatchCount:0,
+    unread:0,
+    alerts:[],
+    error:''
+  },
   liveDropFeed: [],
   liveDropSnapshot: {},
   liveDropMeta: {checkedAt:null,durationMs:0,sourcesChecked:0,sourcesOk:0,errors:[]},
@@ -208,21 +226,153 @@ let vaultIQFocusCard = null;
 let toastTimer;
 
 
+
+const LAUNCH_VERSION='12.0.0';
+let launchOnboardingStep=0;
+
+function ensureLaunchSchema(){
+  const existed=!!state.launch;
+  state.launch={
+    onboardingComplete:HAD_EXISTING_STATE,
+    onboardingVersion:'',legalAcceptedAt:null,selectedGames:['Pokemon'],lastDiagnosticsAt:null,
+    ...(state.launch||{})
+  };
+  if(!existed && HAD_EXISTING_STATE) state.launch.onboardingComplete=true;
+  if(!Array.isArray(state.launch.selectedGames)||!state.launch.selectedGames.length){
+    state.launch.selectedGames=['Pokemon'];
+  }
+}
+function launchConfig(){return window.TWOGEN_CONFIG||{}}
+function launchSupportConfigured(){const c=launchConfig();return !!(String(c.supportEmail||'').trim()||String(c.supportUrl||'').trim())}
+function launchBillingBridgeReady(){return !!(window.VaultSignalBilling?.purchase&&window.VaultSignalBilling?.restore)}
+function launchEntitlementBackendReady(){return !!String(launchConfig().premiumEntitlementApiBase||'').trim()}
+function launchChecks(){
+  ensureLaunchSchema();
+  const c=launchConfig();
+  const alertReady=state.serverWatch?.configured===true || state.systemStatus?.alertEngine?.configured===true;
+  const backend=!!String(c.inventoryApiBase||'').trim();
+  const localFeeds=(state.systemStatus?.localStockProviders||[]).filter(x=>x.configured).length;
+  return [
+    {id:'legal',label:'Privacy + Terms pages',ok:true,level:'required',detail:'Bundled as public HTML pages.'},
+    {id:'support',label:'Public support contact',ok:launchSupportConfigured(),level:'required',detail:launchSupportConfigured()?'Configured in config.js.':'Add supportEmail or supportUrl before store submission.'},
+    {id:'backend',label:'Secure Worker backend',ok:backend,level:'required',detail:backend?'Worker URL configured.':'inventoryApiBase is missing.'},
+    {id:'watch',label:'24/7 Watch Engine',ok:alertReady,level:'required',detail:alertReady?'KV + scheduled monitor detected.':'Open Stock/Watch Engine and verify the server monitor.'},
+    {id:'preview',label:'Premium preview disabled',ok:c.premiumPreview===false,level:'release',detail:c.premiumPreview===false?'Production gating enabled.':'Keep ON for testing; switch OFF only in the production config.'},
+    {id:'channel',label:'Production release channel',ok:c.releaseChannel==='production',level:'release',detail:`Current: ${c.releaseChannel||'development'}`},
+    {id:'billing',label:'Native Apple/Google billing bridge',ok:launchBillingBridgeReady(),level:'native',detail:launchBillingBridgeReady()?'Native billing bridge detected.':'Expected to be unavailable in the GitHub Pages/PWA build.'},
+    {id:'entitlement',label:'Secure Premium entitlement verification',ok:launchEntitlementBackendReady(),level:'native',detail:launchEntitlementBackendReady()?'Entitlement API configured.':'Required before paid native launch so server Premium cannot be spoofed.'},
+    {id:'local',label:'Live local-stock provider',ok:localFeeds>0,level:'quality',detail:localFeeds?`${localFeeds} local source${localFeeds===1?'':'s'} connected.`:'Not a store-review blocker, but a major product-value target.'}
+  ];
+}
+function launchReadiness(){
+  const rows=launchChecks();
+  const blockers=rows.filter(x=>['required','release','native'].includes(x.level)&&!x.ok);
+  const required=rows.filter(x=>['required','release','native'].includes(x.level));
+  const passed=required.filter(x=>x.ok).length;
+  return {rows,blockers,score:required.length?Math.round(passed/required.length*100):0};
+}
+function renderLaunchCenter(){
+  const r=launchReadiness(),c=launchConfig();
+  return `<div class="panel launch-center-panel">
+    <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL • LAUNCH CENTER</div><h2>Release candidate health</h2><p>This screen separates test-mode items from true App Store / Play Store blockers.</p></div><div class="launch-score"><b>${r.score}</b><span>% READY</span></div></div>
+    <div class="launch-check-grid">${r.rows.map(x=>`<div class="${x.ok?'pass':'fail'}"><span>${x.ok?'✓':'!'}</span><div><strong>${esc(x.label)}</strong><small>${esc(x.detail)}</small></div><b>${x.ok?'READY':x.level==='quality'?'IMPROVE':'BLOCKER'}</b></div>`).join('')}</div>
+    <div class="action-row" style="margin-top:10px"><button class="btn" onclick="refreshSystemStatus(false).then(()=>{state.launch.lastDiagnosticsAt=new Date().toISOString();saveState();renderTools()})">Run diagnostics</button><button class="btn" onclick="showLaunchOnboarding(true)">Preview onboarding</button><a class="btn" href="./privacy.html" target="_blank">Privacy</a><a class="btn" href="./terms.html" target="_blank">Terms</a><a class="btn" href="./support.html" target="_blank">Support</a></div>
+    <div class="notice ${r.blockers.length?'warn':'good'}" style="margin-top:10px"><span>${r.blockers.length?'!':'✓'}</span><span>${r.blockers.length?`<b>${r.blockers.length} launch blocker${r.blockers.length===1?'':'s'} remain.</b> This package intentionally keeps Premium Preview on so you can test everything before native billing is connected.`:'<b>Release gates passed.</b> Create signed Android/iOS builds and run store testing.'}</span></div>
+    <div class="launch-build-line">Build ${esc(String(c.appVersion||LAUNCH_VERSION))} • ${esc(c.releaseChannel||'development')} • Accountless/local-first launch profile</div>
+  </div>`;
+}
+function launchOnboardingGameButton(game){
+  const on=state.launch.selectedGames.includes(game);
+  return `<button class="launch-game ${on?'active':''}" onclick='launchToggleGame(${JSON.stringify(game)})'>${on?'✓ ':''}${esc(game)}</button>`;
+}
+function launchToggleGame(game){
+  ensureLaunchSchema();
+  const list=new Set(state.launch.selectedGames);
+  if(list.has(game)&&list.size>1)list.delete(game);else list.add(game);
+  state.launch.selectedGames=[...list];
+  renderLaunchOnboarding();
+}
+function launchSaveArea(){
+  const zip=document.getElementById('launchZip')?.value.trim();
+  const radius=Number(document.getElementById('launchRadius')?.value)||25;
+  if(zip && !/^\\d{5}$/.test(zip)){toast('Enter a 5-digit ZIP or leave it blank');return false;}
+  if(zip){state.settings.zip=zip;state.settings.locationLabel=zip;}
+  state.settings.radius=Math.max(5,Math.min(100,radius));
+  state.areaScanSettings.games=[...state.launch.selectedGames];
+  saveState();return true;
+}
+function showLaunchOnboarding(force=false){
+  ensureLaunchSchema();
+  if(state.launch.onboardingComplete&&!force)return;
+  launchOnboardingStep=0;
+  let root=document.getElementById('launchOnboarding');
+  if(!root){document.body.insertAdjacentHTML('beforeend','<div id="launchOnboarding" class="launch-onboarding"></div>');}
+  renderLaunchOnboarding();
+}
+function closeLaunchOnboarding(){document.getElementById('launchOnboarding')?.remove()}
+function launchOnboardingNext(){
+  if(launchOnboardingStep===1 && !launchSaveArea())return;
+  if(launchOnboardingStep<2){launchOnboardingStep++;renderLaunchOnboarding();return;}
+  finishLaunchOnboarding();
+}
+function launchOnboardingBack(){if(launchOnboardingStep>0){launchOnboardingStep--;renderLaunchOnboarding()}else closeLaunchOnboarding()}
+function finishLaunchOnboarding(){
+  launchSaveArea();ensureLaunchSchema();
+  state.launch.onboardingComplete=true;state.launch.onboardingVersion=LAUNCH_VERSION;state.launch.legalAcceptedAt=new Date().toISOString();saveState();
+  closeLaunchOnboarding();render('home');toast('VaultSignal is ready');
+}
+function renderLaunchOnboarding(){
+  ensureLaunchSchema();
+  const root=document.getElementById('launchOnboarding');if(!root)return;
+  const games=['Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece'];
+  const steps=[
+    `<div class="launch-welcome-mark">VS</div><div class="eyebrow">WELCOME TO VAULTSIGNAL</div><h1>The collector app that connects the whole hobby.</h1><p>Find stock, monitor drops, scan and value cards, manage singles + sealed, build sets, trade, sell and act on personal signals—all from one home.</p><div class="launch-pillar-row"><span>◎ Stock</span><span>⚡ Drops</span><span>◉ Scan</span><span>▣ Vault</span><span>✦ Intelligence</span></div>`,
+    `<div class="eyebrow">PERSONALIZE YOUR RADAR</div><h1>What do you collect?</h1><p>Choose your games and home search area. You can change these anytime.</p><div class="launch-games">${games.map(launchOnboardingGameButton).join('')}</div><div class="launch-area-grid"><label><span>ZIP code</span><input id="launchZip" inputmode="numeric" maxlength="5" placeholder="28761" value="${esc(state.settings.zip||'')}"></label><label><span>Radius</span><select id="launchRadius">${[10,25,50,100].map(v=>`<option value="${v}" ${Number(state.settings.radius)===v?'selected':''}>${v} miles</option>`).join('')}</select></label></div><small class="launch-privacy-note">Location is optional. A ZIP is enough; precise GPS is only requested when you tap Use location.</small>`,
+    `<div class="eyebrow">FREE TO START • PREMIUM TO AUTOMATE</div><h1>Useful free. Powerful at $4.99/month.</h1><p>Free includes your Vault, card search, sealed tracking and limited scanner lookups. Premium is for 24/7 watches, local stock intelligence, unlimited scanning, Signal Center and advanced analytics.</p><div class="launch-premium-price"><b>$4.99</b><span>/ month</span></div><div class="launch-permission-cards"><div><b>Camera</b><span>Asked only when you open the scanner.</span></div><div><b>Notifications</b><span>Optional. Turn them on when you want stock alerts.</span></div><div><b>Privacy</b><span>Your collection is local-first. Server Watch data can be deleted from Settings.</span></div></div><div class="launch-legal-links"><a href="./privacy.html" target="_blank">Privacy Policy</a><a href="./terms.html" target="_blank">Terms</a><a href="./support.html" target="_blank">Support</a></div>`
+  ];
+  root.innerHTML=`<div class="launch-onboarding-card"><button class="launch-close" onclick="closeLaunchOnboarding()" aria-label="Close">×</button><div class="launch-progress"><i style="width:${((launchOnboardingStep+1)/3)*100}%"></i></div><div class="launch-step">${steps[launchOnboardingStep]}</div><div class="launch-nav"><button class="btn" onclick="launchOnboardingBack()">${launchOnboardingStep?'Back':'Later'}</button><button class="btn primary" onclick="launchOnboardingNext()">${launchOnboardingStep===2?'Enter VaultSignal':'Continue'}</button></div></div>`;
+}
+async function deleteServerWatchData(){
+  ensureRealInventorySchema();
+  if(!state.serverWatch?.installId||!state.serverWatch?.installToken){toast('No server Watch profile is stored on this device');return true;}
+  if(!confirm('Delete this device\'s server Watch profile, snapshots and alert inbox?'))return false;
+  try{
+    const r=await fetch(`${inventoryBackendBase()}/watch-delete`,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({installId:state.serverWatch.installId,installToken:state.serverWatch.installToken})});
+    const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||`Delete returned ${r.status}`);
+    state.serverWatch={installId:'',installToken:'',configured:false,lastSyncAt:null,lastPollAt:null,lastMonitorAt:null,syncedWatchCount:0,unread:0,alerts:[],error:''};
+    saveState();renderTools();toast('Server Watch data deleted');return true;
+  }catch(e){toast(e.message||'Server data deletion failed');return false;}
+}
+async function deleteAllVaultSignalData(){
+  if(!confirm('Permanently delete this device\'s VaultSignal data and its server Watch profile? Export a backup first if you need one.'))return;
+  if(state.serverWatch?.installId)await deleteServerWatchData();
+  localStorage.removeItem(STORAGE_KEY);location.reload();
+}
+function applyVerifiedNativeEntitlement(payload={}){
+  ensurePremiumSchema();
+  if(payload.verified!==true||payload.serverVerified!==true||payload.productId!==PREMIUM_PRODUCT_ID){toast('Premium verification was not accepted');return false;}
+  state.premiumEntitlement={tier:'premium',status:'active',source:payload.source||'native-store',verified:true,productId:payload.productId,expiresAt:payload.expiresAt||null,checkedAt:new Date().toISOString()};
+  saveState();render(currentTab);toast('VaultSignal Premium verified');return true;
+}
+window.addEventListener('vaultsignal:native-entitlement',e=>applyVerifiedNativeEntitlement(e.detail||{}));
+
 const PREMIUM_PRICE_MONTHLY=4.99;
 const PREMIUM_PRODUCT_ID='vaultsignal_premium_monthly';
 const PREMIUM_FREE_SCANS_PER_DAY=3;
 
 const PREMIUM_FEATURES=[
-  {id:'scanner_unlimited',title:'Unlimited Live Value Scanner',group:'Scan',desc:'Unlimited photo/OCR-assisted identification and live/reference price lookups.'},
-  {id:'inventory_command',title:'Inventory Command Pro',group:'Inventory',desc:'Physical audits, movement ledger, replenishment targets, data-health cleanup and location rollups.'},
-  {id:'inventory_radar',title:'Nearby Inventory Radar',group:'Hunt',desc:'ZIP/radius area scans, verified store drill-down, favorites, Hunt Score and Inventory Pulse.'},
-  {id:'signal_center',title:'Signal Center',group:'Signals',desc:'One prioritized feed for inventory changes, collector alerts, scanner activity and action priorities.'},
-  {id:'vaultiq',title:'VaultIQ',group:'Decide',desc:'Personal collector-fit scoring using budget, targets, owned copies, set progress and hunt data.'},
-  {id:'market_pulse',title:'Market Pulse',group:'Market',desc:'Bulk refresh, local price snapshots, tracked movement and collection market monitoring.'},
+  {id:'watch_engine',title:'24/7 Watch Engine',group:'Alerts',desc:'Server-side product watches, scheduled restock/quantity/price-change detection and persistent alert inbox.'},
+  {id:'live_drops',title:'Live Drops Network',group:'Drops',desc:'Fast specialty-store product feed with new listing, restock, price-drop and direct-buy intelligence.'},
+  {id:'local_stock',title:'Local Stock Checker',group:'Local',desc:'Exact-product ZIP/radius checks across every connected local inventory source, with quantity only when supplied.'},
+  {id:'scanner_unlimited',title:'Unlimited Card Scanner',group:'Scan',desc:'Unlimited camera/OCR-assisted identification and live/reference value lookups.'},
+  {id:'inventory_command',title:'Inventory Command Pro',group:'Inventory',desc:'Cards + sealed, physical locations, audits, movement ledger, replenishment targets and data-health cleanup.'},
+  {id:'signal_center',title:'Signal Center',group:'Signals',desc:'One prioritized feed for stock alerts, market targets, collection actions and Watch Engine detections.'},
+  {id:'vaultiq',title:'VaultIQ',group:'Decide',desc:'Transparent collector-fit scoring using budget, targets, owned copies, set progress and hunt data.'},
+  {id:'market_pulse',title:'Market Pulse',group:'Market',desc:'Bulk card refresh, saved price snapshots, movement tracking and target monitoring.'},
   {id:'analytics',title:'Dashboard Pro',group:'Analytics',desc:'Portfolio snapshots, allocation, inventory health, rip performance and collection analytics.'},
-  {id:'trade_sell',title:'Trade Lab + Sell Lab',group:'Trade & Sell',desc:'Two-sided trade builder, sale planning, fee estimates, duplicate workflows and inventory-linked completion.'},
-  {id:'showcase',title:'Showcase Studio',group:'Share',desc:'Collection Passport, featured cards, privacy controls and exportable collector showcase.'},
-  {id:'cloud_future',title:'Cloud Sync + Multi-device',group:'Cloud',desc:'Premium-ready entitlement for account sync and secure backups when cloud accounts are connected.'}
+  {id:'trade_sell',title:'Trade Lab + Sell Lab',group:'Trade & Sell',desc:'Trade balancing, sale planning, fee estimates, duplicate workflows and inventory-linked completion.'},
+  {id:'showcase',title:'Showcase Studio',group:'Share',desc:'Collection Passport, featured cards, privacy controls and shareable collector showcase.'},
+  {id:'cloud_future',title:'Cloud Sync + Mobile',group:'Cloud',desc:'Premium-ready entitlement for secure sync, native Android/iOS billing and push delivery as those bridges go live.'}
 ];
 
 const PREMIUM_TOOL_IDS=new Set(['watchtower','inventory','vaultiq','market','analytics','sell','trades','showcase']);
@@ -326,24 +476,24 @@ function premiumToolBadge(id){
 }
 function premiumComparisonMarkup(){
   const rows=[
-    ['Collection & sealed Vault','✓','✓'],
-    ['Basic live card search','✓','✓'],
-    [`Live camera/value scans`,`3/day`,`Unlimited`],
+    ['Collection + sealed Vault','✓','✓'],
+    ['Live multi-TCG card search','✓','✓'],
+    ['Camera/value scans',`${PREMIUM_FREE_SCANS_PER_DAY}/day`,'Unlimited'],
     ['Exact product retailer search','✓','✓'],
+    ['Live Drops feed','Preview','Full + watch matching'],
+    ['Local Stock Checker','—','✓'],
+    ['24/7 Watch Engine','—','✓'],
     ['Nearby Inventory Radar','—','✓'],
-    ['Inventory Command audits + ledger','—','✓'],
     ['Signal Center','—','✓'],
+    ['Inventory Command audits + ledger','—','✓'],
     ['VaultIQ','—','✓'],
-    ['Market Pulse','—','✓'],
+    ['Market Pulse + saved movement','—','✓'],
     ['Dashboard Pro','—','✓'],
     ['Trade Lab + Sell Lab','—','✓'],
     ['Showcase Studio','—','✓'],
-    ['Cloud sync / multi-device when connected','—','✓']
+    ['Cloud/mobile entitlement when connected','—','✓']
   ];
-  return `<div class="premium-table">
-    <div class="premium-table-row head"><b>Feature</b><b>Free</b><b>Premium</b></div>
-    ${rows.map(r=>`<div class="premium-table-row"><span>${esc(r[0])}</span><strong>${esc(r[1])}</strong><strong>${esc(r[2])}</strong></div>`).join('')}
-  </div>`;
+  return `<div class="premium-table"><div class="premium-table-row head"><b>Feature</b><b>Free</b><b>Premium</b></div>${rows.map(r=>`<div class="premium-table-row"><span>${esc(r[0])}</span><strong>${esc(r[1])}</strong><strong>${esc(r[2])}</strong></div>`).join('')}</div>`;
 }
 function renderPremiumCenter(){
   ensurePremiumSchema();
@@ -1078,112 +1228,177 @@ function updateStatus(){
   pill.querySelector('span').textContent = signedIn() ? 'Cloud Synced' : verifiedLive ? 'Live Inventory' : backend ? 'Inventory Service' : cloud ? 'Cloud Ready' : 'Collector OS';
 }
 
+
+let systemStatusBusy=false;
+
+function systemStatusStale(){
+  const at=state.systemStatus?.checkedAt;
+  if(!at)return true;
+  return Date.now()-new Date(at).getTime()>60000;
+}
+async function refreshSystemStatus(silent=true){
+  if(systemStatusBusy||!inventoryBackendConnected())return;
+  systemStatusBusy=true;
+  try{
+    const r=await fetch(`${inventoryBackendBase()}/system-status`,{headers:{Accept:'application/json'}});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||`System status ${r.status}`);
+    state.systemStatus={
+      checkedAt:d.checkedAt||new Date().toISOString(),version:d.version||'',
+      alertEngine:d.alertEngine||null,providers:d.providers||[],localStockProviders:d.localStockProviders||[],
+      storeDiscovery:d.storeDiscovery||null,pricingProviders:d.pricingProviders||[],dropMonitors:d.dropMonitors||null
+    };
+    if(d.alertEngine){
+      state.serverWatch.configured=d.alertEngine.configured===true;
+      state.serverWatch.lastMonitorAt=d.alertEngine.lastMonitorAt||state.serverWatch.lastMonitorAt;
+    }
+    saveState();
+    if(currentTab==='home')renderHome();
+  }catch(e){if(!silent)toast(e.message||'System status failed')}
+  finally{systemStatusBusy=false}
+}
+function providerReadyCount(){
+  const s=state.systemStatus||{};
+  return (s.providers||[]).filter(p=>p.configured).length+(s.localStockProviders||[]).filter(p=>p.configured).length;
+}
+function holyGrailReadiness(){
+  const s=state.systemStatus||{};
+  const drops=state.liveDropMeta||{};
+  const alertReady=state.serverWatch?.configured===true && !!state.serverWatch?.lastMonitorAt;
+  const liveInv=liveInventoryProviders().length;
+  const local=(s.localStockProviders||[]).filter(x=>x.configured).length;
+  const price=(s.pricingProviders||[]).filter(x=>x.configured).length;
+  const dropOk=Number(drops.sourcesOk)||Number(s.dropMonitors?.configured)||0;
+  return {alertReady,liveInv,local,price,dropOk};
+}
+function signalPriorityScore(x){
+  let score=35;
+  if(x.watchMatch)score+=30;
+  if(x.type==='RESTOCK'||x.eventType==='RESTOCK')score+=25;
+  else if(x.type==='QUANTITY UP')score+=20;
+  else if(x.eventType==='NEW LISTING')score+=15;
+  if(x.available===true)score+=10;
+  const at=x.detectedAt||x.checkedAt||x.updatedAt;
+  if(at){const age=Date.now()-new Date(at).getTime();if(age<120000)score+=10;else if(age<600000)score+=5;}
+  return Math.min(100,score);
+}
+function holyGrailSignals(){
+  const rows=[];
+  for(const a of (state.serverWatch?.alerts||[]).filter(x=>!x.read).slice(0,4))rows.push({
+    kind:'WATCH ENGINE',title:a.title||`${a.type||'Stock alert'} • ${a.product||''}`,
+    detail:[a.store,a.price?money(a.price):'',a.quantity!==null&&a.quantity!==undefined?`Qty ${a.quantity}`:''].filter(Boolean).join(' • '),
+    score:signalPriorityScore(a),action:'watch',at:a.detectedAt||new Date().toISOString()
+  });
+  for(const x of (state.liveDropFeed||[]).filter(x=>x.available&&x.watchMatch).slice(0,4))rows.push({
+    kind:'LIVE DROP',title:x.product,detail:`${x.store}${x.price?` • ${money(x.price)}`:''} • ${x.eventType||'IN STOCK'}`,
+    score:signalPriorityScore(x),action:'drops',at:x.checkedAt||new Date().toISOString()
+  });
+  const actions=buildActionCenter().slice(0,4);
+  for(const a of actions)rows.push({kind:'ACTION',title:a.title||'Collector action',detail:a.detail||a.reason||'',score:a.priority==='high'?82:a.priority==='medium'?65:50,action:'actions',at:new Date().toISOString()});
+  return rows.sort((a,b)=>b.score-a.score||new Date(b.at)-new Date(a.at)).slice(0,6);
+}
+function openStockSection(which){
+  switchTab('stock');
+  setTimeout(()=>{
+    const selector=which==='watch'?'.watch-engine-panel':which==='drops'?'.live-drops-panel':which==='local'?'.local-stock-panel':'.area-radar-hero';
+    document.querySelector(selector)?.scrollIntoView({behavior:'smooth',block:'start'});
+  },80);
+}
+function holyGrailSignalMarkup(x){
+  const cls=x.score>=85?'critical':x.score>=70?'high':'normal';
+  const onclick=x.action==='actions'?"openTool('actions')":`openStockSection('${x.action}')`;
+  return `<button class="grail-signal ${cls}" onclick="${onclick}"><div class="grail-score"><b>${x.score}</b><span>PRIORITY</span></div><div class="grow"><div class="eyebrow">${esc(x.kind)}</div><strong>${esc(x.title)}</strong><span>${esc(x.detail||'Open for details')}</span></div><span class="grail-arrow">›</span></button>`;
+}
+function sourceHealthMarkup(){
+  const r=holyGrailReadiness();
+  const s=state.systemStatus||{};
+  const cards=Object.keys(LIVE_CARD_PROVIDERS||{}).length;
+  const scannerReady=!!(navigator.mediaDevices?.getUserMedia||document.getElementById('hiddenCamera'));
+  const items=[
+    ['24/7 Watch Engine',r.alertReady?'ONLINE':'SETUP',r.alertReady?`Last run ${humanAge(state.serverWatch.lastMonitorAt)}`:'Server monitor needs attention',r.alertReady],
+    ['Live Drops',r.dropOk?`${r.dropOk} SOURCES`:'READY',state.liveDropMeta?.checkedAt?`Checked ${humanAge(state.liveDropMeta.checkedAt)}`:'Refresh Stock to test feeds',r.dropOk>0],
+    ['Local inventory',r.local?`${r.local} LIVE`:'SOURCE NEEDED',r.local?'Authorized/partner feed connected':'Broker ready for additional retailer feeds',r.local>0],
+    ['Card/value network',`${cards} GAMES`,(s.pricingProviders||[]).some(p=>p.configured)?'Premium pricing backbone connected':'Live card providers + provider references',cards>0],
+    ['Camera scanner',scannerReady?'READY':'CHECK','Identification still requires exact-printing confirmation',scannerReady]
+  ];
+  return `<div class="grail-health-grid">${items.map(i=>`<div class="${i[3]?'ready':'pending'}"><span>${esc(i[0])}</span><strong>${esc(i[1])}</strong><small>${esc(i[2])}</small></div>`).join('')}</div>`;
+}
+
 function renderHome(){
   ensureWatchtowerSchema();
+  ensureRealInventorySchema();
   evaluateWatchtower({notify:false});
-  const t = totals();
-  const spent = monthSpend();
-  const budget = Number(state.settings.monthlyBudget)||0;
-  const left = budget - spent;
-  const top = [...state.collection].sort((a,b)=>(Number(b.card.market)||0)*b.qty-(Number(a.card.market)||0)*a.qty).slice(0,4);
-  const recentStock = [...state.stockReports].sort((a,b)=>new Date(b.ts)-new Date(a.ts)).slice(0,3);
-  const trend = portfolioTrend();
-  const health = dataHealthScore();
-  const homeActions = buildActionCenter();
-  const homeActionCounts = actionCounts(homeActions);
-  const homeWatchtowerUnread = watchtowerUnread();
-  const homeWatchtowerHigh = watchtowerHighUnread();
-  $('home').innerHTML = `
-    <div class="hero">
-      <div class="eyebrow">VAULTSIGNAL • BY 2GEN RIPS</div>
-      <h1>${esc(state.settings.brand)}</h1>
-      <p>${esc(state.settings.tagline)}</p>
-      <p class="sub">Scan • Value • Track • Hunt • Trade • Sell — one collector operating system.</p>
+  const t=totals();
+  const spent=monthSpend();
+  const budget=Number(state.settings.monthlyBudget)||0;
+  const left=budget-spent;
+  const trend=portfolioTrend();
+  const health=dataHealthScore();
+  const signals=holyGrailSignals();
+  const unread=watchtowerUnread();
+  const serverUnread=Number(state.serverWatch?.unread)||0;
+  const watchCount=stockWatchQueriesForScan().length;
+  const liveHits=(state.liveDropFeed||[]).filter(x=>x.available&&x.watchMatch).length;
+  const localResults=(state.localStockResults||[]).length;
+  const top=[...state.collection].sort((a,b)=>(Number(b.card.market)||0)*b.qty-(Number(a.card.market)||0)*a.qty).slice(0,3);
+
+  $('home').innerHTML=`
+    <div class="hero holy-grail-hero">
+      <div class="eyebrow">VAULTSIGNAL • COLLECTOR INTELLIGENCE OS</div>
+      <h1>Your collection. Your market. Your stock signals.</h1>
+      <p>One place to scan cards, track value, monitor drops, check local stock, manage sealed inventory, build sets, trade, sell and act on the signals that matter.</p>
       <div class="hero-badges">
-        <span class="badge primary">◆ COLLECTOR OS</span>
-        <span class="badge">◎ ${state.stockWatches.length} STOCK WATCHES</span>
-        <span class="badge">◈ ${(state.productCatalog||[]).length} PRODUCTS</span>
-        <span class="badge">⌖ ${state.huntRoute.filter(x=>!x.visited).length} HUNT STOPS</span>
-        <span class="badge signal-gold">BY 2GEN RIPS</span>
-        <span class="badge">${signedIn()?'☁ SYNCED':'☁ GUEST'}</span>
+        <span class="badge primary">◆ ALL-IN-ONE</span>
+        <span class="badge">◎ ${watchCount} WATCHES</span>
+        <span class="badge">◉ ${serverUnread} SERVER ALERTS</span>
+        <span class="badge">⚡ ${liveHits} LIVE WATCH HITS</span>
+        <span class="badge signal-gold">★ PREMIUM $4.99/MO</span>
       </div>
     </div>
 
-    <div class="stat-grid">
-      <div class="stat-card"><span>Total vault value</span><strong>${money(t.market)}</strong><small class="${t.gain>=0?'good':'bad'}">${t.gain>=0?'+':''}${money(t.gain)} • ${t.pct.toFixed(1)}%</small></div>
-      <div class="stat-card"><span>Cards owned</span><strong>${t.cards}</strong><small>${state.collection.length} unique entries</small></div>
-      <div class="stat-card"><span>Sealed value</span><strong>${money(t.sealedValue)}</strong><small>${state.sealed.reduce((n,x)=>n+(Number(x.qty)||0),0)} sealed items</small></div>
-      <div class="stat-card"><span>Budget left</span><strong class="${left>=0?'good':'bad'}">${money(left)}</strong><small>${money(spent)} spent this month</small></div>
+    <div class="grail-command-grid">
+      <button onclick="openStockSection('radar')"><span>◎</span><b>Find Stock</b><small>ZIP + radius + local inventory</small></button>
+      <button onclick="openStockSection('drops')"><span>⚡</span><b>Live Drops</b><small>Restocks, listings & price drops</small></button>
+      <button onclick="openTool('scanner')"><span>◉</span><b>Scan & Value</b><small>Camera identification + card value</small></button>
+      <button onclick="switchTab('discover')"><span>⌕</span><b>Search Market</b><small>Cards, sets and provider references</small></button>
+      <button onclick="switchTab('vault')"><span>▣</span><b>My Vault</b><small>Cards, sealed, cost basis & locations</small></button>
+      <button onclick="switchTab('tools')"><span>✦</span><b>All Tools</b><small>Analytics, trade, sell, sets & more</small></button>
     </div>
 
-    <div class="panel">
-      <div class="section-head"><div><h2>Collector command center</h2><p>Fast access to the things collectors actually use.</p></div></div>
-      <div class="quick-grid">
-        <button class="quick-card premium-quick" onclick="openTool('premium')"><span class="big-icon">★</span><b>VaultSignal Premium</b><span>$4.99/month • unlimited scanning, Inventory Radar, Signal Center, VaultIQ, analytics and pro inventory tools.</span></button>
-        <button class="quick-card signal-quick" onclick="openTool('watchtower')"><span class="big-icon">◉</span><b>Signal Center</b><span>${homeWatchtowerUnread} unread • inventory changes, collector alerts and priorities in one feed.</span></button>
-        <button class="quick-card inventory-command-quick" onclick="openTool('inventory')"><span class="big-icon">▤</span><b>Inventory Command</b><span>Cards + sealed • cost basis • locations • replenishment • audits • movement ledger.</span></button>
-        <button class="quick-card" onclick="switchTab('stock')"><span class="big-icon">◎</span><b>Find inventory</b><span>Nearby stores, live connector, watchlists and stock reports.</span></button>
-        <button class="quick-card" onclick="switchTab('discover')"><span class="big-icon">⌕</span><b>Search cards</b><span>Universal live Pokémon, Lorcana, Magic and Yu-Gi-Oh! card network.</span></button>
-        <button class="quick-card" onclick="openTool('products')"><span class="big-icon">◈</span><b>Product Command</b><span>UPC/SKU, retailer stock, sealed lots, goals, sightings, pricing and restock intelligence.</span></button>
-        <button class="quick-card" onclick="openTool('scanner')"><span class="big-icon">◉</span><b>Smart Scanner</b><span>Batch intake, duplicates, set gaps, binder suggestions and grading review flags.</span></button>
-        <button class="quick-card" onclick="openTool('sets')"><span class="big-icon">▦</span><b>Master sets</b><span>Live set checklists, owned progress and missing-card tracking.</span></button>
-        <button class="quick-card" onclick="openTool('rips')"><span class="big-icon">✦</span><b>Rip sessions</b><span>Track openings, pulls, value, hits, ROI and set progress.</span></button>
-        <button class="quick-card" onclick="openTool('analytics')"><span class="big-icon">⌁</span><b>Dashboard Pro</b><span>Growth, spending, allocation, positions, sets and rip performance.</span></button>
-        <button class="quick-card" onclick="openTool('market')"><span class="big-icon">↗</span><b>Market Pulse</b><span>Refresh live card pricing, track snapshots and watch price targets.</span></button>
-        <button class="quick-card" onclick="openTool('trades')"><span class="big-icon">⇄</span><b>Trade Lab</b><span>Build deals from your Vault and wishlist with reference-value balancing.</span></button>
-        <button class="quick-card" onclick="openTool('sell')"><span class="big-icon">$</span><b>Sell Lab</b><span>Estimate fees, protect cost basis, create listings and track profit.</span></button>
-        <button class="quick-card" onclick="openTool('family')"><span class="big-icon">2G</span><b>2GEN Hub</b><span>Family collections, giveaways and creator content in one place.</span></button>
-        <button class="quick-card" onclick="openTool('actions')"><span class="big-icon">✓</span><b>Action Center</b><span>${homeActionCounts.total} priorities • ${homeActionCounts.high} high • know what to do next.</span></button>
-        <button class="quick-card" onclick="openTool('watchtower')"><span class="big-icon">◉</span><b>Signal Center</b><span>${homeWatchtowerUnread} unread signals • ${homeWatchtowerHigh} high priority.</span></button>
-        <button class="quick-card" onclick="openTool('showcase')"><span class="big-icon">★</span><b>Showcase Studio</b><span>Build a privacy-safe Collection Passport and shareable collector page.</span></button>
-        <button class="quick-card" onclick="openTool('vaultiq')"><span class="big-icon">IQ</span><b>VaultIQ</b><span>Rank what to buy next using your budget, wishlist, targets, sets and stock watches.</span></button>
+    <div class="grail-today-grid">
+      <div class="grail-today-card"><span>Vault value</span><strong>${money(t.market)}</strong><small class="${t.gain>=0?'good':'bad'}">${t.gain>=0?'+':''}${money(t.gain)} vs cost</small></div>
+      <div class="grail-today-card"><span>Budget left</span><strong class="${left>=0?'good':'bad'}">${money(left)}</strong><small>${money(spent)} spent this month</small></div>
+      <div class="grail-today-card"><span>Signals waiting</span><strong>${unread+serverUnread}</strong><small>${serverUnread} server • ${unread} Signal Center</small></div>
+      <div class="grail-today-card"><span>Local stock results</span><strong>${localResults}</strong><small>${state.localStockMeta?.checkedAt?`Checked ${humanAge(state.localStockMeta.checkedAt)}`:'Run an exact-product check'}</small></div>
+    </div>
+
+    <div class="panel grail-signal-panel">
+      <div class="section-head"><div><div class="eyebrow">TODAY'S SIGNALS</div><h2>What deserves your attention first</h2><p>Priority combines watch matches, restock type and freshness. It is a collector workflow score—not an investment recommendation.</p></div><button class="btn" onclick="openTool('watchtower')">Signal Center</button></div>
+      <div class="grail-signal-list">${signals.length?signals.map(holyGrailSignalMarkup).join(''):`<div class="empty">No urgent signals yet. Add Stock Watches and price targets to personalize this queue.</div>`}</div>
+    </div>
+
+    <div class="panel grail-health-panel">
+      <div class="section-head"><div><div class="eyebrow">SOURCE HEALTH</div><h2>Know what is truly connected</h2><p>VaultSignal separates real feeds from fallbacks so a green badge actually means something.</p></div><button class="btn" onclick="refreshSystemStatus(false)">Refresh</button></div>
+      ${sourceHealthMarkup()}
+    </div>
+
+    <div class="panel grail-portfolio-panel">
+      <div class="section-head"><div><div class="eyebrow">COLLECTION INTELLIGENCE</div><h2>Portfolio + physical inventory together</h2><p>Cards and sealed product stay in the same system so value, cost basis, stock hunts and collection goals connect.</p></div><button class="btn" onclick="openTool('analytics')">Dashboard Pro</button></div>
+      <div class="grail-portfolio-body">
+        <div><span>Cards</span><strong>${t.cards}</strong><small>${state.collection.length} tracked entries</small></div>
+        <div><span>Sealed</span><strong>${state.sealed.reduce((n,x)=>n+(Number(x.qty)||0),0)}</strong><small>${money(t.sealedValue)} current value</small></div>
+        <div><span>Products tracked</span><strong>${(state.productCatalog||[]).length}</strong><small>UPC / SKU / goals / lots</small></div>
+        <div><span>Data health</span><strong>${health.score}</strong><small>${esc(health.label)} • organization score</small></div>
       </div>
+      <div class="grail-trend">${trend.length?svgSparkline(trend.map(x=>Number(x.market)||0),640,100):`<div class="empty mini-empty">Portfolio history begins as snapshots are saved.</div>`}</div>
+      <div class="grail-top-holdings">${top.length?top.map(i=>`<div class="compact-row">${cardArt(i.card)}<div class="grow"><strong>${esc(i.card.name)}</strong><span>${esc(i.card.set)} • Qty ${i.qty}</span></div><div class="right"><strong>${money((Number(i.card.market)||0)*i.qty)}</strong></div></div>`).join(''):`<div class="empty">Add your first cards to start the portfolio.</div>`}</div>
     </div>
 
-
-
-    ${homeWatchtowerUnread?`<div class="panel watchtower-home-preview">
-      <div class="section-head"><div><div class="eyebrow">WATCHTOWER</div><h2>${homeWatchtowerUnread} unread alert${homeWatchtowerUnread===1?'':'s'}</h2><p>${homeWatchtowerHigh?`${homeWatchtowerHigh} high-priority alert${homeWatchtowerHigh===1?'':'s'} waiting.`:'No unread high-priority alerts.'}</p></div><button class="btn primary" onclick="openTool('watchtower')">Open inbox</button></div>
-      ${(state.notificationInbox||[]).filter(n=>!n.read).slice(0,2).map(n=>watchtowerNotificationMarkup(n)).join('')}
-    </div>`:''}
-
-    <div class="panel action-home-preview">
-      <div class="section-head"><div><div class="eyebrow">ACTION CENTER</div><h2>${homeActionCounts.total?`${homeActionCounts.total} collector priorities`:'All caught up'}</h2><p>${homeActionCounts.high?`${homeActionCounts.high} high-priority item${homeActionCounts.high===1?'':'s'} need attention.`:'No high-priority collector actions right now.'}</p></div><button class="btn" onclick="openTool('actions')">Open Action Center</button></div>
-      ${homeActions.length?homeActions.slice(0,3).map(a=>actionCardMarkup(a,true)).join(''):`<div class="empty">Your price targets, stock watches, budget, trades, grading and creator workflow are all clear.</div>`}
-    </div>
-
-    <div class="panel">
-      <div class="section-head"><div><h2>Portfolio pulse</h2><p>Collection + sealed value compared with total cost basis.</p></div></div>
-      <div class="meter"><div style="width:${Math.min(100,Math.max(5,t.cost?t.market/t.cost*50:50))}%"></div></div>
-      <div class="split"><span>Cost ${money(t.cost)}</span><span>Market ${money(t.market)}</span></div>
-    </div>
-
-
-    <div class="panel pro-preview">
-      <div class="section-head"><div><div class="eyebrow">DASHBOARD PRO</div><h2>Collection intelligence</h2><p>Growth snapshots and organization health from the data already in your Vault.</p></div><button class="btn" onclick="openTool('analytics')">Open analytics</button></div>
-      <div class="pro-preview-grid">
-        <div>
-          <span class="analytics-label">30-day portfolio trend</span>
-          ${trend.length?svgSparkline(trend.map(x=>Number(x.market)||0),360,95):`<div class="empty mini-empty">Snapshots begin today.</div>`}
-          <div class="split"><span>${trend.length?money(Number(trend[0].market)||0):money(t.market)}</span><span>${money(t.market)} now</span></div>
-        </div>
-        <div class="health-card"><span>Vault data health</span><strong>${health.score}</strong><b>${health.label}</b><small>Organization/data completeness — not an investment rating.</small></div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="section-head"><div><h2>Top holdings</h2><p>Your largest card positions right now.</p></div><button class="link-btn" onclick="switchTab('vault')">View vault →</button></div>
-      ${top.length ? top.map(i=>`
-        <div class="compact-row">${cardArt(i.card)}<div class="grow"><strong>${esc(i.card.name)}</strong><span>${esc(i.card.set)} • Qty ${i.qty}</span></div><div class="right"><strong>${money((Number(i.card.market)||0)*i.qty)}</strong></div></div>
-      `).join('') : `<div class="empty">Add cards from Search to start your vault.</div>`}
-    </div>
-
-    <div class="panel">
-      <div class="section-head"><div><h2>Recent stock reports</h2><p>Your most recent inventory sightings in this Pages build.</p></div><button class="link-btn" onclick="switchTab('stock')">Stock center →</button></div>
-      ${recentStock.length ? recentStock.map(r=>`
-        <div class="compact-row"><div class="thumb square"><b>◎</b></div><div class="grow"><strong>${esc(r.product)}</strong><span>${esc(r.store)} • ${esc(r.status)} • ${dateShort(r.ts)}</span></div><div class="right"><strong>${money(Number(r.price))}</strong></div></div>
-      `).join('') : `<div class="empty">No stock reports yet. Add one when you find products in store.</div>`}
+    <div class="panel grail-premium-panel">
+      <div class="grail-premium-copy"><div class="eyebrow">VAULTSIGNAL PREMIUM</div><h2>$4.99/month should save more time than it costs</h2><p>Premium is where automation lives: 24/7 watches, local stock intelligence, unlimited scanning, Signal Center, Inventory Command, VaultIQ, Market Pulse and Dashboard Pro.</p><div class="action-row"><button class="btn primary" onclick="openTool('premium')">See Premium</button><button class="btn" onclick="openStockSection('watch')">Open Watch Engine</button></div></div><div class="grail-premium-price"><span>$</span><strong>4.99</strong><small>/MO</small></div>
     </div>`;
+
+  if(inventoryBackendConnected()&&systemStatusStale())setTimeout(()=>refreshSystemStatus(true),0);
 }
 
 
@@ -2032,6 +2247,15 @@ function editWatch(id){
 
 
 function ensureRealInventorySchema(){
+  state.systemStatus={checkedAt:null,version:'',alertEngine:null,providers:[],localStockProviders:[],storeDiscovery:null,pricingProviders:[],dropMonitors:null,...(state.systemStatus||{})};
+
+  state.serverWatch={
+    installId:'',installToken:'',configured:false,lastSyncAt:null,lastPollAt:null,
+    lastMonitorAt:null,syncedWatchCount:0,unread:0,alerts:[],error:'',
+    ...(state.serverWatch||{})
+  };
+  if(!Array.isArray(state.serverWatch.alerts))state.serverWatch.alerts=[];
+
   if(!Array.isArray(state.localStockResults))state.localStockResults=[];
   state.localStockMeta={checkedAt:null,durationMs:0,providers:[],errors:[],...(state.localStockMeta||{})};
   if(typeof state.localStockQuery!=='string')state.localStockQuery='';
@@ -2775,6 +2999,177 @@ function renderLocalStockChecker(){
   </div>`;
 }
 
+
+let watchEngineBusy=false;
+let watchPollTimer=null;
+
+function watchRandomSecret(bytes=24){
+  const arr=new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return [...arr].map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+function ensureWatchIdentity(){
+  ensureRealInventorySchema();
+  if(!state.serverWatch.installId){
+    state.serverWatch.installId=crypto.randomUUID?.()||`vs-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+  if(!state.serverWatch.installToken)state.serverWatch.installToken=watchRandomSecret(24);
+  saveState();
+  return {installId:state.serverWatch.installId,installToken:state.serverWatch.installToken};
+}
+function serverWatchPayload(){
+  const identity=ensureWatchIdentity();
+  const watches=stockWatchQueriesForScan().slice(0,8).map(product=>{
+    const w=(state.stockWatches||[]).find(x=>String(x.product||'').trim().toLowerCase()===product.toLowerCase());
+    return {product,game:w?.game||'Pokemon',maxPrice:Number(w?.maxPrice)||0};
+  });
+  return {
+    ...identity,
+    zip:String(state.settings.zip||'').trim(),
+    radius:Number(state.settings.radius)||25,
+    games:areaScanGames(),
+    watches
+  };
+}
+async function watchApi(path,payload){
+  const r=await fetch(`${inventoryBackendBase()}${path}`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json',Accept:'application/json'},
+    body:JSON.stringify(payload)
+  });
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.error||`${path} returned ${r.status}`);
+  return d;
+}
+async function syncServerWatches(silent=false){
+  if(watchEngineBusy)return;
+  if(!inventoryBackendConnected()){if(!silent)toast('Inventory service is not connected');return;}
+  const payload=serverWatchPayload();
+  if(!payload.zip){if(!silent)toast('Save a ZIP code before syncing watches');return;}
+  if(!payload.watches.length){if(!silent)toast('Add at least one Stock Watch first');return;}
+
+  watchEngineBusy=true;
+  try{
+    const d=await watchApi('/watch-sync',payload);
+    state.serverWatch.configured=d.alertEngine?.configured===true;
+    state.serverWatch.lastSyncAt=d.syncedAt||new Date().toISOString();
+    state.serverWatch.syncedWatchCount=Number(d.watchCount)||payload.watches.length;
+    state.serverWatch.lastMonitorAt=d.alertEngine?.lastMonitorAt||state.serverWatch.lastMonitorAt;
+    state.serverWatch.error='';
+    saveState();
+    if(!silent)toast(`${state.serverWatch.syncedWatchCount} watch${state.serverWatch.syncedWatchCount===1?'':'es'} synced`);
+  }catch(e){
+    state.serverWatch.error=e.message||'Watch sync failed';
+    saveState();
+    if(!silent)toast(state.serverWatch.error);
+  }finally{
+    watchEngineBusy=false;
+    renderStock();
+  }
+}
+function serverAlertKey(a){
+  return a.id||`${a.type}|${a.source}|${a.product}|${a.detectedAt}`;
+}
+function mergeServerAlerts(rows){
+  const existing=new Set((state.serverWatch.alerts||[]).map(serverAlertKey));
+  const fresh=[];
+  for(const a of rows||[]){
+    if(existing.has(serverAlertKey(a)))continue;
+    fresh.push(a);
+    state.serverWatch.alerts.unshift({...a,read:false});
+  }
+  state.serverWatch.alerts=state.serverWatch.alerts.slice(0,100);
+  state.serverWatch.unread=state.serverWatch.alerts.filter(a=>!a.read).length;
+
+  for(const a of fresh){
+    const signalKey=`server:${serverAlertKey(a)}`;
+    if((state.notificationInbox||[]).some(n=>n.signalKey===signalKey))continue;
+    state.notificationInbox.unshift({
+      uid:uid(),signalKey,category:'Stock',priority:a.priority||'high',
+      title:a.title||`${a.type||'Stock alert'} • ${a.product||''}`,
+      detail:[a.store,a.price?money(a.price):'',a.quantity!==null&&a.quantity!==undefined?`Qty ${a.quantity}`:''].filter(Boolean).join(' • '),
+      tool:'watchtower',read:false,createdAt:a.detectedAt||new Date().toISOString()
+    });
+  }
+  state.notificationInbox=(state.notificationInbox||[]).slice(0,200);
+  return fresh;
+}
+async function showVaultSignalDeviceAlert(a){
+  if(!('Notification' in window)||Notification.permission!=='granted')return;
+  try{
+    const reg=await navigator.serviceWorker?.ready;
+    if(!reg)return;
+    await reg.showNotification(a.title||'VaultSignal Stock Alert',{
+      body:[a.store,a.product,a.price?money(a.price):'',a.quantity!==null&&a.quantity!==undefined?`Qty ${a.quantity}`:''].filter(Boolean).join(' • '),
+      icon:'./icon.svg',badge:'./icon.svg',tag:`vaultsignal-${serverAlertKey(a)}`,data:{url:'./'}
+    });
+  }catch{}
+}
+async function pollServerAlerts(silent=false){
+  if(!inventoryBackendConnected())return;
+  const identity=ensureWatchIdentity();
+  try{
+    const d=await watchApi('/alerts-query',identity);
+    state.serverWatch.configured=d.alertEngine?.configured===true;
+    state.serverWatch.lastPollAt=new Date().toISOString();
+    state.serverWatch.lastMonitorAt=d.alertEngine?.lastMonitorAt||null;
+    const fresh=mergeServerAlerts(d.alerts||[]);
+    saveState();
+    for(const a of fresh.slice(0,3))showVaultSignalDeviceAlert(a);
+    if(!silent)toast(fresh.length?`${fresh.length} new server alert${fresh.length===1?'':'s'}`:'No new server alerts');
+  }catch(e){
+    state.serverWatch.error=e.message||'Alert check failed';
+    saveState();
+    if(!silent)toast(state.serverWatch.error);
+  }finally{
+    renderStock();
+  }
+}
+async function enableVaultSignalNotifications(){
+  if(!('Notification' in window)){toast('Notifications are not supported here');return;}
+  const result=await Notification.requestPermission();
+  toast(result==='granted'?'Device notifications enabled':'Notification permission not enabled');
+  renderStock();
+}
+function markServerAlertsRead(){
+  for(const a of state.serverWatch.alerts||[])a.read=true;
+  state.serverWatch.unread=0;
+  saveState();renderStock();
+}
+function serverAlertCard(a){
+  const qty=a.quantity!==null&&a.quantity!==undefined?`Qty ${a.quantity}`:'Qty not supplied';
+  return `<div class="server-alert-card ${esc(String(a.type||'stock').toLowerCase().replace(/\s+/g,'-'))}">
+    <div class="server-alert-head"><b>${esc(a.type||'STOCK ALERT')}</b><span>${humanAge(a.detectedAt||new Date().toISOString())}</span></div>
+    <div class="server-alert-body"><div class="grow"><div class="eyebrow">${esc(a.source||a.retailer||'VAULTSIGNAL')}</div><strong>${esc(a.product||'Watched product')}</strong><span>${esc(a.store||'Online')} • ${qty}${a.price?` • ${money(a.price)}`:''}</span></div>${a.url?`<a class="btn primary" href="${esc(a.url)}" target="_blank" rel="noreferrer">OPEN ↗</a>`:''}</div>
+  </div>`;
+}
+function renderWatchEngine(){
+  const w=state.serverWatch||{};
+  const watches=stockWatchQueriesForScan();
+  const alerts=(w.alerts||[]).slice(0,12);
+  const backendReady=w.configured===true;
+  const notif=('Notification' in window)?Notification.permission:'unsupported';
+  return `<div class="panel watch-engine-panel">
+    <div class="section-head"><div><div class="eyebrow">VAULTSIGNAL • WATCH ENGINE</div><h2>Server-side restock detection</h2><p>Sync your watches once. With backend storage and a scheduled monitor enabled, VaultSignal keeps comparing stock feeds without requiring repeated manual scans.</p></div><span class="badge ${backendReady?'primary':'signal-gold'}">${backendReady?'SERVER READY':'SETUP NEEDED'}</span></div>
+    <div class="watch-engine-stats">
+      <div><span>Synced watches</span><strong>${w.syncedWatchCount||0}</strong><small>${w.lastSyncAt?`Synced ${humanAge(w.lastSyncAt)}`:'Not synced'}</small></div>
+      <div><span>Unread alerts</span><strong>${w.unread||0}</strong><small>${alerts.length} saved on device</small></div>
+      <div><span>Last monitor</span><strong>${w.lastMonitorAt?humanAge(w.lastMonitorAt):'—'}</strong><small>Scheduled backend scan</small></div>
+      <div><span>Device alerts</span><strong>${notif==='granted'?'ON':'OFF'}</strong><small>${notif==='granted'?'Permission enabled':'Permission required'}</small></div>
+    </div>
+    <div class="action-row"><button class="btn primary" ${watchEngineBusy?'disabled':''} onclick="syncServerWatches(false)">☁ Sync ${watches.length} watch${watches.length===1?'':'es'}</button><button class="btn" onclick="pollServerAlerts(false)">↻ Check alerts</button><button class="btn" onclick="enableVaultSignalNotifications()">🔔 Enable alerts</button>${w.unread?`<button class="btn" onclick="markServerAlertsRead()">Mark read</button>`:''}</div>
+    ${w.error?`<div class="notice warn"><span>!</span><span>${esc(w.error)}</span></div>`:''}
+    <div class="server-alert-list">${alerts.length?alerts.map(serverAlertCard).join(''):`<div class="empty">No server alerts yet. Add Stock Watches, sync them, and the monitor will build your personal alert feed.</div>`}</div>
+    <div class="watch-engine-note">Server-side detections can be retained while the app is closed. True instant push while fully closed will use the Android/iOS native push bridge before store launch.</div>
+  </div>`;
+}
+function startWatchAlertPolling(){
+  if(watchPollTimer)clearInterval(watchPollTimer);
+  watchPollTimer=setInterval(()=>{
+    if(activeTab==='stock')pollServerAlerts(true);
+  },60000);
+}
+
 function stockWatchQueriesForScan(){
   const q=[];
   for(const w of state.stockWatches||[]){
@@ -3088,6 +3483,7 @@ function renderStock(){
     <div class="page-title"><div><h1>Inventory Radar</h1><p>Verified live inventory when an authorized source is connected, plus nearby retailer checks everywhere else.</p></div><span class="badge ${connection.mode==='live'?'primary':connection.mode==='checks'?'signal-gold':''}">${backendOnline?'● INVENTORY SERVICE ONLINE':'○ SETUP REQUIRED'}</span></div>
     <div class="panel inventory-source-truth ${connection.mode}"><div class="inventory-source-icon">${connection.mode==='live'?'●':connection.mode==='checks'?'↗':'!'}</div><div class="grow"><div class="eyebrow">SOURCE MODE</div><strong>${esc(connection.title)}</strong><span>${esc(connection.detail)}</span></div><b>${esc(connection.badge)}</b></div>
     ${renderLiveDropNetwork()}
+    ${renderWatchEngine()}
     ${renderLocalStockChecker()}
     <div class="panel stock-command-panel">
       <div class="section-head">
@@ -3119,7 +3515,7 @@ function renderStock(){
     <div class="panel inventory-provider-panel"><div class="section-head"><div><div class="eyebrow">SOURCE STATUS</div><h2>What VaultSignal can actually verify</h2><p>Backend connectivity and live inventory are shown separately.</p></div><button class="btn" onclick="checkInventoryBackendHealth(true).then(()=>renderStock())">Refresh status</button></div>${retailerCapabilityMarkup()}</div>
     <div class="panel radar-panel"><div class="section-head"><div><div class="eyebrow">RESTOCK RADAR</div><h2>Saved product intelligence</h2><p>Your targeted product watches remain connected to Product Command and Inventory Command.</p></div></div>${renderRestockRadar()}</div>
     <div class="panel"><div class="section-head"><div><h2>Stock watches</h2><p>Specific products you want prioritized.</p></div></div>${renderStockWatches()}</div>`;
-  setTimeout(()=>{maybeAutoScanArea();if(!state.liveDropFeed.length)refreshLiveDrops(true);startLiveDropAutoRefresh();},0);
+  setTimeout(()=>{maybeAutoScanArea();if(!state.liveDropFeed.length)refreshLiveDrops(true);startLiveDropAutoRefresh();startWatchAlertPolling();if(state.serverWatch?.lastSyncAt)pollServerAlerts(true);},0);
 }
 function toggleRetailer(name){
   selectedRetailers.has(name) ? selectedRetailers.delete(name) : selectedRetailers.add(name);
@@ -7849,16 +8245,12 @@ function renderAlertsTool(){
 function removePriceAlert(id){state.priceAlerts=state.priceAlerts.filter(x=>x.uid!==id);saveState();renderTools()}
 function renderSettingsTool(){
   const cfg=window.TWOGEN_CONFIG||{};
-  return `<div class="panel"><div class="section-head"><div><h2>App settings</h2><p>Branding, backup and integration status.</p></div></div><div class="form-grid"><label class="field"><span>App name</span><input id="brandName" value="${esc(state.settings.brand)}"></label><label class="field"><span>Tagline</span><input id="brandTagline" value="${esc(state.settings.tagline)}"></label></div><button class="btn primary" style="margin-top:10px" onclick="saveBrandSettings()">Save branding</button></div>
-  <div class="panel"><h2>Cloud status</h2><div class="notice ${cloudReady()?'good':'warn'}"><span>${cloudReady()?'●':'!'}</span><span>${cloudReady()?`Cloud project connected • ${signedIn()?'signed in':'guest mode'}`:'Cloud project not configured. Accounts and community reports remain local-only until setup.'}</span></div></div>
-  <div class="panel inventory-setup-panel">
-    <div class="section-head"><div><div class="eyebrow">REAL INVENTORY ENGINE</div><h2>Secure retailer connection</h2><p>Retailer secrets stay off GitHub Pages. The app talks only to your public worker URL.</p></div><button class="btn primary" onclick="checkInventoryBackendHealth(true).then(()=>renderTools())">Test connection</button></div>
-    <div class="notice ${cfg.inventoryApiBase?'good':'warn'}"><span>${cfg.inventoryApiBase?'●':'!'}</span><span>${cfg.inventoryApiBase?`Configured backend: ${esc(cfg.inventoryApiBase)}`:'No secure inventory backend URL is configured yet. The v5 package contains a ready-to-deploy Cloudflare Worker.'}</span></div>
-    <div class="connection-code"><span>config.js</span><code>inventoryApiBase: "${esc(cfg.inventoryApiBase||'https://YOUR-WORKER.workers.dev')}"</code></div>
-    ${retailerCapabilityMarkup()}
-    <div class="notice" style="margin-top:10px"><span>🔒</span><span>Never paste Best Buy or other private retailer API keys into config.js. Store them as backend secrets only.</span></div>
-  </div>
-  <div class="panel"><h2>Backup & portability</h2><div class="action-row"><button class="btn" onclick="exportBackup()">Export full backup</button><button class="btn" onclick="$('hiddenImport').click()">Import backup</button><button class="btn red" onclick="resetApp()">Reset local data</button></div><p style="margin-top:9px">Version ${esc(String(cfg.appVersion||'0.4.0'))}. Data currently lives on this device until cloud accounts are added.</p></div>`;
+  return `${renderLaunchCenter()}
+  <div class="panel"><div class="section-head"><div><h2>App settings</h2><p>Branding and release identity.</p></div></div><div class="form-grid"><label class="field"><span>App name</span><input id="brandName" value="${esc(state.settings.brand)}"></label><label class="field"><span>Tagline</span><input id="brandTagline" value="${esc(state.settings.tagline)}"></label></div><button class="btn primary" style="margin-top:10px" onclick="saveBrandSettings()">Save branding</button></div>
+  <div class="panel"><div class="section-head"><div><div class="eyebrow">PRIVACY + DATA CONTROL</div><h2>Your data, your exit</h2><p>VaultSignal is local-first. Watch Engine data stored on the Worker can be removed separately or together with local app data.</p></div></div><div class="action-row"><a class="btn" href="./privacy.html" target="_blank">Privacy Policy</a><a class="btn" href="./terms.html" target="_blank">Terms</a><a class="btn" href="./support.html" target="_blank">Support</a></div><div class="action-row" style="margin-top:8px"><button class="btn" onclick="deleteServerWatchData()">Delete server Watch data</button><button class="btn red" onclick="deleteAllVaultSignalData()">Delete all app data</button></div></div>
+  <div class="panel"><h2>Cloud status</h2><div class="notice ${cloudReady()?'good':'warn'}"><span>${cloudReady()?'●':'!'}</span><span>${cloudReady()?`Cloud project connected • ${signedIn()?'signed in':'guest mode'}`:'Accountless/local-first mode. Cloud accounts are not required for the initial launch.'}</span></div></div>
+  <div class="panel inventory-setup-panel"><div class="section-head"><div><div class="eyebrow">SECURE SERVICE LAYER</div><h2>Inventory + Watch backend</h2><p>Retailer and platform secrets stay off the app. VaultSignal talks only to the public Worker URL.</p></div><button class="btn primary" onclick="checkInventoryBackendHealth(true).then(()=>renderTools())">Test connection</button></div><div class="notice ${cfg.inventoryApiBase?'good':'warn'}"><span>${cfg.inventoryApiBase?'●':'!'}</span><span>${cfg.inventoryApiBase?`Configured backend: ${esc(cfg.inventoryApiBase)}`:'No secure inventory backend URL configured.'}</span></div>${retailerCapabilityMarkup()}<div class="notice" style="margin-top:10px"><span>🔒</span><span>Never put retailer, billing, or admin secrets in config.js or GitHub Pages.</span></div></div>
+  <div class="panel"><div class="section-head"><div><h2>Backup & portability</h2><p>Keep a portable copy of your collection before major device changes.</p></div></div><div class="action-row"><button class="btn" onclick="exportBackup()">Export full backup</button><button class="btn" onclick="$('hiddenImport').click()">Import backup</button><button class="btn red" onclick="resetApp()">Reset local data only</button></div><p style="margin-top:9px">Version ${esc(String(cfg.appVersion||LAUNCH_VERSION))}. Release channel: ${esc(cfg.releaseChannel||'development')}.</p></div>`;
 }
 function saveBrandSettings(){state.settings.brand=$('brandName')?.value.trim()||'VaultSignal';state.settings.tagline=$('brandTagline')?.value.trim()||'Two Generations. One Collection.';saveState();renderTools();toast('Branding saved')}
 function exportBackup(){
@@ -7879,7 +8271,7 @@ function exportCollectionCSV(){
 }
 
 Object.assign(window,{
-  switchTab,openVault,openTool,runLocalStockCheck,setLocalStockQuery,premiumPurchaseAction,refreshLiveDrops,setLiveDropFilter,premiumRestorePurchases,setInventoryFilter,quickInventoryCount,inventoryAuditAll,exportUnifiedInventoryCsv,openProductFromInventory,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
+  switchTab,openVault,openTool,openStockSection,refreshSystemStatus,showLaunchOnboarding,closeLaunchOnboarding,launchOnboardingNext,launchOnboardingBack,launchToggleGame,deleteServerWatchData,deleteAllVaultSignalData,applyVerifiedNativeEntitlement,syncServerWatches,pollServerAlerts,enableVaultSignalNotifications,markServerAlertsRead,runLocalStockCheck,setLocalStockQuery,premiumPurchaseAction,refreshLiveDrops,setLiveDropFilter,premiumRestorePurchases,setInventoryFilter,quickInventoryCount,inventoryAuditAll,exportUnifiedInventoryCsv,openProductFromInventory,toggleRetailer,saveStockArea,useMyLocation,runAreaInventoryScan,clearAreaInventory,clearInventoryPulse,toggleAreaGame,setAreaAutoRefresh,setAreaAutoRefreshHours,toggleFavoriteInventoryStore,selectAreaStore,toggleSpecificProductSearch,runInventorySearch,runProductInventorySearch,checkInventoryBackendHealth,openInventorySetup,findNearbyStores,saveStockWatch,toggleWatch,removeWatch,removeStockReport,clearInventoryResults,openRetailerSearch,saveInventoryResultAsReport,
   buildHuntRoute,clearHuntRoute,toggleHuntStop,reportAtHuntStop,confirmStockReport,buyFromReport,buyInventoryResult,huntWatch,
   refreshCommunityReports,confirmCommunityReport,buyCommunityReport,cloudSignUp,cloudSignIn,cloudMagicLink,cloudSignOut,saveCloudProfile,syncVaultToCloud,restoreVaultFromCloud,
   selectWatch,editWatch,setProductSearch,setProductGameFilter,setProductNeedFilter,setProductSort,openProductPage,createCustomProduct,editCatalogProduct,editProductIdentifiers,editSealedLotFromProduct,openProductStockReport,huntProductNow,openProductVaultIQ,watchProduct,buyCatalogProduct,addOwnedSealedFromProduct,logOpeningFromProduct,openSealedProductPage,openInventoryProduct,openCommunityProduct,
@@ -7914,9 +8306,11 @@ ensureScannerSchema();
 ensureCatalogSeed();
 ensureProductInventorySchema();
 ensureRealInventorySchema();
+ensureLaunchSchema();
 ensureDailySnapshot();
 evaluateWatchtower({notify:false});
 render('home');
+setTimeout(()=>showLaunchOnboarding(false),120);
 })();
 
 // v7.2.1: Do not close camera on visibilitychange; Android permission prompts can temporarily hide the PWA.

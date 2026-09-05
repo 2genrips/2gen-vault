@@ -6,3 +6,15 @@ compatibility_date = "2026-09-04"
 # Replace with your GitHub Pages origin after deployment.
 # Example: "https://2genrips.github.io"
 ALLOWED_ORIGIN = "https://2genrips.github.io"
+
+
+# VaultSignal Watch Engine development schedule.
+[triggers]
+crons = ["*/2 * * * *"]
+
+# Create a Cloudflare KV namespace and bind it as VAULTSIGNAL_ALERTS.
+# If you deploy with Wrangler, uncomment and replace the ID:
+#
+# [[kv_namespaces]]
+# binding = "VAULTSIGNAL_ALERTS"
+# id = "YOUR_KV_NAMESPACE_ID"

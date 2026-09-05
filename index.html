@@ -4,11 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#090b10">
-  <meta name="description" content="VaultSignal by 2GEN RIPS — inventory finder, collection tracker, portfolio and collector toolkit.">
+  <meta name="description" content="VaultSignal — stock alerts, local inventory, scanning, pricing, sealed inventory and collection intelligence in one collector OS.">
+  <meta name="application-name" content="VaultSignal">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="color-scheme" content="dark">
+  <meta name="format-detection" content="telephone=no">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg">
-  <link rel="stylesheet" href="./styles.css?v=10.6.0">
-  <title>VaultSignal • Collector OS</title>
+  <link rel="stylesheet" href="./styles.css?v=12.0.0">
+  <title>VaultSignal • Collector Intelligence OS</title>
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -37,12 +42,12 @@
       <button data-tab="tools"><span class="nav-icon">✦</span><span>Tools</span></button>
     </nav>
 
-    <div id="toast" class="toast"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <input id="hiddenImport" hidden type="file" accept="application/json">
     <input id="hiddenCamera" hidden type="file" accept="image/jpeg,image/png,image/webp" capture="environment">
   </div>
-  <script src="./config.js?v=10.6.0"></script>
-  <script src="./cloud.js"></script>
-  <script src="./app.js?v=10.6.0"></script>
+  <script defer src="./config.js?v=12.0.0"></script>
+  <script defer src="./cloud.js"></script>
+  <script defer src="./app.js?v=12.0.0"></script>
 </body>
 </html>

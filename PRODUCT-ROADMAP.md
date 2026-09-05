@@ -1,6 +1,6 @@
 # VaultSignal — Product Roadmap
 
-## Current build: v10.6 Local Stock Broker
+## Current build: v12.0 Launch Candidate
 
 Hunt Mode, confidence-scored reports, store confirmations, and Find → Buy → Track are now built into the Pages frontend.
 
@@ -428,3 +428,39 @@ GitHub Pages remains the frontend; the cloud service becomes the secure data lay
 - `/local-stock` Worker endpoint
 - partner inventory automatically merges into area scans
 - provider health surfaced to the app
+
+
+## v10.7 completed
+- Cloudflare KV watch profiles
+- scheduled Worker monitor
+- backend stock snapshots
+- restock / quantity-up / price-drop detection
+- persistent server alert inbox
+- Stock Watch Engine UI
+- Signal Center alert integration
+- foreground notification delivery
+- native push seam for future Android/iOS release
+
+
+## v11.0 completed
+- unified Collector Intelligence OS home
+- six-job primary navigation instead of button overload
+- Today\'s Signals ranked queue
+- source-health transparency
+- portfolio + physical inventory unified summary
+- stronger $4.99 Premium value proposition
+- Worker `/system-status` health endpoint
+- Watch Engine / Live Drops / Local Stock / Scanner surfaced as one system
+
+
+## v12.0 completed
+- first-run launch onboarding
+- empty real Vault for fresh installs (no fake owned demo cards)
+- Launch Center with release blockers vs quality targets
+- public Privacy / Terms / Support pages
+- in-app server Watch data deletion
+- full local + server data deletion path
+- production config example
+- native billing / verified-entitlement bridge contract
+- release runbook, privacy data map and QA matrix
+- launch-safe accountless/local-first initial release strategy

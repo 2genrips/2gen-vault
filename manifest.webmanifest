@@ -1,7 +1,7 @@
 {
-  "name": "VaultSignal",
+  "name": "VaultSignal \u2014 Collector Intelligence OS",
   "short_name": "VaultSignal",
-  "description": "VaultSignal v10.6 \u2014 Local Stock Broker with one exact product checker, Best Buy official inventory adapter and plug-in partner inventory feed support.",
+  "description": "VaultSignal v12.0 launch candidate \u2014 stock alerts, local inventory, card scanning and values, singles + sealed collection tracking, sets, trades and analytics.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -15,5 +15,14 @@
       "type": "image/svg+xml",
       "purpose": "any maskable"
     }
-  ]
+  ],
+  "id": "./",
+  "lang": "en-US",
+  "dir": "ltr",
+  "categories": [
+    "shopping",
+    "lifestyle",
+    "utilities"
+  ],
+  "prefer_related_applications": false
 }
