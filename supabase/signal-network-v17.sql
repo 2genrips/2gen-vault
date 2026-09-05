@@ -1,6 +1,5 @@
 -- VaultSignal v17 Signal Network
--- Public structured community rooms. No direct messages.
--- Run in Supabase SQL Editor when cloud community mode is ready.
+-- Hardened production schema for structured community rooms.
 
 create extension if not exists pgcrypto;
 
@@ -32,8 +31,8 @@ create table if not exists public.signal_reactions (
   created_at timestamptz not null default now(),
   primary key(post_id,user_id,kind)
 );
-
 create index if not exists signal_reactions_post_idx on public.signal_reactions(post_id);
+create index if not exists signal_reactions_user_idx on public.signal_reactions(user_id);
 
 create table if not exists public.signal_room_follows (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -46,54 +45,32 @@ alter table public.signal_posts enable row level security;
 alter table public.signal_reactions enable row level security;
 alter table public.signal_room_follows enable row level security;
 
--- Public community rooms are readable by signed-in collectors.
+grant select,insert,delete on public.signal_posts to authenticated;
+grant select,insert,delete on public.signal_reactions to authenticated;
+grant select,insert,delete on public.signal_room_follows to authenticated;
+
 drop policy if exists "signal posts readable by authenticated" on public.signal_posts;
-create policy "signal posts readable by authenticated" on public.signal_posts
-for select to authenticated using (true);
-
+create policy "signal posts readable by authenticated" on public.signal_posts for select to authenticated using (true);
 drop policy if exists "users create own signal posts" on public.signal_posts;
-create policy "users create own signal posts" on public.signal_posts
-for insert to authenticated with check (auth.uid() = user_id);
-
+create policy "users create own signal posts" on public.signal_posts for insert to authenticated with check ((select auth.uid()) = user_id);
 drop policy if exists "users delete own signal posts" on public.signal_posts;
-create policy "users delete own signal posts" on public.signal_posts
-for delete to authenticated using (auth.uid() = user_id);
+create policy "users delete own signal posts" on public.signal_posts for delete to authenticated using ((select auth.uid()) = user_id);
 
 drop policy if exists "signal reactions readable by authenticated" on public.signal_reactions;
-create policy "signal reactions readable by authenticated" on public.signal_reactions
-for select to authenticated using (true);
-
+create policy "signal reactions readable by authenticated" on public.signal_reactions for select to authenticated using (true);
 drop policy if exists "users create own signal reactions" on public.signal_reactions;
-create policy "users create own signal reactions" on public.signal_reactions
-for insert to authenticated with check (auth.uid() = user_id);
-
+create policy "users create own signal reactions" on public.signal_reactions for insert to authenticated with check ((select auth.uid()) = user_id);
 drop policy if exists "users delete own signal reactions" on public.signal_reactions;
-create policy "users delete own signal reactions" on public.signal_reactions
-for delete to authenticated using (auth.uid() = user_id);
+create policy "users delete own signal reactions" on public.signal_reactions for delete to authenticated using ((select auth.uid()) = user_id);
 
 drop policy if exists "users read own room follows" on public.signal_room_follows;
-create policy "users read own room follows" on public.signal_room_follows
-for select to authenticated using (auth.uid() = user_id);
-
+create policy "users read own room follows" on public.signal_room_follows for select to authenticated using ((select auth.uid()) = user_id);
 drop policy if exists "users create own room follows" on public.signal_room_follows;
-create policy "users create own room follows" on public.signal_room_follows
-for insert to authenticated with check (auth.uid() = user_id);
-
+create policy "users create own room follows" on public.signal_room_follows for insert to authenticated with check ((select auth.uid()) = user_id);
 drop policy if exists "users delete own room follows" on public.signal_room_follows;
-create policy "users delete own room follows" on public.signal_room_follows
-for delete to authenticated using (auth.uid() = user_id);
+create policy "users delete own room follows" on public.signal_room_follows for delete to authenticated using ((select auth.uid()) = user_id);
 
--- Optional realtime publication for persisted changes. The v17 client also uses
--- Realtime Broadcast/Presence for low-latency room updates when cloud is configured.
-do $$ begin
-  alter publication supabase_realtime add table public.signal_posts;
-exception when duplicate_object then null;
-end $$;
+do $$ begin alter publication supabase_realtime add table public.signal_posts; exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table public.signal_reactions; exception when duplicate_object then null; end $$;
 
-do $$ begin
-  alter publication supabase_realtime add table public.signal_reactions;
-exception when duplicate_object then null;
-end $$;
-
--- Privacy rule: Signal Network only needs a broad region label such as 287xx.
--- Do not add exact home address fields to these public community tables.
+-- Community location is intentionally broad. Never store household addresses or child contact data here.
