@@ -1,7 +1,7 @@
 {
   "name": "VaultSignal — Collector Intelligence OS",
   "short_name": "VaultSignal",
-  "description": "VaultSignal v14 — stock intelligence, scanning and values, collection management, family Pack Battles, creator tools and Grail collector intelligence in one OS by 2GEN RIPS.",
+  "description": "VaultSignal v15 — stock intelligence, card scanning and values, Card Journey, family Pack Battles, creator tools and Grail collector intelligence in one OS by 2GEN RIPS.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
