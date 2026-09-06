@@ -23,12 +23,12 @@ window.TWOGEN_CONFIG = {
   premiumMonthlyPrice: 4.99,
   premiumProductId: "vaultsignal_premium_monthly",
   premiumPreview: true,
-  releaseChannel: "source-mesh",
+  releaseChannel: "demand-radar",
   premiumEntitlementApiBase: "",
   supportEmail: "",
   supportUrl: "",
   privacyUrl: "./privacy.html",
   termsUrl: "./terms.html",
   dataDeletionUrl: "./privacy.html#deletion",
-  appVersion: "21.0.0"
+  appVersion: "22.0.0"
 };
