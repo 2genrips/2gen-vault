@@ -134,7 +134,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const zip=String(body?.zip||'').replace(/\D/g,'').slice(0,5)
     if (zip.length!==5) return json({error:'5-digit ZIP required'},400)
     const radius=clamp(body?.radius,1,50,25)
-    const queries=[...new Set((Array.isArray(body?.queries)?body.queries:[]).map((x:any)=>clean(x,120)).filter((x:string)=>x.length>=3))].slice(0,4)
+    const queries:string[]=[...new Set<string>((Array.isArray(body?.queries)?body.queries:[]).map((x:any)=>clean(x,120)).filter((x:string)=>x.length>=3))].slice(0,4)
     if (!queries.length) return json({error:'at least one watch query required'},400)
 
     const region=broadZip(zip), now=new Date(), nowIso=now.toISOString(), expires=new Date(now.getTime()+10*60000).toISOString()
