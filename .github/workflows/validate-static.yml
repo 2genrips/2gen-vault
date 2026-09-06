@@ -3,7 +3,7 @@ name: Validate VaultSignal Static Build
 on:
   pull_request:
   push:
-    branches: [main, v20-signal-fusion]
+    branches: [main, v21-source-mesh]
 
 permissions:
   contents: read
@@ -35,6 +35,7 @@ jobs:
           node --check mobile-command-center.js
           node --check signal-alert-engine.js
           node --check signal-fusion.js
+          node --check source-mesh.js
           node --check sw.js
 
       - name: Set up Deno
@@ -45,31 +46,34 @@ jobs:
       - name: Check Signal Push Edge Function
         run: deno check --config supabase/functions/signal-push/deno.json supabase/functions/signal-push/index.ts
 
-      - name: Verify v20 assets are wired
+      - name: Check Source Mesh Edge Function
+        run: deno check --config supabase/functions/source-mesh/deno.json supabase/functions/source-mesh/index.ts
+
+      - name: Verify v21 assets are wired
         run: |
-          grep -q 'signal-fusion.css' index.html
-          grep -q 'signal-fusion.js' index.html
-          grep -q 'signal-fusion.css' sw.js
-          grep -q 'signal-fusion.js' sw.js
-          grep -q 'vaultsignal-signal-fusion-v200' sw.js
-          grep -q 'appVersion: "20.0.0"' config.js
-          grep -q 'releaseChannel: "signal-fusion"' config.js
-          grep -q 'VaultSignalFusion' signal-fusion.js
-          grep -q 'data-mcc="fusion"' mobile-command-center.js
-          grep -q 'signal_incidents' supabase/signal-fusion-v20.sql
-          grep -q 'fuse_and_dispatch_signal_post' supabase/signal-fusion-v20.sql
-          grep -q 'refresh_incident_after_reaction' supabase/signal-fusion-v20.sql
-          grep -q 'event_key' supabase/signal-fusion-v20.sql
-          grep -q 'set search_path = pg_catalog' supabase/signal-fusion-v20-search-path-hardening.sql
-          grep -q 'incident_id' supabase/functions/signal-push/index.ts
-          grep -q 'eventKey' supabase/functions/signal-push/index.ts
+          grep -q 'source-mesh.css' index.html
+          grep -q 'source-mesh.js' index.html
+          grep -q 'source-mesh.css' sw.js
+          grep -q 'source-mesh.js' sw.js
+          grep -q 'vaultsignal-source-mesh-v210' sw.js
+          grep -q 'appVersion: "21.0.0"' config.js
+          grep -q 'releaseChannel: "source-mesh"' config.js
+          grep -q 'VaultSignalSourceMesh' source-mesh.js
+          grep -q 'data-mcc="mesh"' mobile-command-center.js
+          grep -q 'source_observations' supabase/source-mesh-v21.sql
+          grep -q 'source_catalog' supabase/source-mesh-v21.sql
+          grep -q 'refresh_signal_incident' supabase/source-mesh-v21.sql
+          grep -q 'dispatch_source_mesh_refresh' supabase/source-mesh-v21-automation.sql
+          grep -q 'vaultsignal-source-mesh-refresh' supabase/source-mesh-v21-automation.sql
+          grep -q 'local_verify' supabase/functions/source-mesh/index.ts
+          grep -q 'global_refresh' supabase/functions/source-mesh/index.ts
+          grep -q 'access-control-allow-origin' supabase/functions/source-mesh/index.ts
           grep -q "addEventListener('push'" sw.js
           grep -q 'webPushPublicKey: "B' config.js
-          test -f V20-SIGNAL-FUSION.md
-          test -f supabase/signal-network-v17.sql
-          test -f supabase/live-community-v18.sql
-          test -f supabase/signal-alert-engine-v19.sql
-          test -f supabase/signal-fusion-v20.sql
-          test -f supabase/signal-fusion-v20-search-path-hardening.sql
+          test -f V21-SOURCE-MESH.md
+          test -f supabase/source-mesh-v21.sql
+          test -f supabase/source-mesh-v21-automation.sql
+          test -f supabase/functions/source-mesh/index.ts
+          test -f supabase/functions/source-mesh/deno.json
           test -f supabase/functions/signal-push/index.ts
           test -f supabase/functions/signal-push/deno.json
