@@ -192,7 +192,6 @@ declare
   v_post jsonb;
   v_should_alert boolean := false;
 begin
-  -- Non-stock community rooms keep normal per-post delivery behavior.
   if new.room not in ('pokemon-drops','local-finds','deals') then
     perform public.vaultsignal_http_dispatch(to_jsonb(new),null);
     return new;
@@ -263,9 +262,13 @@ declare
   v_after public.signal_incidents;
   v_latest jsonb;
   v_should_alert boolean := false;
+  v_post_id uuid;
 begin
-  select incident_id into v_incident_id from public.signal_posts where id=coalesce(new.post_id,old.post_id);
-  if v_incident_id is null then return coalesce(new,old); end if;
+  if tg_op='DELETE' then v_post_id:=old.post_id; else v_post_id:=new.post_id; end if;
+  select incident_id into v_incident_id from public.signal_posts where id=v_post_id;
+  if v_incident_id is null then
+    if tg_op='DELETE' then return old; else return new; end if;
+  end if;
 
   select * into v_before from public.signal_incidents where id=v_incident_id for update;
   select * into v_after from public.refresh_signal_incident(v_incident_id);
@@ -279,12 +282,11 @@ begin
     perform public.vaultsignal_http_dispatch(v_latest,to_jsonb(v_after));
     update public.signal_incidents set last_alerted_at=now() where id=v_incident_id;
   end if;
-  return coalesce(new,old);
+  if tg_op='DELETE' then return old; else return new; end if;
 end;
 $$;
 revoke all on function public.refresh_incident_after_reaction() from public, anon, authenticated;
 
--- Replace v19's per-post stock dispatcher with fusion-aware delivery.
 drop trigger if exists vaultsignal_signal_push_after_insert on public.signal_posts;
 drop trigger if exists vaultsignal_signal_fusion_after_insert on public.signal_posts;
 create trigger vaultsignal_signal_fusion_after_insert
