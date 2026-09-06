@@ -7,8 +7,8 @@
   Never place a Supabase secret/service-role key in GitHub Pages.
 
   WEB PUSH:
-  webPushPublicKey is the PUBLIC VAPID key only. The matching private VAPID key belongs
-  in Supabase Edge Function secrets, never in this file.
+  webPushPublicKey is the PUBLIC VAPID key only. The matching private VAPID key is stored
+  in Supabase Vault and is never shipped to the browser or committed to GitHub.
 
   IMPORTANT:
   GitHub Pages is public. Never place private API keys, passwords, payment secrets,
@@ -19,16 +19,16 @@ window.TWOGEN_CONFIG = {
   supabaseUrl: "https://ztesewpipghbkvtbidry.supabase.co",
   supabasePublishableKey: "sb_publishable_30xcnUHi1scD67S0TmEx9A_n-DNYCsK",
   supabaseAnonKey: "",
-  webPushPublicKey: "",
+  webPushPublicKey: "BHdJLn4nXZQnzF2NduyCA97G7qcwYtTHh8gzKT7W8vT5ronawJBPY9lwpNxhR01mC6lsynp-tRi7BOiplA8f7bg",
   premiumMonthlyPrice: 4.99,
   premiumProductId: "vaultsignal_premium_monthly",
   premiumPreview: true,
-  releaseChannel: "mobile-command-center",
+  releaseChannel: "signal-alert-engine",
   premiumEntitlementApiBase: "",
   supportEmail: "",
   supportUrl: "",
   privacyUrl: "./privacy.html",
   termsUrl: "./terms.html",
   dataDeletionUrl: "./privacy.html#deletion",
-  appVersion: "18.2.0"
+  appVersion: "19.0.0"
 };
