@@ -19,6 +19,7 @@ create table if not exists public.signal_push_deliveries (
 );
 create index if not exists signal_push_deliveries_user_created_idx on public.signal_push_deliveries(user_id, created_at desc);
 create index if not exists signal_push_deliveries_post_idx on public.signal_push_deliveries(post_id);
+create index if not exists signal_push_deliveries_subscription_idx on public.signal_push_deliveries(subscription_id);
 alter table public.signal_push_deliveries enable row level security;
 
 drop policy if exists "service role manages signal push deliveries" on public.signal_push_deliveries;
