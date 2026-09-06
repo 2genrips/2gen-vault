@@ -64,16 +64,14 @@ alter table public.hunt_missions enable row level security;
 alter table public.hunt_mission_scouts enable row level security;
 alter table public.hunt_mission_checkins enable row level security;
 
-grant select,insert,update,delete on public.hunt_missions to authenticated;
+grant select,insert,delete on public.hunt_missions to authenticated;
 grant select,insert,delete on public.hunt_mission_scouts to authenticated;
-grant select,insert,update,delete on public.hunt_mission_checkins to authenticated;
+grant select,insert,delete on public.hunt_mission_checkins to authenticated;
 
 drop policy if exists "hunt missions readable by authenticated" on public.hunt_missions;
 create policy "hunt missions readable by authenticated" on public.hunt_missions for select to authenticated using (true);
 drop policy if exists "hunt missions create own" on public.hunt_missions;
 create policy "hunt missions create own" on public.hunt_missions for insert to authenticated with check (created_by=auth.uid());
-drop policy if exists "hunt missions update own" on public.hunt_missions;
-create policy "hunt missions update own" on public.hunt_missions for update to authenticated using (created_by=auth.uid()) with check (created_by=auth.uid());
 drop policy if exists "hunt missions delete own" on public.hunt_missions;
 create policy "hunt missions delete own" on public.hunt_missions for delete to authenticated using (created_by=auth.uid());
 
@@ -88,18 +86,11 @@ drop policy if exists "hunt checkins readable by authenticated" on public.hunt_m
 create policy "hunt checkins readable by authenticated" on public.hunt_mission_checkins for select to authenticated using (true);
 drop policy if exists "hunt checkins create own" on public.hunt_mission_checkins;
 create policy "hunt checkins create own" on public.hunt_mission_checkins for insert to authenticated with check (user_id=auth.uid());
-drop policy if exists "hunt checkins update own" on public.hunt_mission_checkins;
-create policy "hunt checkins update own" on public.hunt_mission_checkins for update to authenticated using (user_id=auth.uid()) with check (user_id=auth.uid());
 drop policy if exists "hunt checkins delete own" on public.hunt_mission_checkins;
 create policy "hunt checkins delete own" on public.hunt_mission_checkins for delete to authenticated using (user_id=auth.uid());
 
--- Mission creation guard: normalize the product, enforce active mission limit, and automatically join the creator.
 create or replace function public.prepare_hunt_mission()
-returns trigger
-language plpgsql
-security definer
-set search_path=public
-as $$
+returns trigger language plpgsql security definer set search_path=public as $$
 declare active_count integer;
 begin
   if new.created_by<>auth.uid() then raise exception 'mission owner mismatch'; end if;
@@ -107,107 +98,127 @@ begin
   where created_by=new.created_by and status in ('OPEN','SCOUTING') and deadline_at>now();
   if active_count>=10 then raise exception 'active mission limit reached'; end if;
   new.normalized_product:=public.vaultsignal_normalize_signal(new.product);
+  new.status:='OPEN';new.scout_count:=1;new.checkin_count:=0;new.found_count:=0;new.not_found_count:=0;new.sold_out_count:=0;
   new.updated_at:=now();new.last_activity_at:=now();
   return new;
-end;
-$$;
-revoke all on function public.prepare_hunt_mission() from public,anon;
+end;$$;
+revoke all on function public.prepare_hunt_mission() from public,anon,authenticated;
 
 drop trigger if exists hunt_prepare_before_insert on public.hunt_missions;
-create trigger hunt_prepare_before_insert before insert on public.hunt_missions
-for each row execute function public.prepare_hunt_mission();
+create trigger hunt_prepare_before_insert before insert on public.hunt_missions for each row execute function public.prepare_hunt_mission();
 
 create or replace function public.join_creator_to_hunt_mission()
-returns trigger
-language plpgsql
-security definer
-set search_path=public
-as $$
+returns trigger language plpgsql security definer set search_path=public as $$
 begin
   insert into public.hunt_mission_scouts(mission_id,user_id) values(new.id,new.created_by) on conflict do nothing;
   return new;
-end;
-$$;
+end;$$;
 revoke all on function public.join_creator_to_hunt_mission() from public,anon,authenticated;
 
 drop trigger if exists hunt_creator_join_after_insert on public.hunt_missions;
-create trigger hunt_creator_join_after_insert after insert on public.hunt_missions
-for each row execute function public.join_creator_to_hunt_mission();
+create trigger hunt_creator_join_after_insert after insert on public.hunt_missions for each row execute function public.join_creator_to_hunt_mission();
 
--- Check-ins require the reporter to be a scout, and rate-limit repeated updates.
+create or replace function public.guard_hunt_scout_join()
+returns trigger language plpgsql security definer set search_path=public as $$
+declare m_status text; m_deadline timestamptz;
+begin
+  if new.user_id<>auth.uid() then raise exception 'scout owner mismatch'; end if;
+  select status,deadline_at into m_status,m_deadline from public.hunt_missions where id=new.mission_id;
+  if m_status not in ('OPEN','SCOUTING') or m_deadline<=now() then raise exception 'mission is not accepting scouts'; end if;
+  return new;
+end;$$;
+revoke all on function public.guard_hunt_scout_join() from public,anon,authenticated;
+
+drop trigger if exists hunt_guard_scout_before_insert on public.hunt_mission_scouts;
+create trigger hunt_guard_scout_before_insert before insert on public.hunt_mission_scouts for each row execute function public.guard_hunt_scout_join();
+
 create or replace function public.guard_hunt_checkin()
-returns trigger
-language plpgsql
-security definer
-set search_path=public
-as $$
-declare joined boolean; recent_count integer; mission_region text; mission_status text;
+returns trigger language plpgsql security definer set search_path=public as $$
+declare joined boolean; recent_count integer; mission_region text; mission_status text; mission_deadline timestamptz;
 begin
   if new.user_id<>auth.uid() then raise exception 'check-in owner mismatch'; end if;
   select exists(select 1 from public.hunt_mission_scouts where mission_id=new.mission_id and user_id=new.user_id) into joined;
   if not joined then raise exception 'join the mission before checking in'; end if;
   select count(*)::integer into recent_count from public.hunt_mission_checkins where user_id=new.user_id and created_at>now()-interval '10 minutes';
   if recent_count>=12 then raise exception 'check-in rate limit reached'; end if;
-  select broad_region,status into mission_region,mission_status from public.hunt_missions where id=new.mission_id;
-  if mission_status in ('CLOSED','EXPIRED') then raise exception 'mission is no longer active'; end if;
+  select broad_region,status,deadline_at into mission_region,mission_status,mission_deadline from public.hunt_missions where id=new.mission_id;
+  if mission_status in ('CLOSED','EXPIRED') or mission_deadline<=now() then raise exception 'mission is no longer active'; end if;
   if new.broad_region='Online' and mission_region<>'Online' then new.broad_region:=mission_region; end if;
   return new;
-end;
-$$;
-revoke all on function public.guard_hunt_checkin() from public,anon;
+end;$$;
+revoke all on function public.guard_hunt_checkin() from public,anon,authenticated;
 
 drop trigger if exists hunt_guard_checkin_before_insert on public.hunt_mission_checkins;
-create trigger hunt_guard_checkin_before_insert before insert on public.hunt_mission_checkins
-for each row execute function public.guard_hunt_checkin();
+create trigger hunt_guard_checkin_before_insert before insert on public.hunt_mission_checkins for each row execute function public.guard_hunt_checkin();
 
 create or replace function public.refresh_hunt_mission(p_mission uuid)
-returns public.hunt_missions
-language plpgsql
-security definer
-set search_path=public
-as $$
+returns public.hunt_missions language plpgsql security definer set search_path=public as $$
 declare scouts integer:=0; checks integer:=0; founds integer:=0; misses integer:=0; sold integer:=0; checking integer:=0; m public.hunt_missions;
 begin
   select count(*)::integer into scouts from public.hunt_mission_scouts where mission_id=p_mission;
-  select count(*)::integer,
-         count(*) filter(where result='FOUND')::integer,
-         count(*) filter(where result='NOT_FOUND')::integer,
-         count(*) filter(where result='SOLD_OUT')::integer,
-         count(*) filter(where result='CHECKING')::integer
+  select count(*)::integer,count(*) filter(where result='FOUND')::integer,count(*) filter(where result='NOT_FOUND')::integer,
+         count(*) filter(where result='SOLD_OUT')::integer,count(*) filter(where result='CHECKING')::integer
   into checks,founds,misses,sold,checking from public.hunt_mission_checkins where mission_id=p_mission;
-  update public.hunt_missions
-  set scout_count=coalesce(scouts,0),checkin_count=coalesce(checks,0),found_count=coalesce(founds,0),
-      not_found_count=coalesce(misses,0),sold_out_count=coalesce(sold,0),
-      status=case when status in ('CLOSED','EXPIRED') then status
-                  when coalesce(founds,0)>0 then 'FOUND'
-                  when coalesce(scouts,0)>1 or coalesce(checking,0)>0 then 'SCOUTING'
-                  else 'OPEN' end,
-      last_activity_at=now(),updated_at=now()
+  update public.hunt_missions set
+    scout_count=coalesce(scouts,0),checkin_count=coalesce(checks,0),found_count=coalesce(founds,0),
+    not_found_count=coalesce(misses,0),sold_out_count=coalesce(sold,0),
+    status=case when status in ('CLOSED','EXPIRED') then status when coalesce(founds,0)>0 then 'FOUND'
+                when coalesce(scouts,0)>1 or coalesce(checking,0)>0 then 'SCOUTING' else 'OPEN' end,
+    last_activity_at=now(),updated_at=now()
   where id=p_mission returning * into m;
   return m;
-end;
-$$;
+end;$$;
 revoke all on function public.refresh_hunt_mission(uuid) from public,anon,authenticated;
 grant execute on function public.refresh_hunt_mission(uuid) to service_role;
 
-create or replace function public.refresh_hunt_after_scout_change()
+create or replace function public.refresh_hunt_after_change()
 returns trigger language plpgsql security definer set search_path=public as $$
-begin perform public.refresh_hunt_mission(coalesce(new.mission_id,old.mission_id));return coalesce(new,old);end;$$;
-revoke all on function public.refresh_hunt_after_scout_change() from public,anon,authenticated;
+declare mission uuid;
+begin
+  if tg_op='DELETE' then mission:=old.mission_id; else mission:=new.mission_id; end if;
+  perform public.refresh_hunt_mission(mission);
+  if tg_op='DELETE' then return old; else return new; end if;
+end;$$;
+revoke all on function public.refresh_hunt_after_change() from public,anon,authenticated;
 
 drop trigger if exists hunt_refresh_after_scout_insert on public.hunt_mission_scouts;
-create trigger hunt_refresh_after_scout_insert after insert on public.hunt_mission_scouts for each row execute function public.refresh_hunt_after_scout_change();
+create trigger hunt_refresh_after_scout_insert after insert on public.hunt_mission_scouts for each row execute function public.refresh_hunt_after_change();
 drop trigger if exists hunt_refresh_after_scout_delete on public.hunt_mission_scouts;
-create trigger hunt_refresh_after_scout_delete after delete on public.hunt_mission_scouts for each row execute function public.refresh_hunt_after_scout_change();
+create trigger hunt_refresh_after_scout_delete after delete on public.hunt_mission_scouts for each row execute function public.refresh_hunt_after_change();
+drop trigger if exists hunt_refresh_after_checkin_insert on public.hunt_mission_checkins;
+create trigger hunt_refresh_after_checkin_insert after insert on public.hunt_mission_checkins for each row execute function public.refresh_hunt_after_change();
+drop trigger if exists hunt_refresh_after_checkin_delete on public.hunt_mission_checkins;
+create trigger hunt_refresh_after_checkin_delete after delete on public.hunt_mission_checkins for each row execute function public.refresh_hunt_after_change();
 
-drop trigger if exists hunt_refresh_after_checkin_change on public.hunt_mission_checkins;
-create trigger hunt_refresh_after_checkin_change after insert or update or delete on public.hunt_mission_checkins
-for each row execute function public.refresh_hunt_after_scout_change();
+-- Owner edits go through narrow RPCs so counters, creator identity, normalized keys, and FOUND state cannot be forged by the browser.
+create or replace function public.update_hunt_mission_details(p_mission uuid,p_retailer text,p_region text,p_target numeric,p_note text,p_deadline timestamptz)
+returns public.hunt_missions language plpgsql security definer set search_path=public as $$
+declare m public.hunt_missions;
+begin
+  if not exists(select 1 from public.hunt_missions where id=p_mission and created_by=auth.uid()) then raise exception 'mission owner required'; end if;
+  if p_region<>'Online' and p_region !~ '^[0-9]{3}xx$' then raise exception 'broad region required'; end if;
+  if p_deadline<=now() or p_deadline>now()+interval '7 days' then raise exception 'deadline must be within 7 days'; end if;
+  update public.hunt_missions set retailer=left(coalesce(p_retailer,''),80),broad_region=p_region,target_price=case when p_target is null then null else greatest(0,p_target) end,
+    note=left(coalesce(p_note,''),500),deadline_at=p_deadline,updated_at=now(),last_activity_at=now()
+  where id=p_mission returning * into m;return m;
+end;$$;
+revoke all on function public.update_hunt_mission_details(uuid,text,text,numeric,text,timestamptz) from public,anon;
+grant execute on function public.update_hunt_mission_details(uuid,text,text,numeric,text,timestamptz) to authenticated;
+
+create or replace function public.close_hunt_mission(p_mission uuid)
+returns public.hunt_missions language plpgsql security definer set search_path=public as $$
+declare m public.hunt_missions;
+begin
+  update public.hunt_missions set status='CLOSED',updated_at=now(),last_activity_at=now()
+  where id=p_mission and created_by=auth.uid() returning * into m;
+  if m.id is null then raise exception 'mission owner required'; end if;return m;
+end;$$;
+revoke all on function public.close_hunt_mission(uuid) from public,anon;
+grant execute on function public.close_hunt_mission(uuid) to authenticated;
 
 create or replace function public.expire_hunt_missions()
 returns void language sql security definer set search_path=public as $$
-  update public.hunt_missions set status='EXPIRED',updated_at=now()
-  where status in ('OPEN','SCOUTING') and deadline_at<=now();
+  update public.hunt_missions set status='EXPIRED',updated_at=now() where status in ('OPEN','SCOUTING') and deadline_at<=now();
 $$;
 revoke all on function public.expire_hunt_missions() from public,anon,authenticated;
 
