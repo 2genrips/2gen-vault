@@ -21,6 +21,14 @@ create index if not exists signal_push_deliveries_user_created_idx on public.sig
 create index if not exists signal_push_deliveries_post_idx on public.signal_push_deliveries(post_id);
 alter table public.signal_push_deliveries enable row level security;
 
+drop policy if exists "service role manages signal push deliveries" on public.signal_push_deliveries;
+create policy "service role manages signal push deliveries"
+on public.signal_push_deliveries
+for all
+to service_role
+using (true)
+with check (true);
+
 -- Server-only helper. The Edge Function calls this using the service role.
 create or replace function public.vaultsignal_push_config()
 returns jsonb
@@ -78,4 +86,5 @@ create trigger vaultsignal_signal_push_after_insert
 after insert on public.signal_posts
 for each row execute function public.dispatch_vaultsignal_push();
 
--- signal_push_deliveries intentionally has no authenticated policies. It is a server audit/dedup table.
+-- Authenticated clients cannot read or write the delivery audit. The explicit service-role policy
+-- keeps the table clearly server-only while avoiding ambiguous RLS configuration.
