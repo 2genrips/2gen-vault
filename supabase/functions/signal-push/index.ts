@@ -13,6 +13,21 @@ type SignalPost = {
   body?: string
 }
 
+type SignalIncident = {
+  id?: string
+  room?: string
+  product?: string
+  retailer?: string
+  region?: string
+  status?: string
+  confidence?: number
+  report_count?: number
+  reporter_count?: number
+  confirm_count?: number
+  gone_count?: number
+  last_seen_at?: string
+}
+
 type Preference = {
   user_id: string
   enabled: boolean
@@ -33,7 +48,7 @@ type PushConfig = {
   webhook_secret?: string
 }
 
-const urgentTypes = new Set(['DROP', 'FOUND', 'CHECKOUT', 'LIMIT'])
+const urgentTypes = new Set(['DROP', 'FOUND', 'CHECKOUT', 'LIMIT', 'SOLD OUT'])
 const stockRooms = new Set(['pokemon-drops', 'local-finds', 'deals'])
 const baseScores: Record<string, number> = {
   DROP: 70,
@@ -43,7 +58,7 @@ const baseScores: Record<string, number> = {
   DEAL: 58,
   PULL: 44,
   INFO: 42,
-  GONE: 34,
+  'SOLD OUT': 34,
 }
 
 function localMinutes(timeZone: string): number {
@@ -137,13 +152,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json({ error: 'VAPID configuration unavailable' }, 503)
   }
 
-  let payload: { record?: SignalPost; post?: SignalPost }
+  let payload: { record?: SignalPost; post?: SignalPost; incident?: SignalIncident | null }
   try {
     payload = await req.json()
   } catch {
     return json({ error: 'invalid json' }, 400)
   }
   const post = payload.record || payload.post
+  const incident = payload.incident || null
   if (!post?.room || !post?.type) return json({ error: 'signal post payload required' }, 400)
 
   let reputation = 50
@@ -155,7 +171,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .maybeSingle()
     if (data?.reputation_score != null) reputation = Number(data.reputation_score)
   }
-  const score = signalScore(post, reputation)
+  const score = incident?.confidence != null
+    ? Math.max(0, Math.min(100, Number(incident.confidence)))
+    : signalScore(post, reputation)
 
   const { data: prefs, error: prefError } = await supabase
     .from('notification_preferences')
@@ -165,7 +183,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (prefError) return json({ error: prefError.message }, 500)
 
   let eligible = (prefs || []).filter((pref: Preference) => {
-    if (pref.urgent_only && !urgentTypes.has(String(post.type).toUpperCase())) return false
+    const postType = String(post.type).toUpperCase()
+    const incidentGone = String(incident?.status || '').toUpperCase() === 'GONE'
+    if (pref.urgent_only && !urgentTypes.has(postType) && !incidentGone) return false
     if (inQuietHours(pref)) return false
     if (score < Number(pref.min_score ?? 60)) return false
     if (!matchesWatch(pref, post)) return false
@@ -187,7 +207,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     })
   }
 
-  if (!eligible.length) return json({ delivered: 0, score, reason: 'no eligible subscribers' })
+  if (!eligible.length) return json({ delivered: 0, score, incident_id: incident?.id || null, reason: 'no eligible subscribers' })
 
   const userIds = eligible.map((p) => p.user_id)
   const { data: subscriptions, error: subError } = await supabase
@@ -196,8 +216,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
     .in('user_id', userIds)
   if (subError) return json({ error: subError.message }, 500)
 
+  const incidentStatus = String(incident?.status || '').toUpperCase()
+  const scoreBand = Math.floor(score / 10) * 10
+  const eventKey = incident?.id
+    ? `incident:${incident.id}:${incidentStatus || 'UPDATE'}:${scoreBand}`
+    : post.id ? `post:${post.id}` : ''
+
   let alreadySent = new Set<string>()
-  if (post.id && subscriptions?.length) {
+  if (subscriptions?.length && eventKey) {
+    const ids = subscriptions.map((s: any) => s.id)
+    const { data: deliveries } = await supabase
+      .from('signal_push_deliveries')
+      .select('subscription_id')
+      .eq('event_key', eventKey)
+      .in('subscription_id', ids)
+    alreadySent = new Set((deliveries || []).map((d: any) => String(d.subscription_id)))
+  } else if (post.id && subscriptions?.length) {
     const ids = subscriptions.map((s: any) => s.id)
     const { data: deliveries } = await supabase
       .from('signal_push_deliveries')
@@ -208,7 +242,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   const pending = (subscriptions || []).filter((sub: any) => !alreadySent.has(String(sub.id)))
-  if (!pending.length) return json({ delivered: 0, score, reason: 'already delivered' })
+  if (!pending.length) return json({ delivered: 0, score, incident_id: incident?.id || null, reason: 'already delivered' })
 
   webpush.setVapidDetails(
     config.vapid_subject || 'https://2genrips.github.io/2gen-vault/',
@@ -216,12 +250,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
     config.vapid_private,
   )
 
+  const title = incident?.id
+    ? `VaultSignal • ${incidentStatus || 'FUSION'} ${score}`
+    : `VaultSignal • ${String(post.type).toUpperCase()}`
+  const reportLabel = incident?.report_count ? `${incident.report_count} report${Number(incident.report_count) === 1 ? '' : 's'}` : ''
   const notification = JSON.stringify({
-    title: `VaultSignal • ${String(post.type).toUpperCase()}`,
-    body: [post.product || post.title || 'New Signal', post.retailer, post.region, `${score} signal`].filter(Boolean).join(' • '),
-    tag: post.id ? `signal-${post.id}` : `signal-${Date.now()}`,
-    url: post.id ? `./?signal=${encodeURIComponent(post.id)}` : './',
-    data: { postId: post.id || null, room: post.room, type: post.type, signalScore: score },
+    title,
+    body: [incident?.product || post.product || post.title || 'New Signal', incident?.retailer || post.retailer, incident?.region || post.region, reportLabel, `${score} confidence`].filter(Boolean).join(' • '),
+    tag: incident?.id ? `incident-${incident.id}` : post.id ? `signal-${post.id}` : `signal-${Date.now()}`,
+    url: incident?.id ? `./?incident=${encodeURIComponent(incident.id)}` : post.id ? `./?signal=${encodeURIComponent(post.id)}` : './',
+    data: { postId: post.id || null, incidentId: incident?.id || null, room: post.room, type: post.type, signalScore: score, incidentStatus: incidentStatus || null },
   })
 
   let delivered = 0
@@ -235,7 +273,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
         keys: { p256dh: sub.p256dh, auth: sub.auth },
       }, notification)
       delivered += 1
-      if (post.id) deliveryRows.push({post_id: post.id,user_id: sub.user_id,subscription_id: sub.id,signal_score: score,status: 'sent'})
+      if (post.id) deliveryRows.push({
+        post_id: post.id,
+        incident_id: incident?.id || null,
+        event_key: eventKey,
+        user_id: sub.user_id,
+        subscription_id: sub.id,
+        signal_score: score,
+        status: 'sent',
+      })
     } catch (error: any) {
       if (error?.statusCode === 404 || error?.statusCode === 410) expiredIds.push(sub.id)
       else console.error('push failed', error?.statusCode || error?.message || error)
@@ -243,13 +289,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }))
 
   if (deliveryRows.length) {
-    await supabase.from('signal_push_deliveries').upsert(deliveryRows,{onConflict:'post_id,subscription_id',ignoreDuplicates:true})
+    await supabase.from('signal_push_deliveries').upsert(deliveryRows,{onConflict:'event_key,subscription_id',ignoreDuplicates:true})
   }
   if (expiredIds.length) await supabase.from('push_subscriptions').delete().in('id', expiredIds)
 
   return json({
     delivered,
     score,
+    incident_id: incident?.id || null,
+    incident_status: incidentStatus || null,
     expired_removed: expiredIds.length,
     eligible_users: eligible.length,
     skipped_duplicates: alreadySent.size,
