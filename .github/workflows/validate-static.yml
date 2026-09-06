@@ -60,6 +60,7 @@ jobs:
           grep -q 'fuse_and_dispatch_signal_post' supabase/signal-fusion-v20.sql
           grep -q 'refresh_incident_after_reaction' supabase/signal-fusion-v20.sql
           grep -q 'event_key' supabase/signal-fusion-v20.sql
+          grep -q 'set search_path = pg_catalog' supabase/signal-fusion-v20-search-path-hardening.sql
           grep -q 'incident_id' supabase/functions/signal-push/index.ts
           grep -q 'eventKey' supabase/functions/signal-push/index.ts
           grep -q "addEventListener('push'" sw.js
@@ -69,5 +70,6 @@ jobs:
           test -f supabase/live-community-v18.sql
           test -f supabase/signal-alert-engine-v19.sql
           test -f supabase/signal-fusion-v20.sql
+          test -f supabase/signal-fusion-v20-search-path-hardening.sql
           test -f supabase/functions/signal-push/index.ts
           test -f supabase/functions/signal-push/deno.json
