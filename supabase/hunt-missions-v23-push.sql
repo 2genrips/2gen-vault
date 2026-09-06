@@ -1,6 +1,7 @@
 -- VaultSignal v23 Hunt Mission targeted push dispatch.
 -- Only FOUND and SOLD_OUT check-ins wake joined mission scouts; routine collaboration stays in-app/realtime.
 
+alter table public.signal_push_deliveries alter column post_id drop not null;
 alter table public.signal_push_deliveries add column if not exists mission_id uuid references public.hunt_missions(id) on delete set null;
 alter table public.signal_push_deliveries add column if not exists mission_checkin_id uuid references public.hunt_mission_checkins(id) on delete set null;
 create index if not exists signal_push_deliveries_mission_idx on public.signal_push_deliveries(mission_id,created_at desc);
