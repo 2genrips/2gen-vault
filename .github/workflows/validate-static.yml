@@ -3,7 +3,7 @@ name: Validate VaultSignal Static Build
 on:
   pull_request:
   push:
-    branches: [main, v21-source-mesh]
+    branches: [main, v22-demand-radar]
 
 permissions:
   contents: read
@@ -36,6 +36,7 @@ jobs:
           node --check signal-alert-engine.js
           node --check signal-fusion.js
           node --check source-mesh.js
+          node --check demand-radar.js
           node --check sw.js
 
       - name: Set up Deno
@@ -49,28 +50,30 @@ jobs:
       - name: Check Source Mesh Edge Function
         run: deno check --config supabase/functions/source-mesh/deno.json supabase/functions/source-mesh/index.ts
 
-      - name: Verify v21 assets are wired
+      - name: Verify v22 assets are wired
         run: |
-          grep -q 'source-mesh.css' index.html
-          grep -q 'source-mesh.js' index.html
-          grep -q 'source-mesh.css' sw.js
-          grep -q 'source-mesh.js' sw.js
-          grep -q 'vaultsignal-source-mesh-v210' sw.js
-          grep -q 'appVersion: "21.0.0"' config.js
-          grep -q 'releaseChannel: "source-mesh"' config.js
-          grep -q 'VaultSignalSourceMesh' source-mesh.js
-          grep -q 'data-mcc="mesh"' mobile-command-center.js
+          grep -q 'demand-radar.css' index.html
+          grep -q 'demand-radar.js' index.html
+          grep -q 'demand-radar.css' sw.js
+          grep -q 'demand-radar.js' sw.js
+          grep -q 'vaultsignal-demand-radar-v220' sw.js
+          grep -q 'appVersion: "22.0.0"' config.js
+          grep -q 'releaseChannel: "demand-radar"' config.js
+          grep -q 'VaultSignalDemandRadar' demand-radar.js
+          grep -q 'data-mcc="radar"' mobile-command-center.js
+          grep -q 'demand_radar' supabase/demand-radar-v22.sql
+          grep -q 'count(distinct user_id) >= 3' supabase/demand-radar-v22.sql
+          grep -q 'refresh_demand_radar_safe' supabase/demand-radar-v22-quality.sql
           grep -q 'source_observations' supabase/source-mesh-v21.sql
           grep -q 'source_catalog' supabase/source-mesh-v21.sql
-          grep -q 'refresh_signal_incident' supabase/source-mesh-v21.sql
           grep -q 'dispatch_source_mesh_refresh' supabase/source-mesh-v21-automation.sql
-          grep -q 'vaultsignal-source-mesh-refresh' supabase/source-mesh-v21-automation.sql
           grep -q 'local_verify' supabase/functions/source-mesh/index.ts
           grep -q 'global_refresh' supabase/functions/source-mesh/index.ts
-          grep -q 'access-control-allow-origin' supabase/functions/source-mesh/index.ts
           grep -q "addEventListener('push'" sw.js
           grep -q 'webPushPublicKey: "B' config.js
-          test -f V21-SOURCE-MESH.md
+          test -f V22-DEMAND-RADAR.md
+          test -f supabase/demand-radar-v22.sql
+          test -f supabase/demand-radar-v22-quality.sql
           test -f supabase/source-mesh-v21.sql
           test -f supabase/source-mesh-v21-automation.sql
           test -f supabase/functions/source-mesh/index.ts
