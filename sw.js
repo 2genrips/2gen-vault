@@ -1,5 +1,5 @@
-const CACHE='vaultsignal-live-community-v181';
-const ASSETS=['./','./index.html','./styles.css','./mobile-layout-hotfix.css','./app.js','./config.js','./cloud-compat-v18.js','./cloud.js','./creator-command.css','./creator-command.js','./grail-intelligence.css','./grail-intelligence.js','./journey-engine.css','./journey-engine.js','./vaultgraph.css','./vaultgraph.js','./signal-network.css','./signal-network.js','./live-community.css','./live-community.js','./manifest.webmanifest','./icon.svg','./privacy.html','./terms.html','./support.html'];
+const CACHE='vaultsignal-mobile-command-v182';
+const ASSETS=['./','./index.html','./styles.css','./mobile-layout-hotfix.css','./mobile-command-center.css','./mobile-command-center.js','./app.js','./config.js','./cloud-compat-v18.js','./cloud.js','./creator-command.css','./creator-command.js','./grail-intelligence.css','./grail-intelligence.js','./journey-engine.css','./journey-engine.js','./vaultgraph.css','./vaultgraph.js','./signal-network.css','./signal-network.js','./live-community.css','./live-community.js','./manifest.webmanifest','./icon.svg','./privacy.html','./terms.html','./support.html'];
 
 self.addEventListener('install',e=>{
   self.skipWaiting();
