@@ -17,9 +17,15 @@ type StockRow = {
 const games = ['Pokemon','Lorcana','Magic','Yu-Gi-Oh!','One Piece']
 const stockLive = new Set(['in_stock','low_stock','available','limited'])
 const stockGone = new Set(['out_of_stock','sold_out','unavailable'])
+const corsHeaders = {
+  'access-control-allow-origin':'*',
+  'access-control-allow-methods':'POST,OPTIONS',
+  'access-control-allow-headers':'authorization,apikey,content-type,x-client-info,x-vaultsignal-secret',
+  'access-control-max-age':'86400',
+}
 
 function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type':'application/json; charset=utf-8' } })
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'content-type':'application/json; charset=utf-8' } })
 }
 function serviceKey(): string {
   const legacy = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
@@ -40,6 +46,7 @@ async function fetchJson(url: string): Promise<any> {
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
+  if (req.method === 'OPTIONS') return new Response('ok',{headers:corsHeaders})
   if (req.method !== 'POST') return json({error:'POST required'},405)
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') || ''
@@ -149,9 +156,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
           const sourceType=row.sourceType==='official_api'?'official_api':row.sourceType==='partner_api'?'partner_api':''
           if (!sourceType) continue
           const status=String(row.status||'').toLowerCase(), qty=row.quantity==null?null:Number(row.quantity)
-          const live=stockLive.has(status)||(Number.isFinite(qty)&&Number(qty)>0)
-          const gone=stockGone.has(status)||(Number.isFinite(qty)&&Number(qty)===0&&status!=='unknown')
-          if (!live && !gone) continue
+          const isLive=stockLive.has(status)||(Number.isFinite(qty)&&Number(qty)>0)
+          const isGone=stockGone.has(status)||(Number.isFinite(qty)&&Number(qty)===0&&status!=='unknown')
+          if (!isLive && !isGone) continue
           const provider=clean(row.provider||row.sourceAttribution||row.retailer||'Provider',120)
           const sourceKey=sourceType==='official_api'?'worker:bestbuy':`partner:${slug(provider)}`
           await supabase.from('source_catalog').upsert({
@@ -160,13 +167,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
             last_checked_at:nowIso,last_success_at:nowIso,updated_at:nowIso
           },{onConflict:'source_key'})
           const itemId=clean(row.id||`${row.retailer||provider}:${row.store||''}:${row.product||q}`,180)
-          const dedupeKey=`${sourceKey}|${itemId}|${live?'available':'unavailable'}`
+          const dedupeKey=`${sourceKey}|${itemId}|${isLive?'available':'unavailable'}`
           await supabase.from('source_observations').update({expires_at:nowIso}).eq('source_key',sourceKey).eq('source_item_id',itemId).neq('dedupe_key',dedupeKey)
           const confidence=clamp(row.confidence,0,100,sourceType==='official_api'?96:92)
           const obs={
             source_key:sourceKey,source_name:provider,source_type:sourceType,room:'local-finds',game:'Pokemon',
             product:clean(row.product||q,140),retailer:clean(row.retailer||provider,80),region,
-            evidence_kind:'availability',status:live?(status||'in_stock'):(status||'out_of_stock'),available:live,
+            evidence_kind:'availability',status:isLive?(status||'in_stock'):(status||'out_of_stock'),available:isLive,
             quantity:Number.isFinite(qty)?Number(qty):null,price:Number.isFinite(Number(row.price))?Number(row.price):null,
             confidence,url:clean(row.url||row.addToCartUrl,2048),source_item_id:itemId,dedupe_key:dedupeKey,
             observed_at:row.checkedAt||row.updatedAt||nowIso,expires_at:expires,
@@ -174,7 +181,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
           }
           const {error}=await supabase.from('source_observations').upsert(obs,{onConflict:'dedupe_key'})
           if (error) { errors.push({query:q,source:sourceKey,error:error.message}); continue }
-          if (live) verified.push({query:q,provider,retailer:row.retailer||provider,store:row.store||'',product:row.product||q,status:row.status||'in_stock',quantity:qty,price:row.price||0,distanceMiles:row.distanceMiles??null,url:row.url||row.addToCartUrl||'',confidence})
+          if (isLive) verified.push({query:q,provider,retailer:row.retailer||provider,store:row.store||'',product:row.product||q,status:row.status||'in_stock',quantity:qty,price:row.price||0,distanceMiles:row.distanceMiles??null,url:row.url||row.addToCartUrl||'',confidence})
         }
       } catch(e:any) { errors.push({query:q,error:e?.message||String(e)}) }
     }
