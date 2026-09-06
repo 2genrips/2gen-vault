@@ -21,6 +21,9 @@ function launch(action){
   close();
   setTimeout(()=>{
     switch(action){
+      case 'fusion':
+        if(window.VaultSignalFusion?.open)window.VaultSignalFusion.open();else fallback('.topbar > .sf-top-entry');
+        break;
       case 'creator':
         if(window.VaultSignalCreatorCommand?.open)window.VaultSignalCreatorCommand.open('home');else fallback('.topbar > .cc-top-entry');
         break;
@@ -62,8 +65,9 @@ function sheetMarkup(){return `
     </header>
     <div class="mcc-section-label">COLLECTOR SYSTEMS</div>
     <div class="mcc-grid">
+      <button data-mcc="fusion"><b class="cyan">≋</b><span>Signal Fusion</span><small>One live War Room per drop</small></button>
+      <button data-mcc="signals"><b class="signal">⚡</b><span>Signals</span><small>Raw collector intel</small></button>
       <button data-mcc="grail"><b class="gold">IQ</b><span>Grail IQ</span><small>Next best move</small></button>
-      <button data-mcc="signals"><b class="signal">⚡</b><span>Signals</span><small>Live collector intel</small></button>
       <button data-mcc="journey"><b class="blue">∞</b><span>Journey</span><small>Card life story</small></button>
       <button data-mcc="graph"><b class="cyan">◎</b><span>VaultGraph</span><small>Product provenance</small></button>
       <button data-mcc="community"><b class="green">✓</b><span>Community</span><small>Account, trust & alerts</small></button>
@@ -76,7 +80,7 @@ function sheetMarkup(){return `
       <button data-mcc="search"><b>⌕</b><span>Search Market</span></button>
       <button data-mcc="vault"><b>▣</b><span>My Vault</span></button>
     </div>
-    <div class="mcc-note">One launcher replaces the duplicate mobile feature pills. Nothing is removed from VaultSignal.</div>
+    <div class="mcc-note">Signal Fusion turns repeated restock chatter into one evolving incident. Raw Signal Network rooms remain available underneath it.</div>
   </section>`}
 function ensureSheet(){
   let root=$('#mobileCommandCenter');
@@ -102,7 +106,7 @@ function init(){
   document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
   window.addEventListener('twogen-auth-changed',()=>{const label=$('#mccCloudLabel');if(label)label.textContent=cloudLabel()});
   const observer=new MutationObserver(()=>injectTop());observer.observe(document.body,{childList:true,subtree:true});
-  window.VaultSignalMobileCommand={open,close,launch,version:'18.2.0'};
+  window.VaultSignalMobileCommand={open,close,launch,version:'20.0.0'};
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(init,150));else setTimeout(init,150);
 })();

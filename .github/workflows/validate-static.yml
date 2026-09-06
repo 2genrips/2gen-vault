@@ -3,7 +3,7 @@ name: Validate VaultSignal Static Build
 on:
   pull_request:
   push:
-    branches: [main, v19-signal-alert-engine]
+    branches: [main, v20-signal-fusion]
 
 permissions:
   contents: read
@@ -34,6 +34,7 @@ jobs:
           node --check live-community.js
           node --check mobile-command-center.js
           node --check signal-alert-engine.js
+          node --check signal-fusion.js
           node --check sw.js
 
       - name: Set up Deno
@@ -44,28 +45,31 @@ jobs:
       - name: Check Signal Push Edge Function
         run: deno check --config supabase/functions/signal-push/deno.json supabase/functions/signal-push/index.ts
 
-      - name: Verify v19 assets are wired
+      - name: Verify v20 assets are wired
         run: |
-          grep -q 'signal-alert-engine.css' index.html
-          grep -q 'signal-alert-engine.js' index.html
-          grep -q 'signal-alert-engine.css' sw.js
-          grep -q 'signal-alert-engine.js' sw.js
-          grep -q 'vaultsignal-signal-alert-v190' sw.js
-          grep -q 'appVersion: "19.0.0"' config.js
-          grep -q 'releaseChannel: "signal-alert-engine"' config.js
-          grep -q 'webPushPublicKey: "B' config.js
-          grep -q 'VaultSignalAlerts' signal-alert-engine.js
-          grep -q 'watch_terms' supabase/signal-alert-engine-v19.sql
-          grep -q 'signal_push_deliveries' supabase/signal-alert-engine-v19.sql
-          grep -q 'dispatch_vaultsignal_push' supabase/signal-alert-engine-v19.sql
-          grep -q 'vaultsignal_push_config' supabase/functions/signal-push/index.ts
-          grep -q 'min_score' supabase/functions/signal-push/index.ts
-          grep -q 'watch_terms' supabase/functions/signal-push/index.ts
+          grep -q 'signal-fusion.css' index.html
+          grep -q 'signal-fusion.js' index.html
+          grep -q 'signal-fusion.css' sw.js
+          grep -q 'signal-fusion.js' sw.js
+          grep -q 'vaultsignal-signal-fusion-v200' sw.js
+          grep -q 'appVersion: "20.0.0"' config.js
+          grep -q 'releaseChannel: "signal-fusion"' config.js
+          grep -q 'VaultSignalFusion' signal-fusion.js
+          grep -q 'data-mcc="fusion"' mobile-command-center.js
+          grep -q 'signal_incidents' supabase/signal-fusion-v20.sql
+          grep -q 'fuse_and_dispatch_signal_post' supabase/signal-fusion-v20.sql
+          grep -q 'refresh_incident_after_reaction' supabase/signal-fusion-v20.sql
+          grep -q 'event_key' supabase/signal-fusion-v20.sql
+          grep -q 'set search_path = pg_catalog' supabase/signal-fusion-v20-search-path-hardening.sql
+          grep -q 'incident_id' supabase/functions/signal-push/index.ts
+          grep -q 'eventKey' supabase/functions/signal-push/index.ts
           grep -q "addEventListener('push'" sw.js
-          grep -q 'supabasePublishableKey' config.js
-          test -f V19-SIGNAL-ALERT-ENGINE.md
+          grep -q 'webPushPublicKey: "B' config.js
+          test -f V20-SIGNAL-FUSION.md
           test -f supabase/signal-network-v17.sql
           test -f supabase/live-community-v18.sql
           test -f supabase/signal-alert-engine-v19.sql
+          test -f supabase/signal-fusion-v20.sql
+          test -f supabase/signal-fusion-v20-search-path-hardening.sql
           test -f supabase/functions/signal-push/index.ts
           test -f supabase/functions/signal-push/deno.json
