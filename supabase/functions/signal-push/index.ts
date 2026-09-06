@@ -95,10 +95,16 @@ function clean(value: unknown): string {
   return String(value || '').trim().toLowerCase()
 }
 
+function isAutomatedSourcePost(post: SignalPost): boolean {
+  return clean(post.title) === 'automated source evidence'
+}
+
 function matchesWatch(pref: Preference, post: SignalPost): boolean {
   if (!stockRooms.has(post.room)) return true
   const terms = (pref.watch_terms || []).map(clean).filter((x) => x.length >= 3)
-  if (!terms.length) return true
+  // Human/community room signals may still route by followed room when no watch terms exist.
+  // Automated Source Mesh discoveries require an explicit watch/chase match to prevent broad alert spam.
+  if (!terms.length) return !isAutomatedSourcePost(post)
   const hay = clean(`${post.product || ''} ${post.title || ''} ${post.body || ''} ${post.retailer || ''}`)
   return terms.some((term) => hay.includes(term))
 }
