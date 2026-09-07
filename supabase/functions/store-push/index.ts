@@ -59,7 +59,7 @@ Deno.serve(async(req:Request):Promise<Response>=>{
     .eq('enabled',true).in('user_id',followerIds)
   if(prefError)return json({error:prefError.message},500)
   const score=clamp(checkin.verification_score,proof==='SOURCE_VERIFIED'?94:88)
-  const eligible=(prefs||[] as Preference[]).filter((p:any)=>!quiet(p)&&score>=Number(p.min_score??60)) as Preference[]
+  const eligible=((prefs||[]) as Preference[]).filter(p=>!quiet(p)&&score>=Number(p.min_score??60))
   if(!eligible.length)return json({delivered:0,reason:'no eligible store followers',store_key:sKey,score})
 
   const ids=eligible.map(p=>p.user_id)
