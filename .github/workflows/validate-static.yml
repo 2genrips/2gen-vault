@@ -73,6 +73,10 @@ jobs:
           grep -q 'dispatch_hunt_mission_checkin' supabase/hunt-missions-v23-push.sql
           grep -q 'mission_checkin_id' supabase/hunt-missions-v23-push.sql
           grep -q 'mission owner remains on the scout team' supabase/hunt-missions-v23-hardening.sql
+          grep -q 'security invoker' supabase/hunt-missions-v23-security-hardening.sql
+          grep -q 'guard_hunt_mission_client_update' supabase/hunt-missions-v23-security-hardening.sql
+          grep -q 'select auth.uid()' supabase/hunt-missions-v23-performance.sql
+          grep -q 'hunt_missions_created_by_idx' supabase/hunt-missions-v23-performance.sql
           grep -q 'missionMode' supabase/functions/signal-push/index.ts
           grep -q 'HUNT' supabase/functions/signal-push/index.ts
           grep -q 'demand_radar' supabase/demand-radar-v22.sql
@@ -85,6 +89,8 @@ jobs:
           test -f supabase/hunt-missions-v23.sql
           test -f supabase/hunt-missions-v23-push.sql
           test -f supabase/hunt-missions-v23-hardening.sql
+          test -f supabase/hunt-missions-v23-security-hardening.sql
+          test -f supabase/hunt-missions-v23-performance.sql
           test -f supabase/functions/source-mesh/index.ts
           test -f supabase/functions/source-mesh/deno.json
           test -f supabase/functions/signal-push/index.ts
