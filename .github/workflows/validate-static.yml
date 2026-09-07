@@ -73,6 +73,8 @@ jobs:
           grep -q 'vaultsignal-scout-proof-refresh' supabase/scout-proof-v24.sql
           grep -q 'dispatch_latest_hunt_source_verification' supabase/scout-proof-v24-push-hardening.sql
           grep -q "new.verification_state='SOURCE_VERIFIED'" supabase/scout-proof-v24-push-hardening.sql
+          grep -q 'where claim_count>=3' supabase/scout-proof-v24-privacy-hardening.sql
+          grep -q 'security_invoker=true' supabase/scout-proof-v24-privacy-hardening.sql
           grep -q 'proofState' supabase/functions/signal-push/index.ts
           grep -q 'proofLabels' supabase/functions/signal-push/index.ts
           grep -q 'conflicted claim stays in app' supabase/functions/signal-push/index.ts
@@ -85,6 +87,7 @@ jobs:
           test -f scout-proof.js
           test -f supabase/scout-proof-v24.sql
           test -f supabase/scout-proof-v24-push-hardening.sql
+          test -f supabase/scout-proof-v24-privacy-hardening.sql
           test -f supabase/functions/source-mesh/index.ts
           test -f supabase/functions/source-mesh/deno.json
           test -f supabase/functions/signal-push/index.ts
