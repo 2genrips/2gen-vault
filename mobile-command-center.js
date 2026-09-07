@@ -24,6 +24,9 @@ function launch(action){
       case 'hunt':
         if(window.VaultSignalHuntMissions?.open)window.VaultSignalHuntMissions.open();
         break;
+      case 'store':
+        if(window.VaultSignalStoreIntel?.open)window.VaultSignalStoreIntel.open();
+        break;
       case 'proof':
         if(window.VaultSignalScoutProof?.open)window.VaultSignalScoutProof.open();
         break;
@@ -78,6 +81,7 @@ function sheetMarkup(){return `
     <div class="mcc-section-label">COLLECTOR SYSTEMS</div>
     <div class="mcc-grid">
       <button data-mcc="hunt"><b class="green">⌖</b><span>Hunt Missions</span><small>Coordinate scouts around a product</small></button>
+      <button data-mcc="store"><b class="cyan">⌂</b><span>Store Intel</span><small>Trusted history for public stores</small></button>
       <button data-mcc="proof"><b class="green">✓</b><span>Scout Proof</span><small>Evidence-backed claim trust</small></button>
       <button data-mcc="radar"><b class="gold">◉</b><span>Demand Radar</span><small>What collectors are hunting now</small></button>
       <button data-mcc="mesh"><b class="cyan">⌁</b><span>Source Mesh</span><small>Provider evidence + verification</small></button>
@@ -96,7 +100,7 @@ function sheetMarkup(){return `
       <button data-mcc="search"><b>⌕</b><span>Search Market</span></button>
       <button data-mcc="vault"><b>▣</b><span>My Vault</span></button>
     </div>
-    <div class="mcc-note">Hunt Missions coordinate people. Scout Proof evaluates evidence behind availability claims. Demand Radar shows crowd heat. Source Mesh shows provider evidence. Signal Fusion combines the evidence into one live War Room.</div>
+    <div class="mcc-note">Hunt Missions coordinate people. Store Intel remembers trusted public-store history. Scout Proof evaluates evidence behind availability claims. Demand Radar shows crowd heat. Source Mesh shows provider evidence. Signal Fusion combines the evidence into one live War Room.</div>
   </section>`}
 function ensureSheet(){
   let root=$('#mobileCommandCenter');
@@ -122,7 +126,7 @@ function init(){
   document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
   window.addEventListener('twogen-auth-changed',()=>{const label=$('#mccCloudLabel');if(label)label.textContent=cloudLabel()});
   const observer=new MutationObserver(()=>injectTop());observer.observe(document.body,{childList:true,subtree:true});
-  window.VaultSignalMobileCommand={open,close,launch,version:'24.0.0'};
+  window.VaultSignalMobileCommand={open,close,launch,version:'25.0.0'};
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(init,150));else setTimeout(init,150);
 })();
