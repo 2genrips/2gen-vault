@@ -21,6 +21,9 @@ function launch(action){
   close();
   setTimeout(()=>{
     switch(action){
+      case 'hunt':
+        if(window.VaultSignalHuntMissions?.open)window.VaultSignalHuntMissions.open();
+        break;
       case 'radar':
         if(window.VaultSignalDemandRadar?.open)window.VaultSignalDemandRadar.open();
         break;
@@ -71,6 +74,7 @@ function sheetMarkup(){return `
     </header>
     <div class="mcc-section-label">COLLECTOR SYSTEMS</div>
     <div class="mcc-grid">
+      <button data-mcc="hunt"><b class="green">⌖</b><span>Hunt Missions</span><small>Coordinate scouts around a product</small></button>
       <button data-mcc="radar"><b class="gold">◉</b><span>Demand Radar</span><small>What collectors are hunting now</small></button>
       <button data-mcc="mesh"><b class="cyan">⌁</b><span>Source Mesh</span><small>Provider evidence + verification</small></button>
       <button data-mcc="fusion"><b class="cyan">≋</b><span>Signal Fusion</span><small>One live War Room per drop</small></button>
@@ -88,7 +92,7 @@ function sheetMarkup(){return `
       <button data-mcc="search"><b>⌕</b><span>Search Market</span></button>
       <button data-mcc="vault"><b>▣</b><span>My Vault</span></button>
     </div>
-    <div class="mcc-note">Demand Radar shows hobby attention. Source Mesh shows provider evidence. Signal Fusion combines evidence and community reports into one evolving War Room.</div>
+    <div class="mcc-note">Hunt Missions coordinate people. Demand Radar shows crowd heat. Source Mesh shows provider evidence. Signal Fusion combines the evidence into one live War Room.</div>
   </section>`}
 function ensureSheet(){
   let root=$('#mobileCommandCenter');
@@ -114,7 +118,7 @@ function init(){
   document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
   window.addEventListener('twogen-auth-changed',()=>{const label=$('#mccCloudLabel');if(label)label.textContent=cloudLabel()});
   const observer=new MutationObserver(()=>injectTop());observer.observe(document.body,{childList:true,subtree:true});
-  window.VaultSignalMobileCommand={open,close,launch,version:'22.0.0'};
+  window.VaultSignalMobileCommand={open,close,launch,version:'23.0.0'};
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(init,150));else setTimeout(init,150);
 })();
