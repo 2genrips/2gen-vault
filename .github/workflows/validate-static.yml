@@ -3,7 +3,7 @@ name: Validate VaultSignal Static Build
 on:
   pull_request:
   push:
-    branches: [main, v23-hunt-missions]
+    branches: [main, v24-scout-proof]
 
 permissions:
   contents: read
@@ -38,6 +38,7 @@ jobs:
           node --check source-mesh.js
           node --check demand-radar.js
           node --check hunt-missions.js
+          node --check scout-proof.js
           node --check sw.js
 
       - name: Set up Deno
@@ -51,46 +52,42 @@ jobs:
       - name: Check Source Mesh Edge Function
         run: deno check --config supabase/functions/source-mesh/deno.json supabase/functions/source-mesh/index.ts
 
-      - name: Verify v23 assets are wired
+      - name: Verify v24 Scout Proof release
         run: |
-          grep -q 'hunt-missions.css' index.html
-          grep -q 'hunt-missions.js' index.html
-          grep -q 'hunt-missions.css' sw.js
-          grep -q 'hunt-missions.js' sw.js
-          grep -q 'vaultsignal-hunt-missions-v230' sw.js
-          grep -q 'appVersion: "23.0.0"' config.js
-          grep -q 'releaseChannel: "hunt-missions"' config.js
-          grep -q 'VaultSignalHuntMissions' hunt-missions.js
-          grep -q "q.get('mission')" hunt-missions.js
-          grep -q 'data-mcc="hunt"' mobile-command-center.js
+          grep -q 'scout-proof.css' index.html
+          grep -q 'scout-proof.js' index.html
+          grep -q 'scout-proof.css' sw.js
+          grep -q 'scout-proof.js' sw.js
+          grep -q 'vaultsignal-scout-proof-v240' sw.js
+          grep -q 'appVersion: "24.0.0"' config.js
+          grep -q 'releaseChannel: "scout-proof"' config.js
+          grep -q 'VaultSignalScoutProof' scout-proof.js
+          grep -q 'hunt_scout_trust' scout-proof.js
+          grep -q 'data-mcc="proof"' mobile-command-center.js
+          grep -q "case 'proof'" mobile-command-center.js
+          grep -q 'verification_state' supabase/scout-proof-v24.sql
+          grep -q 'SOURCE_VERIFIED' supabase/scout-proof-v24.sql
+          grep -q 'CORROBORATED' supabase/scout-proof-v24.sql
+          grep -q 'CONFLICTED' supabase/scout-proof-v24.sql
+          grep -q 'claim_count>=3' supabase/scout-proof-v24.sql
+          grep -q 'vaultsignal-scout-proof-refresh' supabase/scout-proof-v24.sql
+          grep -q 'dispatch_latest_hunt_source_verification' supabase/scout-proof-v24-push-hardening.sql
+          grep -q "new.verification_state='SOURCE_VERIFIED'" supabase/scout-proof-v24-push-hardening.sql
+          grep -q 'where claim_count>=3' supabase/scout-proof-v24-privacy-hardening.sql
+          grep -q 'security_invoker=true' supabase/scout-proof-v24-privacy-hardening.sql
+          grep -q 'proofState' supabase/functions/signal-push/index.ts
+          grep -q 'proofLabels' supabase/functions/signal-push/index.ts
+          grep -q 'conflicted claim stays in app' supabase/functions/signal-push/index.ts
           grep -q 'hunt_missions' supabase/hunt-missions-v23.sql
-          grep -q 'hunt_mission_scouts' supabase/hunt-missions-v23.sql
-          grep -q 'hunt_mission_checkins' supabase/hunt-missions-v23.sql
-          grep -q 'hunt_region_safe' supabase/hunt-missions-v23.sql
-          grep -q 'active mission limit reached' supabase/hunt-missions-v23.sql
-          grep -q 'join the mission before checking in' supabase/hunt-missions-v23.sql
-          grep -q 'close_hunt_mission' supabase/hunt-missions-v23.sql
-          grep -q 'dispatch_hunt_mission_checkin' supabase/hunt-missions-v23-push.sql
-          grep -q 'mission_checkin_id' supabase/hunt-missions-v23-push.sql
-          grep -q 'mission owner remains on the scout team' supabase/hunt-missions-v23-hardening.sql
-          grep -q 'security invoker' supabase/hunt-missions-v23-security-hardening.sql
-          grep -q 'guard_hunt_mission_client_update' supabase/hunt-missions-v23-security-hardening.sql
-          grep -q 'select auth.uid()' supabase/hunt-missions-v23-performance.sql
-          grep -q 'hunt_missions_created_by_idx' supabase/hunt-missions-v23-performance.sql
-          grep -q 'missionMode' supabase/functions/signal-push/index.ts
-          grep -q 'HUNT' supabase/functions/signal-push/index.ts
-          grep -q 'demand_radar' supabase/demand-radar-v22.sql
           grep -q 'source_observations' supabase/source-mesh-v21.sql
           grep -q "addEventListener('push'" sw.js
           grep -q 'webPushPublicKey: "B' config.js
-          test -f V23-HUNT-MISSIONS.md
-          test -f hunt-missions.css
-          test -f hunt-missions.js
-          test -f supabase/hunt-missions-v23.sql
-          test -f supabase/hunt-missions-v23-push.sql
-          test -f supabase/hunt-missions-v23-hardening.sql
-          test -f supabase/hunt-missions-v23-security-hardening.sql
-          test -f supabase/hunt-missions-v23-performance.sql
+          test -f V24-SCOUT-PROOF.md
+          test -f scout-proof.css
+          test -f scout-proof.js
+          test -f supabase/scout-proof-v24.sql
+          test -f supabase/scout-proof-v24-push-hardening.sql
+          test -f supabase/scout-proof-v24-privacy-hardening.sql
           test -f supabase/functions/source-mesh/index.ts
           test -f supabase/functions/source-mesh/deno.json
           test -f supabase/functions/signal-push/index.ts
