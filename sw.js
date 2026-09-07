@@ -1,5 +1,5 @@
-const CACHE='vaultsignal-scout-proof-v240';
-const ASSETS=['./','./index.html','./styles.css','./mobile-layout-hotfix.css','./mobile-command-center.css','./mobile-command-center.js','./signal-alert-engine.css','./signal-alert-engine.js','./signal-fusion.css','./signal-fusion.js','./source-mesh.css','./source-mesh.js','./demand-radar.css','./demand-radar.js','./hunt-missions.css','./hunt-missions.js','./scout-proof.css','./scout-proof.js','./app.js','./config.js','./cloud-compat-v18.js','./cloud.js','./creator-command.css','./creator-command.js','./grail-intelligence.css','./grail-intelligence.js','./journey-engine.css','./journey-engine.js','./vaultgraph.css','./vaultgraph.js','./signal-network.css','./signal-network.js','./live-community.css','./live-community.js','./manifest.webmanifest','./icon.svg','./privacy.html','./terms.html','./support.html'];
+const CACHE='vaultsignal-store-intel-v250';
+const ASSETS=['./','./index.html','./styles.css','./mobile-layout-hotfix.css','./mobile-command-center.css','./mobile-command-center.js','./signal-alert-engine.css','./signal-alert-engine.js','./signal-fusion.css','./signal-fusion.js','./source-mesh.css','./source-mesh.js','./demand-radar.css','./demand-radar.js','./hunt-missions.css','./hunt-missions.js','./scout-proof.css','./scout-proof.js','./store-intel.css','./store-intel.js','./app.js','./config.js','./cloud-compat-v18.js','./cloud.js','./creator-command.css','./creator-command.js','./grail-intelligence.css','./grail-intelligence.js','./journey-engine.css','./journey-engine.js','./vaultgraph.css','./vaultgraph.js','./signal-network.css','./signal-network.js','./live-community.css','./live-community.js','./manifest.webmanifest','./icon.svg','./privacy.html','./terms.html','./support.html'];
 
 self.addEventListener('install',e=>{
   self.skipWaiting();
@@ -34,7 +34,7 @@ self.addEventListener('push',event=>{
   }
   const title=payload.title||'VaultSignal • New Signal';
   const options={
-    body:payload.body||'A followed Signal Network room has new activity.',
+    body:payload.body||'A followed VaultSignal source has new activity.',
     icon:'./icon.svg',
     badge:'./icon.svg',
     tag:payload.tag||'vaultsignal-signal',

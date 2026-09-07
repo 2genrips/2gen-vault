@@ -3,7 +3,7 @@ name: Validate VaultSignal Static Build
 on:
   pull_request:
   push:
-    branches: [main, v24-scout-proof]
+    branches: [main, v25-store-intel]
 
 permissions:
   contents: read
@@ -39,6 +39,7 @@ jobs:
           node --check demand-radar.js
           node --check hunt-missions.js
           node --check scout-proof.js
+          node --check store-intel.js
           node --check sw.js
 
       - name: Set up Deno
@@ -52,43 +53,50 @@ jobs:
       - name: Check Source Mesh Edge Function
         run: deno check --config supabase/functions/source-mesh/deno.json supabase/functions/source-mesh/index.ts
 
-      - name: Verify v24 Scout Proof release
+      - name: Check Store Push Edge Function
+        run: deno check --config supabase/functions/store-push/deno.json supabase/functions/store-push/index.ts
+
+      - name: Verify v25 Store Intel release
         run: |
-          grep -q 'scout-proof.css' index.html
-          grep -q 'scout-proof.js' index.html
-          grep -q 'scout-proof.css' sw.js
-          grep -q 'scout-proof.js' sw.js
-          grep -q 'vaultsignal-scout-proof-v240' sw.js
-          grep -q 'appVersion: "24.0.0"' config.js
-          grep -q 'releaseChannel: "scout-proof"' config.js
-          grep -q 'VaultSignalScoutProof' scout-proof.js
-          grep -q 'hunt_scout_trust' scout-proof.js
-          grep -q 'data-mcc="proof"' mobile-command-center.js
-          grep -q "case 'proof'" mobile-command-center.js
+          grep -q 'store-intel.css' index.html
+          grep -q 'store-intel.js' index.html
+          grep -q 'store-intel.css' sw.js
+          grep -q 'store-intel.js' sw.js
+          grep -q 'vaultsignal-store-intel-v250' sw.js
+          grep -q 'appVersion: "25.0.0"' config.js
+          grep -q 'releaseChannel: "store-intel"' config.js
+          grep -q 'VaultSignalStoreIntel' store-intel.js
+          grep -q 'store_intel_follows' store-intel.js
+          grep -q "q.get('store')" store-intel.js
+          grep -q 'data-mcc="store"' mobile-command-center.js
+          grep -q "case 'store'" mobile-command-center.js
+          grep -q 'store_intel' supabase/store-intel-v25.sql
+          grep -q 'store_intel_follows' supabase/store-intel-v25.sql
+          grep -q 'store_intel_label_safe' supabase/store-intel-v25.sql
+          grep -q 'vaultsignal-store-intel-refresh' supabase/store-intel-v25.sql
+          grep -q 'trusted_claims' supabase/store-intel-v25.sql
+          grep -q 'SOURCE_VERIFIED' supabase/store-intel-v25.sql
+          grep -q 'CORROBORATED' supabase/store-intel-v25.sql
+          grep -q 'vaultsignal_store_http_dispatch' supabase/store-intel-v25-push.sql
+          grep -q 'store-push' supabase/store-intel-v25-push.sql
+          grep -q "new.verification_state='SOURCE_VERIFIED'" supabase/store-intel-v25-push.sql
+          grep -q 'on conflict(store_key) do update' supabase/store-intel-v25-refresh-hardening.sql
+          ! grep -q '^  delete from public.store_intel;$' supabase/store-intel-v25-refresh-hardening.sql
+          grep -q 'store_intel_follows' supabase/functions/store-push/index.ts
+          grep -q "CORROBORATED','SOURCE_VERIFIED" supabase/functions/store-push/index.ts
+          grep -q 'store followers require trusted proof' supabase/functions/store-push/index.ts
+          grep -q 'eventKey=' supabase/functions/store-push/index.ts
           grep -q 'verification_state' supabase/scout-proof-v24.sql
-          grep -q 'SOURCE_VERIFIED' supabase/scout-proof-v24.sql
-          grep -q 'CORROBORATED' supabase/scout-proof-v24.sql
-          grep -q 'CONFLICTED' supabase/scout-proof-v24.sql
           grep -q 'claim_count>=3' supabase/scout-proof-v24.sql
-          grep -q 'vaultsignal-scout-proof-refresh' supabase/scout-proof-v24.sql
-          grep -q 'dispatch_latest_hunt_source_verification' supabase/scout-proof-v24-push-hardening.sql
-          grep -q "new.verification_state='SOURCE_VERIFIED'" supabase/scout-proof-v24-push-hardening.sql
-          grep -q 'where claim_count>=3' supabase/scout-proof-v24-privacy-hardening.sql
-          grep -q 'security_invoker=true' supabase/scout-proof-v24-privacy-hardening.sql
-          grep -q 'proofState' supabase/functions/signal-push/index.ts
-          grep -q 'proofLabels' supabase/functions/signal-push/index.ts
-          grep -q 'conflicted claim stays in app' supabase/functions/signal-push/index.ts
-          grep -q 'hunt_missions' supabase/hunt-missions-v23.sql
-          grep -q 'source_observations' supabase/source-mesh-v21.sql
           grep -q "addEventListener('push'" sw.js
           grep -q 'webPushPublicKey: "B' config.js
-          test -f V24-SCOUT-PROOF.md
-          test -f scout-proof.css
-          test -f scout-proof.js
-          test -f supabase/scout-proof-v24.sql
-          test -f supabase/scout-proof-v24-push-hardening.sql
-          test -f supabase/scout-proof-v24-privacy-hardening.sql
+          test -f V25-STORE-INTEL.md
+          test -f store-intel.css
+          test -f store-intel.js
+          test -f supabase/store-intel-v25.sql
+          test -f supabase/store-intel-v25-push.sql
+          test -f supabase/store-intel-v25-refresh-hardening.sql
+          test -f supabase/functions/store-push/index.ts
+          test -f supabase/functions/store-push/deno.json
           test -f supabase/functions/source-mesh/index.ts
-          test -f supabase/functions/source-mesh/deno.json
           test -f supabase/functions/signal-push/index.ts
-          test -f supabase/functions/signal-push/deno.json
