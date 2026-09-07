@@ -3,7 +3,7 @@ name: Validate VaultSignal Static Build
 on:
   pull_request:
   push:
-    branches: [main, v22-demand-radar]
+    branches: [main, v23-hunt-missions]
 
 permissions:
   contents: read
@@ -37,6 +37,7 @@ jobs:
           node --check signal-fusion.js
           node --check source-mesh.js
           node --check demand-radar.js
+          node --check hunt-missions.js
           node --check sw.js
 
       - name: Set up Deno
@@ -50,32 +51,40 @@ jobs:
       - name: Check Source Mesh Edge Function
         run: deno check --config supabase/functions/source-mesh/deno.json supabase/functions/source-mesh/index.ts
 
-      - name: Verify v22 assets are wired
+      - name: Verify v23 assets are wired
         run: |
-          grep -q 'demand-radar.css' index.html
-          grep -q 'demand-radar.js' index.html
-          grep -q 'demand-radar.css' sw.js
-          grep -q 'demand-radar.js' sw.js
-          grep -q 'vaultsignal-demand-radar-v220' sw.js
-          grep -q 'appVersion: "22.0.0"' config.js
-          grep -q 'releaseChannel: "demand-radar"' config.js
-          grep -q 'VaultSignalDemandRadar' demand-radar.js
-          grep -q 'data-mcc="radar"' mobile-command-center.js
+          grep -q 'hunt-missions.css' index.html
+          grep -q 'hunt-missions.js' index.html
+          grep -q 'hunt-missions.css' sw.js
+          grep -q 'hunt-missions.js' sw.js
+          grep -q 'vaultsignal-hunt-missions-v230' sw.js
+          grep -q 'appVersion: "23.0.0"' config.js
+          grep -q 'releaseChannel: "hunt-missions"' config.js
+          grep -q 'VaultSignalHuntMissions' hunt-missions.js
+          grep -q "q.get('mission')" hunt-missions.js
+          grep -q 'data-mcc="hunt"' mobile-command-center.js
+          grep -q 'hunt_missions' supabase/hunt-missions-v23.sql
+          grep -q 'hunt_mission_scouts' supabase/hunt-missions-v23.sql
+          grep -q 'hunt_mission_checkins' supabase/hunt-missions-v23.sql
+          grep -q 'hunt_region_safe' supabase/hunt-missions-v23.sql
+          grep -q 'active mission limit reached' supabase/hunt-missions-v23.sql
+          grep -q 'join the mission before checking in' supabase/hunt-missions-v23.sql
+          grep -q 'close_hunt_mission' supabase/hunt-missions-v23.sql
+          grep -q 'dispatch_hunt_mission_checkin' supabase/hunt-missions-v23-push.sql
+          grep -q 'mission_checkin_id' supabase/hunt-missions-v23-push.sql
+          grep -q 'hunt creator cannot leave own mission' supabase/hunt-missions-v23-hardening.sql
+          grep -q 'missionMode' supabase/functions/signal-push/index.ts
+          grep -q 'HUNT' supabase/functions/signal-push/index.ts
           grep -q 'demand_radar' supabase/demand-radar-v22.sql
-          grep -q 'count(distinct user_id) >= 3' supabase/demand-radar-v22.sql
-          grep -q 'refresh_demand_radar_safe' supabase/demand-radar-v22-quality.sql
           grep -q 'source_observations' supabase/source-mesh-v21.sql
-          grep -q 'source_catalog' supabase/source-mesh-v21.sql
-          grep -q 'dispatch_source_mesh_refresh' supabase/source-mesh-v21-automation.sql
-          grep -q 'local_verify' supabase/functions/source-mesh/index.ts
-          grep -q 'global_refresh' supabase/functions/source-mesh/index.ts
           grep -q "addEventListener('push'" sw.js
           grep -q 'webPushPublicKey: "B' config.js
-          test -f V22-DEMAND-RADAR.md
-          test -f supabase/demand-radar-v22.sql
-          test -f supabase/demand-radar-v22-quality.sql
-          test -f supabase/source-mesh-v21.sql
-          test -f supabase/source-mesh-v21-automation.sql
+          test -f V23-HUNT-MISSIONS.md
+          test -f hunt-missions.css
+          test -f hunt-missions.js
+          test -f supabase/hunt-missions-v23.sql
+          test -f supabase/hunt-missions-v23-push.sql
+          test -f supabase/hunt-missions-v23-hardening.sql
           test -f supabase/functions/source-mesh/index.ts
           test -f supabase/functions/source-mesh/deno.json
           test -f supabase/functions/signal-push/index.ts
