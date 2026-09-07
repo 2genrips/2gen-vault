@@ -17,6 +17,8 @@ type HuntMission = {
 type HuntCheckin = {
   id: string; mission_id: string; user_id: string; result: string; retailer?: string;
   store_label?: string; broad_region?: string; note?: string; created_at?: string;
+  verification_state?: string; verification_score?: number; verification_reason?: string;
+  independent_confirmations?: number; source_matches?: number;
 }
 type Preference = {
   user_id: string; enabled: boolean; min_score: number; urgent_only: boolean;
@@ -28,6 +30,10 @@ type PushConfig = { vapid_public?: string; vapid_private?: string; vapid_subject
 const urgentTypes=new Set(['DROP','FOUND','CHECKOUT','LIMIT','SOLD OUT'])
 const stockRooms=new Set(['pokemon-drops','local-finds','deals'])
 const baseScores:Record<string,number>={DROP:70,FOUND:68,CHECKOUT:72,LIMIT:66,DEAL:58,PULL:44,INFO:42,'SOLD OUT':34}
+const proofLabels:Record<string,string>={
+  SOURCE_VERIFIED:'SOURCE VERIFIED',CORROBORATED:'CORROBORATED',UNVERIFIED:'NEEDS CONFIRMATION',
+  CONFLICTED:'CONFLICTED',OBSERVATION:'OBSERVATION'
+}
 
 function localMinutes(timeZone:string):number{
   try{
@@ -47,6 +53,9 @@ function inQuietHours(pref:Preference):boolean{
   return start<end?current>=start&&current<end:current>=start||current<end
 }
 function clean(value:unknown):string{return String(value||'').trim().toLowerCase()}
+function clampScore(value:unknown,fallback:number):number{
+  const n=Number(value);return Number.isFinite(n)?Math.max(0,Math.min(100,Math.round(n))):fallback
+}
 function isAutomatedSourcePost(post:SignalPost):boolean{return clean(post.title)==='automated source evidence'}
 function matchesWatch(pref:Preference,post:SignalPost):boolean{
   if(!stockRooms.has(post.room))return true
@@ -102,9 +111,20 @@ Deno.serve(async(req:Request):Promise<Response>=>{
     if(data?.reputation_score!=null)reputation=Number(data.reputation_score)
   }
   const missionResult=String(checkin?.result||'').toUpperCase()
+  const proofState=String(checkin?.verification_state||'UNVERIFIED').toUpperCase()
+  const proofFallback=missionResult==='FOUND'?62:missionResult==='SOLD_OUT'?55:0
+  const proofScore=clampScore(checkin?.verification_score,proofFallback)
   const score=missionMode
-    ? missionResult==='FOUND'?95:missionResult==='SOLD_OUT'?72:50
-    : incident?.confidence!=null?Math.max(0,Math.min(100,Number(incident.confidence))):signalScore(post,reputation)
+    ? proofScore
+    : incident?.confidence!=null?clampScore(incident.confidence,42):signalScore(post,reputation)
+
+  // A conflicting mission claim stays visible in the mission timeline but should never wake phones.
+  if(missionMode&&proofState==='CONFLICTED'){
+    return json({delivered:0,score,mission_id:mission?.id||null,proof_state:proofState,reason:'conflicted claim stays in app'})
+  }
+  if(missionMode&&!['FOUND','SOLD_OUT'].includes(missionResult)){
+    return json({delivered:0,score,mission_id:mission?.id||null,proof_state:proofState,reason:'routine mission update stays in app'})
+  }
 
   let prefs:Preference[]=[]
   if(missionMode&&mission){
@@ -149,7 +169,7 @@ Deno.serve(async(req:Request):Promise<Response>=>{
       return !mine||!postRegion||mine===postRegion
     })
   }
-  if(!eligible.length)return json({delivered:0,score,incident_id:incident?.id||null,mission_id:mission?.id||null,reason:'no eligible subscribers'})
+  if(!eligible.length)return json({delivered:0,score,incident_id:incident?.id||null,mission_id:mission?.id||null,proof_state:missionMode?proofState:null,reason:'no eligible subscribers'})
 
   const userIds=eligible.map(p=>p.user_id)
   const {data:subscriptions,error:subError}=await supabase.from('push_subscriptions').select('id,user_id,endpoint,p256dh,auth').in('user_id',userIds)
@@ -157,7 +177,7 @@ Deno.serve(async(req:Request):Promise<Response>=>{
 
   const incidentStatus=String(incident?.status||'').toUpperCase(),scoreBand=Math.floor(score/10)*10
   const eventKey=missionMode&&mission&&checkin
-    ?`mission:${mission.id}:checkin:${checkin.id}:${missionResult}`
+    ?`mission:${mission.id}:checkin:${checkin.id}:${missionResult}:${proofState}`
     :incident?.id?`incident:${incident.id}:${incidentStatus||'UPDATE'}:${scoreBand}`
     :post.id?`post:${post.id}`:''
 
@@ -168,23 +188,29 @@ Deno.serve(async(req:Request):Promise<Response>=>{
     alreadySent=new Set((deliveries||[]).map((d:any)=>String(d.subscription_id)))
   }
   const pending=(subscriptions||[]).filter((sub:any)=>!alreadySent.has(String(sub.id)))
-  if(!pending.length)return json({delivered:0,score,incident_id:incident?.id||null,mission_id:mission?.id||null,reason:'already delivered'})
+  if(!pending.length)return json({delivered:0,score,incident_id:incident?.id||null,mission_id:mission?.id||null,proof_state:missionMode?proofState:null,reason:'already delivered'})
 
   webpush.setVapidDetails(config.vapid_subject||'https://2genrips.github.io/2gen-vault/',config.vapid_public,config.vapid_private)
 
+  const proofLabel=proofLabels[proofState]||proofState.replaceAll('_',' ')
+  const resultLabel=missionResult.replaceAll('_',' ')
   const title=missionMode
-    ?`VaultSignal • HUNT ${missionResult.replace('_',' ')}`
+    ? proofState==='SOURCE_VERIFIED'
+      ?`VaultSignal • VERIFIED ${resultLabel}`
+      :proofState==='CORROBORATED'
+        ?`VaultSignal • CORROBORATED ${resultLabel}`
+        :`VaultSignal • ${resultLabel} • ${proofLabel}`
     :incident?.id?`VaultSignal • ${incidentStatus||'FUSION'} ${score}`:`VaultSignal • ${String(post.type).toUpperCase()}`
   const reportLabel=incident?.report_count?`${incident.report_count} report${Number(incident.report_count)===1?'':'s'}`:''
   const missionBody=missionMode&&mission&&checkin
-    ?[mission.product,checkin.store_label||checkin.retailer||mission.retailer,checkin.broad_region||mission.broad_region,`${mission.scout_count||1} scout${Number(mission.scout_count||1)===1?'':'s'}`].filter(Boolean).join(' • ')
+    ?[mission.product,checkin.store_label||checkin.retailer||mission.retailer,checkin.broad_region||mission.broad_region,`${proofLabel} ${score}`,`${mission.scout_count||1} scout${Number(mission.scout_count||1)===1?'':'s'}`].filter(Boolean).join(' • ')
     :''
   const notification=JSON.stringify({
     title,
     body:missionMode?missionBody:[incident?.product||post.product||post.title||'New Signal',incident?.retailer||post.retailer,incident?.region||post.region,reportLabel,`${score} confidence`].filter(Boolean).join(' • '),
     tag:missionMode&&mission?`mission-${mission.id}`:incident?.id?`incident-${incident.id}`:post.id?`signal-${post.id}`:`signal-${Date.now()}`,
     url:missionMode&&mission?`./?mission=${encodeURIComponent(mission.id)}`:incident?.id?`./?incident=${encodeURIComponent(incident.id)}`:post.id?`./?signal=${encodeURIComponent(post.id)}`:'./',
-    data:{postId:post.id||null,incidentId:incident?.id||null,missionId:mission?.id||null,missionCheckinId:checkin?.id||null,room:post.room,type:post.type,signalScore:score,incidentStatus:incidentStatus||null}
+    data:{postId:post.id||null,incidentId:incident?.id||null,missionId:mission?.id||null,missionCheckinId:checkin?.id||null,room:post.room,type:post.type,signalScore:score,incidentStatus:incidentStatus||null,proofState:missionMode?proofState:null,proofScore:missionMode?score:null,proofReason:missionMode?(checkin?.verification_reason||''):null}
   })
 
   let delivered=0
@@ -207,5 +233,5 @@ Deno.serve(async(req:Request):Promise<Response>=>{
   if(deliveryRows.length)await supabase.from('signal_push_deliveries').upsert(deliveryRows,{onConflict:'event_key,subscription_id',ignoreDuplicates:true})
   if(expiredIds.length)await supabase.from('push_subscriptions').delete().in('id',expiredIds)
 
-  return json({delivered,score,incident_id:incident?.id||null,mission_id:mission?.id||null,mission_result:missionMode?missionResult:null,incident_status:incidentStatus||null,expired_removed:expiredIds.length,eligible_users:eligible.length,skipped_duplicates:alreadySent.size})
+  return json({delivered,score,incident_id:incident?.id||null,mission_id:mission?.id||null,mission_result:missionMode?missionResult:null,proof_state:missionMode?proofState:null,proof_score:missionMode?score:null,incident_status:incidentStatus||null,expired_removed:expiredIds.length,eligible_users:eligible.length,skipped_duplicates:alreadySent.size})
 })
