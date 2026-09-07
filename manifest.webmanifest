@@ -1,7 +1,7 @@
 {
   "name": "VaultSignal — Collector Intelligence OS",
   "short_name": "VaultSignal",
-  "description": "VaultSignal v23 — Hunt Missions coordinated collector scouting, Demand Radar crowd intelligence, Source Mesh provider evidence, Signal Fusion live incidents, watch-aware background alerts, community trust and moderation, stock tools, scanning and values, Card Journey, VaultGraph and creator tools in one OS by 2GEN RIPS.",
+  "description": "VaultSignal v24 — Scout Proof evidence-backed collector trust, Hunt Missions coordinated scouting, Demand Radar crowd intelligence, Source Mesh provider evidence, Signal Fusion live incidents, watch-aware background alerts, community trust and moderation, stock tools, scanning and values, Card Journey, VaultGraph and creator tools in one OS by 2GEN RIPS.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
