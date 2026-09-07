@@ -72,7 +72,7 @@ jobs:
           grep -q 'close_hunt_mission' supabase/hunt-missions-v23.sql
           grep -q 'dispatch_hunt_mission_checkin' supabase/hunt-missions-v23-push.sql
           grep -q 'mission_checkin_id' supabase/hunt-missions-v23-push.sql
-          grep -q 'hunt creator cannot leave own mission' supabase/hunt-missions-v23-hardening.sql
+          grep -q 'mission owner remains on the scout team' supabase/hunt-missions-v23-hardening.sql
           grep -q 'missionMode' supabase/functions/signal-push/index.ts
           grep -q 'HUNT' supabase/functions/signal-push/index.ts
           grep -q 'demand_radar' supabase/demand-radar-v22.sql
